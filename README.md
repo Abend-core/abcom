@@ -65,7 +65,7 @@ make install
 
 **Sur ta machine (avec Rust):**
 ```bash
-bash build-and-distribute.sh
+bash scripts/build-and-distribute.sh
 # Crée un ZIP prêt à partager: dist/abcom_DATE.zip
 ```
 
@@ -80,10 +80,11 @@ bash abcom-install.sh ./abcom
 ```
 
 📖 **Guides complets:**
-- **[DEPLOY_SIMPLE.md](DEPLOY_SIMPLE.md)** ⭐ — Commençe par celui-ci !
-- **[QUICK_DEPLOY.md](QUICK_DEPLOY.md)** — Déploiement détaillé avec options
-- **[INSTALL_FRIEND.md](INSTALL_FRIEND.md)** — Guide pour les copains
-- **[DEPLOYMENT.md](DEPLOYMENT.md)** — Test 3 machines, diag complet
+- **[DEPLOY_SIMPLE.md](docs/DEPLOY_SIMPLE.md)** ⭐ — Commençe par celui-ci !
+- **[QUICK_DEPLOY.md](docs/QUICK_DEPLOY.md)** — Déploiement détaillé avec options
+- **[INSTALL_FRIEND.md](docs/INSTALL_FRIEND.md)** — Guide pour les copains
+- **[DEPLOYMENT.md](docs/DEPLOYMENT.md)** — Test 3 machines, diag complet
+- **[ROADMAP.md](docs/ROADMAP.md)** — Sécurité et features futures
 
 ---
 

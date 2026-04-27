@@ -44,7 +44,7 @@ install: release
 ## Prépare le binaire pour distribution (copie dans /tmp)
 deploy-bin: release
 	@cp target/release/$(BINARY_NAME) /tmp/$(BINARY_NAME)
-	@cp abcom-install.sh /tmp/abcom-install.sh
+	@cp scripts/abcom-install.sh /tmp/abcom-install.sh
 	@chmod +x /tmp/abcom-install.sh
 	@echo ""
 	@echo "📦 Binaire prêt pour distribution:"
@@ -62,7 +62,7 @@ install-bin:
 		echo "   Lance d'abord: make deploy-bin"; \
 		exit 1; \
 	fi
-	bash abcom-install.sh $(CURDIR)/target/release/$(BINARY_NAME)
+	bash scripts/abcom-install.sh $(CURDIR)/target/release/$(BINARY_NAME)
 
 ## Désinstalle le binaire et le service
 uninstall:
