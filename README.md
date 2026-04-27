@@ -2,44 +2,64 @@
 
 Messagerie instantanée pour réseau local (LAN), développée en Rust.
 
-## Fonctionnement
+## Description du projet
 
-Chaque machine du réseau installe et lance le même binaire. Les machines se découvrent automatiquement par broadcast UDP, les messages sont acheminés en TCP.
+Abcom est une application de chat pour machines sur le même réseau local. Chaque machine exécute le même programme, qui :
 
-```
-Machine A ──── réseau local ──── Machine B
-  (UDP broadcast découverte)
-  (TCP messages)
-```
+- découvre les autres pairs via **UDP broadcast** sur le réseau local,
+- envoie et reçoit des messages via **TCP**,
+- affiche une interface graphique native avec **egui**.
 
-## Installation rapide
+Le but est d’avoir un client simple à déployer sur plusieurs machines d’un même LAN.
+
+## Installation avec Makefile
+
+La manière recommandée est d’utiliser le `Makefile` fourni :
 
 ```bash
 git clone https://github.com/Abend-core/abcom.git
 cd abcom
-bash install.sh
+make install
 ```
 
-Le script :
-1. Installe Rust si nécessaire
-2. Compile en mode release
-3. Installe le binaire dans `~/.local/bin/`
-4. Configure un service systemd utilisateur (démarrage automatique)
+La commande `make install` fait :
 
-## Lancement manuel
+1. compilation en `release`,
+2. installation du binaire dans `~/.local/bin/abcom`,
+3. installation du service systemd utilisateur,
+4. activation du démarrage automatique à la connexion graphique.
+
+## Lancer l'application
+
+Après installation, la commande est :
 
 ```bash
-# Avec le nom d'utilisateur en argument (optionnel, $USER par défaut)
 ~/.local/bin/abcom
-# ou
+```
+
+Tu peux aussi lancer directement pendant le développement :
+
+```bash
+make run
+```
+
+ou
+
+```bash
 cargo run --release -- MonPrenom
 ```
 
 ## Désinstallation
 
 ```bash
-bash uninstall.sh
+make uninstall
 ```
+
+## Services et démarrage automatique
+
+Le projet contient un service systemd utilisateur `contrib/abcom.service`.
+
+Après `make install`, le service est activé pour démarrer automatiquement avec la session graphique.
 
 ## Ports utilisés
 
@@ -48,15 +68,16 @@ bash uninstall.sh
 | 9000 | TCP | Échange de messages |
 | 9001 | UDP | Découverte des pairs |
 
-Ouvrir ces ports dans le pare-feu si nécessaire :
+Si tu as un pare-feu actif :
+
 ```bash
 sudo ufw allow 9000/tcp
 sudo ufw allow 9001/udp
 ```
 
-## Stack
+## Stack technique
 
-- **Rust** + **Tokio** (async runtime)
+- **Rust** + **Tokio** (runtime asynchrone)
 - **egui / eframe** (interface graphique native)
 - **serde_json** (sérialisation des messages)
 - **chrono** (horodatage)
