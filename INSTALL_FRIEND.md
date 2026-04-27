@@ -1,17 +1,33 @@
 # 📦 Abcom - Guide du Copain
 
-Reçu le dossier d'Abcom ? Voici comment l'installer en 30 secondes.
+Abcom s'installe en 30 secondes ! Choisis ta méthode:
 
 ---
 
-## 🚀 Installation (Option 1: avec binaire pré-compilé)
+## 🌟 Installation (Option 1: Git Clone - LE PLUS SIMPLE!)
+
+```bash
+git clone https://github.com/rxdy/abcom.git ~/abcom
+cd ~/abcom
+bash abcom-install.sh
+```
+
+**C'est tout !** Zéro fichier binaire à partager, juste un URL.
+
+---
+
+## 📦 Installation (Option 2: avec binaire reçu)
+
+Si tu as reçu un dossier ou un ZIP:
 
 ### Étape 1: Lance le script
 ```bash
-bash abcom-install.sh  abcom
+bash abcom-install.sh ./abcom
 ```
-ou
+ou si c'est un ZIP:
 ```bash
+unzip abcom_DATE.zip
+cd abcom_DATE
 bash abcom-install.sh ./abcom
 ```
 
@@ -20,7 +36,9 @@ L'app est installée et prête.
 
 ---
 
-## 🚀 Installation (Option 2: depuis le dépôt Git)
+## 🚀 Installation (Option 3: depuis un dépôt Git custom)
+
+Si tu as reçu un lien vers un autre dépôt:
 
 ### Étape 1: Clone
 ```bash

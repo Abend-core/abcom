@@ -4,7 +4,26 @@ Déploiement simple et rapide sur toutes tes machines du réseau LAN.
 
 ---
 
-## 🎯 Cas 1 : Première machine (compilation)
+## � Option 1: Git Clone (LA PLUS SIMPLE!)
+
+### Pré-requis
+- Git installé (généralement déjà le cas)
+
+### Sur chaque machine
+
+```bash
+git clone https://github.com/rxdy/abcom.git ~/abcom
+cd ~/abcom
+bash abcom-install.sh
+```
+
+**C'est tout !** Zéro fichier à partager, zéro binaire énorme.
+
+---
+
+## 📦 Option 2: Depuis un binaire pré-compilé
+
+### Étape 1: Sur ta machine (compilation unique)
 
 Compile une seule fois sur une machine qui a Rust:
 
@@ -16,9 +35,9 @@ cargo build --release
 
 ---
 
-## 🎯 Cas 2 : Autres machines (installation rapide)
+### Étape 2: Autres machines (installation rapide)
 
-### Depuis ta machine dev (partage le binaire):
+#### Depuis ta machine dev (partage le binaire):
 
 ```bash
 # Copie le binaire à partager
