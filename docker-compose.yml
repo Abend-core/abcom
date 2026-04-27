@@ -1,0 +1,50 @@
+version: '3.8'
+
+services:
+  alice:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - DISPLAY=${DISPLAY}
+      - CARGO_TERM_COLOR=always
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ./:/app
+    network_mode: host
+    command: ["alice"]
+    container_name: abcom_alice
+    stdin_open: true
+    tty: true
+
+  bob:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - DISPLAY=${DISPLAY}
+      - CARGO_TERM_COLOR=always
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ./:/app
+    network_mode: host
+    command: ["bob"]
+    container_name: abcom_bob
+    stdin_open: true
+    tty: true
+
+  charlie:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - DISPLAY=${DISPLAY}
+      - CARGO_TERM_COLOR=always
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ./:/app
+    network_mode: host
+    command: ["charlie"]
+    container_name: abcom_charlie
+    stdin_open: true
+    tty: true
