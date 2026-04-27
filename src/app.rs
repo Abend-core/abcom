@@ -17,7 +17,6 @@ pub struct AppState {
     pub my_username: String,
     pub peers: Vec<Peer>,
     pub messages: Vec<ChatMessage>,
-    pub selected_peer: Option<usize>,
     pub selected_conversation: Option<String>,  // None = "Global", Some("Alice") = direct with Alice
     pub typing_users: HashMap<String, SystemTime>,  // qui tape, jusqu'à quand
     history_path: PathBuf,
@@ -34,7 +33,6 @@ impl AppState {
             my_username: username,
             peers: Vec::new(),
             messages: Vec::new(),
-            selected_peer: None,
             selected_conversation: None,  // Starts with "Global"
             typing_users: HashMap::new(),
             history_path,
@@ -130,10 +128,11 @@ impl AppState {
         self.typing_users.keys().cloned().collect()
     }
 
-    /// Retourne l'adresse TCP du pair sélectionné
+    /// Retourne l'adresse TCP du pair sélectionné (via selected_conversation)
     pub fn selected_peer_addr(&self) -> Option<SocketAddr> {
-        self.selected_peer
-            .and_then(|i| self.peers.get(i))
+        self.selected_conversation
+            .as_ref()
+            .and_then(|username| self.peers.iter().find(|p| p.username == *username))
             .map(|p| p.addr)
     }
 }

@@ -119,21 +119,21 @@ impl eframe::App for AbcomApp {
                 ui.heading("Pairs LAN");
                 ui.separator();
 
-                let (peers, selected) = {
+                let (peers, selected_conv) = {
                     let s = self.state.lock().unwrap();
-                    (s.peers.clone(), s.selected_peer)
+                    (s.peers.clone(), s.selected_conversation.clone())
                 };
 
                 if peers.is_empty() {
                     ui.add_space(8.0);
                     ui.weak("En attente de pairs...");
                 } else {
-                    for (i, peer) in peers.iter().enumerate() {
-                        let is_selected = selected == Some(i);
+                    for peer in peers.iter() {
+                        let is_selected = selected_conv.as_ref().map(|c| c == &peer.username).unwrap_or(false);
                         let resp = ui.selectable_label(is_selected, format!("● {}", peer.username));
                         if resp.clicked() {
-                            self.state.lock().unwrap().selected_peer =
-                                if is_selected { None } else { Some(i) };
+                            self.state.lock().unwrap().selected_conversation =
+                                if is_selected { None } else { Some(peer.username.clone()) };
                         }
                     }
                 }
@@ -165,9 +165,9 @@ impl eframe::App for AbcomApp {
                     let (target, selected_addr, all_peers) = {
                         let s = self.state.lock().unwrap();
                         let target = s
-                            .selected_peer
-                            .and_then(|i| s.peers.get(i))
-                            .map(|p| p.username.clone())
+                            .selected_conversation
+                            .as_ref()
+                            .map(|u| u.clone())
                             .unwrap_or_else(|| "tous".to_string());
                         (target, s.selected_peer_addr(), s.peers.clone())
                     };
@@ -199,9 +199,7 @@ impl eframe::App for AbcomApp {
                         let (my_name, selected_peer_name) = {
                             let s = self.state.lock().unwrap();
                             let my_username = s.my_username.clone();
-                            let peer_name = s.selected_peer
-                                .and_then(|i| s.peers.get(i))
-                                .map(|p| p.username.clone());
+                            let peer_name = s.selected_conversation.clone();
                             (my_username, peer_name)
                         };
                         
@@ -284,14 +282,13 @@ impl eframe::App for AbcomApp {
 
         // ── Zone centrale : messages avec conversations ───────────────────
         egui::CentralPanel::default().show(ctx, |ui| {
-            let (conversations, selected_conv, my_name, conv_messages) = {
-                let mut s = self.state.lock().unwrap();
-                let convs = s.get_conversations();
+            let (selected_conv, my_name, conv_messages) = {
+                let s = self.state.lock().unwrap();
                 let selected = s.selected_conversation.clone();
                 let my_username = s.my_username.clone();
                 let msgs = s.get_conversation_messages();
                 let conv_msgs: Vec<ChatMessage> = msgs.into_iter().cloned().collect();
-                (convs, selected, my_username, conv_msgs)
+                (selected, my_username, conv_msgs)
             };
 
             // ── Header avec tabs des conversations ────────────────────
