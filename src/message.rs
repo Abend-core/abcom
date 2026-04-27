@@ -7,6 +7,8 @@ pub struct ChatMessage {
     pub from: String,
     pub content: String,
     pub timestamp: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub to_user: Option<String>,  // None = broadcast, Some("Alice") = direct
 }
 
 /// Indicateur: quelqu'un est en train d'écrire

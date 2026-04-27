@@ -196,10 +196,27 @@ impl eframe::App for AbcomApp {
                     if (pressed_enter || clicked_send) && !self.input.trim().is_empty() {
                         let content = self.input.trim().to_string();
                         let now = chrono::Local::now().format("%H:%M").to_string();
-                        let my_name = self.state.lock().unwrap().my_username.clone();
-                        let msg = ChatMessage { from: my_name, content, timestamp: now };
+                        let (my_name, selected_peer_name) = {
+                            let s = self.state.lock().unwrap();
+                            let my_username = s.my_username.clone();
+                            let peer_name = s.selected_peer
+                                .and_then(|i| s.peers.get(i))
+                                .map(|p| p.username.clone());
+                            (my_username, peer_name)
+                        };
+                        
+                        let msg = ChatMessage { 
+                            from: my_name, 
+                            content, 
+                            timestamp: now,
+                            to_user: selected_peer_name.clone(),  // Direct if peer selected, broadcast if None
+                        };
 
                         self.state.lock().unwrap().add_message(msg.clone());
+                        // Also update conversation view to show sent message
+                        if let Some(peer_name) = &selected_peer_name {
+                            self.state.lock().unwrap().selected_conversation = Some(peer_name.clone());
+                        }
                         self.input.clear();
 
                         if let Some(addr) = selected_addr {
@@ -265,18 +282,54 @@ impl eframe::App for AbcomApp {
         }
 
 
-        // ── Zone centrale : messages ──────────────────────────────────────
+        // ── Zone centrale : messages avec conversations ───────────────────
         egui::CentralPanel::default().show(ctx, |ui| {
-            let (messages, my_name) = {
-                let s = self.state.lock().unwrap();
-                (s.messages.clone(), s.my_username.clone())
+            let (conversations, selected_conv, my_name, conv_messages) = {
+                let mut s = self.state.lock().unwrap();
+                let convs = s.get_conversations();
+                let selected = s.selected_conversation.clone();
+                let my_username = s.my_username.clone();
+                let msgs = s.get_conversation_messages();
+                let conv_msgs: Vec<ChatMessage> = msgs.into_iter().cloned().collect();
+                (convs, selected, my_username, conv_msgs)
             };
 
+            // ── Header avec tabs des conversations ────────────────────
+            ui.horizontal(|ui| {
+                ui.label("💬 Conversations:");
+                ui.separator();
+                
+                // Global tab
+                let is_global_selected = selected_conv.is_none();
+                if ui.selectable_label(is_global_selected, "📢 Global").clicked() {
+                    self.state.lock().unwrap().selected_conversation = None;
+                }
+
+                // User conversations tabs
+                let peers: Vec<String> = self.state.lock().unwrap()
+                    .peers.iter().map(|p| p.username.clone()).collect();
+                for peer in &peers {
+                    let is_selected = selected_conv.as_ref() == Some(peer);
+                    let display_name = format!("🙋 {}", peer);
+                    if ui.selectable_label(is_selected, &display_name).clicked() {
+                        self.state.lock().unwrap().selected_conversation = Some(peer.clone());
+                    }
+                }
+            });
+
+            ui.separator();
+
+            // ── Messages filtrés ────────────────────────────────────────
             egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
                 .stick_to_bottom(true)
                 .show(ui, |ui| {
-                    for msg in &messages {
+                    if conv_messages.is_empty() {
+                        ui.add_space(50.0);
+                        ui.label(egui::RichText::new("Aucun message").weak());
+                    }
+                    
+                    for msg in &conv_messages {
                         ui.horizontal(|ui| {
                             ui.label(
                                 egui::RichText::new(format!("[{}]", msg.timestamp))

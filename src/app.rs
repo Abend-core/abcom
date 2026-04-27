@@ -18,6 +18,7 @@ pub struct AppState {
     pub peers: Vec<Peer>,
     pub messages: Vec<ChatMessage>,
     pub selected_peer: Option<usize>,
+    pub selected_conversation: Option<String>,  // None = "Global", Some("Alice") = direct with Alice
     pub typing_users: HashMap<String, SystemTime>,  // qui tape, jusqu'à quand
     history_path: PathBuf,
 }
@@ -34,6 +35,7 @@ impl AppState {
             peers: Vec::new(),
             messages: Vec::new(),
             selected_peer: None,
+            selected_conversation: None,  // Starts with "Global"
             typing_users: HashMap::new(),
             history_path,
         };
@@ -80,6 +82,35 @@ impl AppState {
             self.messages.drain(0..100);
         }
         self.save_messages();
+    }
+
+    /// Get messages for the selected conversation
+    pub fn get_conversation_messages(&self) -> Vec<&ChatMessage> {
+        match &self.selected_conversation {
+            None => {
+                // Global: show all broadcast messages (to_user is None)
+                self.messages.iter().filter(|m| m.to_user.is_none()).collect()
+            }
+            Some(username) => {
+                // Direct: show messages from this user or to this user
+                self.messages
+                    .iter()
+                    .filter(|m| {
+                        (m.from == *username && m.to_user == Some(self.my_username.clone()))
+                            || (m.from == self.my_username && m.to_user == Some(username.clone()))
+                    })
+                    .collect()
+            }
+        }
+    }
+
+    /// Get list of all active conversations (including Global)
+    pub fn get_conversations(&self) -> Vec<String> {
+        let mut convos = vec!["📢 Global".to_string()];
+        for peer in &self.peers {
+            convos.push(format!("🙋 {}", peer.username));
+        }
+        convos
     }
 
     pub fn set_user_typing(&mut self, username: String) {
