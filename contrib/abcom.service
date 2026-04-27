@@ -1,0 +1,17 @@
+[Unit]
+Description=Abcom — LAN Messenger
+Documentation=https://github.com/Abend-core/abcom
+After=graphical-session.target
+Wants=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/abcom
+Restart=on-failure
+RestartSec=5
+
+# Hérite DISPLAY / WAYLAND depuis la session graphique
+PassEnvironment=DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS
+
+[Install]
+WantedBy=graphical-session.target

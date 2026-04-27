@@ -1,0 +1,17 @@
+[package]
+name = "abcom"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "abcom"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+eframe = "0.31"
+egui = "0.31"
+chrono = "0.4"
+anyhow = "1"
