@@ -34,7 +34,37 @@ struct AbcomApp {
     event_rx: mpsc::Receiver<AppEvent>,
     send_tx: mpsc::Sender<SendRequest>,
     input: String,
+    show_emoji_picker: bool,
+    last_notification: Option<String>,
+    notification_time: std::time::Instant,
 }
+
+const EMOJIS: &[&str] = &[
+    // Smileys
+    "😀", "😃", "😄", "😁", "😆", "😂", "😊", "😇",
+    "🙂", "🙃", "😉", "😍", "🥰", "😘", "😚", "😋",
+    "😎", "🤓", "🥸", "😏", "😑", "😐", "🤨", "😒",
+    "😔", "😌", "😪", "🤐", "🥱", "😬", "😈", "👿",
+    // Hearts & Love
+    "❤", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍",
+    "🤎", "💔", "💕", "💞", "💓", "💗", "💖", "💘",
+    // Hands & Gestures
+    "👍", "👎", "👏", "🙌", "🤝", "🤞", "✌", "🤘",
+    "🤟", "💪", "🖐", "✋", "👋", "🤚", "🙏", "👌",
+    // Objects & Symbols
+    "🎉", "🎊", "🎈", "🎁", "🎀", "🎂", "🍰", "🎯",
+    "🔥", "💥", "✨", "⭐", "🌟", "💫", "💢", "💯",
+    // Food
+    "🍕", "🍔", "🍟", "🌭", "🌮", "🌯", "🥙", "🥗",
+    "🍗", "🍖", "🌰", "🍎", "🍊", "🍋", "🍌", "🍉",
+    // Nature
+    "☀", "⛅", "🌤", "🌈", "☁", "⛈", "🌙", "⭐",
+    "✨", "🌺", "🌸", "🌼", "🌻", "🌷", "🌹", "🏵",
+    // Animals (simple)
+    "😺", "😸", "😹", "😻", "😼", "😽", "😾", "😿",
+    "🐱", "🐶", "🐭", "🐹", "🐰", "🦊", "🐻", "🐼",
+];
+
 
 impl AbcomApp {
     fn new(
@@ -42,7 +72,15 @@ impl AbcomApp {
         event_rx: mpsc::Receiver<AppEvent>,
         send_tx: mpsc::Sender<SendRequest>,
     ) -> Self {
-        Self { state, event_rx, send_tx, input: String::new() }
+        Self {
+            state,
+            event_rx,
+            send_tx,
+            input: String::new(),
+            show_emoji_picker: false,
+            last_notification: None,
+            notification_time: std::time::Instant::now(),
+        }
     }
 }
 
@@ -53,10 +91,20 @@ impl eframe::App for AbcomApp {
             let mut s = self.state.lock().unwrap();
             while let Ok(evt) = self.event_rx.try_recv() {
                 match evt {
-                    AppEvent::MessageReceived(msg) => s.add_message(msg),
+                    AppEvent::MessageReceived(msg) => {
+                        s.add_message(msg.clone());
+                        // Notification
+                        self.last_notification = Some(format!("{}: {}", msg.from, msg.content));
+                        self.notification_time = std::time::Instant::now();
+                    }
                     AppEvent::PeerDiscovered { username, addr } => s.add_peer(username, addr),
+                    AppEvent::UserTyping(username) => s.set_user_typing(username),
+                    AppEvent::UserStoppedTyping(_username) => {
+                        s.clear_typing_if_old();
+                    }
                 }
             }
+            s.clear_typing_if_old();
         }
 
         // Repeindre toutes les 100 ms pour capter les nouveaux messages
@@ -97,6 +145,17 @@ impl eframe::App for AbcomApp {
                 });
             });
 
+        // ── Panneau typage : indicateurs de frappe ─────────────────────────
+        let typing_list = self.state.lock().unwrap().typing_users_list();
+        if !typing_list.is_empty() {
+            let typing_text = format!("✍ {} en train d'écrire...", typing_list.join(", "));
+            egui::TopBottomPanel::bottom("typing_panel")
+                .exact_height(25.0)
+                .show(ctx, |ui| {
+                    ui.label(egui::RichText::new(typing_text).weak().small());
+                });
+        }
+
         // ── Barre du bas : champ de saisie ────────────────────────────────
         egui::TopBottomPanel::bottom("input_panel")
             .exact_height(54.0)
@@ -118,12 +177,17 @@ impl eframe::App for AbcomApp {
                             .color(egui::Color32::from_rgb(100, 180, 255)),
                     );
 
-                    let available_w = ui.available_width() - 90.0;
+                    let available_w = ui.available_width() - 145.0;
                     let resp = ui.add(
                         egui::TextEdit::singleline(&mut self.input)
                             .desired_width(available_w)
                             .hint_text("Écrire un message…"),
                     );
+
+                    // Bouton smileys
+                    if ui.button("😊").clicked() {
+                        self.show_emoji_picker = !self.show_emoji_picker;
+                    }
 
                     let pressed_enter =
                         resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -150,9 +214,56 @@ impl eframe::App for AbcomApp {
                         }
 
                         resp.request_focus();
+                        self.show_emoji_picker = false;
                     }
                 });
             });
+
+        // ── Notification popup ─────────────────────────────────────────────
+        if let Some(notif) = &self.last_notification {
+            let elapsed = self.notification_time.elapsed().as_secs_f32();
+            if elapsed < 3.0 {
+                // Affichage haut droite
+                egui::Window::new("Notification")
+                    .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 10.0))
+                    .resizable(false)
+                    .collapsible(false)
+                    .title_bar(false)
+                    .show(ctx, |ui| {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(255, 200, 100),
+                            egui::RichText::new(notif).text_style(egui::TextStyle::Body),
+                        );
+                    });
+            } else {
+                self.last_notification = None;
+            }
+        }
+
+        // ── Popup : Picker d'emojis ───────────────────────────────────────
+        if self.show_emoji_picker {
+            egui::Window::new("Emojis")
+                .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(0.0, -60.0))
+                .resizable(false)
+                .collapsible(false)
+                .show(ctx, |ui| {
+                    egui::Grid::new("emoji_grid")
+                        .spacing([5.0, 5.0])
+                        .max_col_width(30.0)
+                        .show(ui, |ui| {
+                            for (idx, &emoji) in EMOJIS.iter().enumerate() {
+                                if ui.button(emoji).clicked() {
+                                    self.input.push_str(emoji);
+                                    self.show_emoji_picker = false;
+                                }
+                                if (idx + 1) % 8 == 0 {
+                                    ui.end_row();
+                                }
+                            }
+                        });
+                });
+        }
+
 
         // ── Zone centrale : messages ──────────────────────────────────────
         egui::CentralPanel::default().show(ctx, |ui| {
