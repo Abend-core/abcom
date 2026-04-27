@@ -1,4 +1,7 @@
-.PHONY: all build install uninstall run clean
+..PHONY: all build install uninstall run clean
+
+export PATH := $(HOME)/.cargo/bin:$(PATH)
+CARGO := cargo
 
 BINARY_NAME := abcom
 INSTALL_DIR := $(HOME)/.local/bin
@@ -9,19 +12,20 @@ all: build
 
 ## Compile en mode développement
 build:
-	cargo build
+	$(CARGO) build
 
 ## Compile en mode release (optimisé)
 release:
-	cargo build --release
+	$(CARGO) build --release
 
 ## Lance directement (développement)
 run:
-	cargo run -- $(USER)
+	$(CARGO) run -- $(USER)
 
 ## Installe le binaire + active le service systemd
 install: release
 	@mkdir -p $(INSTALL_DIR)
+	systemctl --user stop $(SERVICE_NAME) 2>/dev/null || true
 	cp target/release/$(BINARY_NAME) $(INSTALL_DIR)/$(BINARY_NAME)
 	chmod +x $(INSTALL_DIR)/$(BINARY_NAME)
 	@mkdir -p $(SERVICE_DIR)
