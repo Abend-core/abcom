@@ -7,11 +7,54 @@ use tokio::sync::mpsc;
 use crate::app::AppState;
 use crate::message::{AppEvent, ChatMessage, SendRequest};
 
+fn emoji_font_path() -> std::path::PathBuf {
+    dirs::data_local_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("~/.local/share"))
+        .join("abcom/NotoEmoji-Regular.ttf")
+}
+
+fn download_emoji_font_if_needed() {
+    let path = emoji_font_path();
+    if path.exists() {
+        return;
+    }
+    eprintln!("[abcom] Téléchargement de la police emoji (première fois)...");
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let url = "https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoEmoji-Regular.ttf";
+    let status = std::process::Command::new("curl")
+        .args(["-sf", "-L", "-o", path.to_str().unwrap_or(""), url])
+        .status();
+    if status.map(|s| s.success()).unwrap_or(false) {
+        eprintln!("[abcom] Police emoji téléchargée.");
+    } else {
+        eprintln!("[abcom] Impossible de télécharger la police emoji (pas de connexion ?)");
+    }
+}
+
+fn configure_fonts(cc: &eframe::CreationContext<'_>) {
+    let path = emoji_font_path();
+    if let Ok(bytes) = std::fs::read(&path) {
+        let mut fonts = egui::FontDefinitions::default();
+        fonts.font_data.insert(
+            "noto_emoji".to_owned(),
+            egui::FontData::from_owned(bytes).into(),
+        );
+        for family in fonts.families.values_mut() {
+            family.push("noto_emoji".to_owned());
+        }
+        cc.egui_ctx.set_fonts(fonts);
+    }
+}
+
 pub fn run(
     state: Arc<Mutex<AppState>>,
     event_rx: mpsc::Receiver<AppEvent>,
     send_tx: mpsc::Sender<SendRequest>,
 ) -> anyhow::Result<()> {
+    download_emoji_font_if_needed();
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Abcom")
@@ -22,7 +65,10 @@ pub fn run(
     eframe::run_native(
         "Abcom",
         options,
-        Box::new(|_cc| Ok(Box::new(AbcomApp::new(state, event_rx, send_tx)))),
+        Box::new(|cc| {
+            configure_fonts(cc);
+            Ok(Box::new(AbcomApp::new(state, event_rx, send_tx)))
+        }),
     )
     .map_err(|e| anyhow::anyhow!("{}", e))?;
 
@@ -37,34 +83,80 @@ struct AbcomApp {
     show_emoji_picker: bool,
     last_notification: Option<String>,
     notification_time: std::time::Instant,
+    emoji_textures: Vec<(String, egui::TextureHandle)>,
+    emoji_textures_loaded: bool,
+    emoji_category: usize,
+    emoji_map: std::collections::HashMap<String, usize>,
 }
 
-const EMOJIS: &[&str] = &[
-    // Smileys
-    "😀", "😃", "😄", "😁", "😆", "😂", "😊", "😇",
-    "🙂", "🙃", "😉", "😍", "🥰", "😘", "😚", "😋",
-    "😎", "🤓", "🥸", "😏", "😑", "😐", "🤨", "😒",
-    "😔", "😌", "😪", "🤐", "🥱", "😬", "😈", "👿",
-    // Hearts & Love
-    "❤", "🧡", "💛", "💚", "💙", "💜", "🖤", "🤍",
-    "🤎", "💔", "💕", "💞", "💓", "💗", "💖", "💘",
-    // Hands & Gestures
-    "👍", "👎", "👏", "🙌", "🤝", "🤞", "✌", "🤘",
-    "🤟", "💪", "🖐", "✋", "👋", "🤚", "🙏", "👌",
-    // Objects & Symbols
-    "🎉", "🎊", "🎈", "🎁", "🎀", "🎂", "🍰", "🎯",
-    "🔥", "💥", "✨", "⭐", "🌟", "💫", "💢", "💯",
-    // Food
-    "🍕", "🍔", "🍟", "🌭", "🌮", "🌯", "🥙", "🥗",
-    "🍗", "🍖", "🌰", "🍎", "🍊", "🍋", "🍌", "🍉",
-    // Nature
-    "☀", "⛅", "🌤", "🌈", "☁", "⛈", "🌙", "⭐",
-    "✨", "🌺", "🌸", "🌼", "🌻", "🌷", "🌹", "🏵",
-    // Animals (simple)
-    "😺", "😸", "😹", "😻", "😼", "😽", "😾", "😿",
-    "🐱", "🐶", "🐭", "🐹", "🐰", "🦊", "🐻", "🐼",
-];
+fn load_emoji_textures(ctx: &egui::Context) -> Vec<(String, egui::TextureHandle)> {
+    crate::emoji_registry::EMOJI_DATA
+        .iter()
+        .filter_map(|(ch, bytes)| {
+            image::load_from_memory(bytes).ok().map(|img| {
+                let rgba = img.to_rgba8();
+                let (w, h) = rgba.dimensions();
+                let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                    [w as usize, h as usize],
+                    rgba.as_raw(),
+                );
+                let texture = ctx.load_texture(
+                    format!("emoji_{ch}"),
+                    color_image,
+                    egui::TextureOptions::LINEAR,
+                );
+                (ch.to_string(), texture)
+            })
+        })
+        .collect()
+}
 
+
+/// Rend un texte contenant des emojis en les affichant comme images PNG colorées.
+fn render_inline(
+    ui: &mut egui::Ui,
+    text: &str,
+    emoji_map: &std::collections::HashMap<String, usize>,
+    textures: &[(String, egui::TextureHandle)],
+) {
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    let mut acc = String::new();
+    let size = egui::vec2(16.0, 16.0);
+
+    while i < chars.len() {
+        let mut matched = false;
+        // Essayer séquences de 2 chars (drapeaux, ZWJ) puis 1 char
+        for len in [2usize, 1] {
+            if i + len <= chars.len() {
+                let s: String = chars[i..i + len].iter().collect();
+                if let Some(&idx) = emoji_map.get(&s) {
+                    if !acc.is_empty() {
+                        ui.label(&acc);
+                        acc.clear();
+                    }
+                    if let Some((_, tex)) = textures.get(idx) {
+                        ui.add(egui::Image::new(tex).fit_to_exact_size(size));
+                    }
+                    i += len;
+                    matched = true;
+                    break;
+                }
+            }
+        }
+        if !matched {
+            let ch = chars[i];
+            // Ignorer les variation selectors (FE0F) qui ne s'affichent pas
+            if ch != '\u{fe0f}' && ch != '\u{200d}' {
+                acc.push(ch);
+            }
+            i += 1;
+        }
+    }
+    if !acc.is_empty() {
+        ui.label(&acc);
+    }
+}
 
 impl AbcomApp {
     fn new(
@@ -80,12 +172,27 @@ impl AbcomApp {
             show_emoji_picker: false,
             last_notification: None,
             notification_time: std::time::Instant::now(),
+            emoji_textures: Vec::new(),
+            emoji_textures_loaded: false,
+            emoji_category: 0,
+            emoji_map: std::collections::HashMap::new(),
         }
     }
 }
 
 impl eframe::App for AbcomApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Chargement paresseux des textures emoji (nécessite le contexte egui)
+        if !self.emoji_textures_loaded {
+            self.emoji_textures = load_emoji_textures(ctx);
+            self.emoji_map = self.emoji_textures
+                .iter()
+                .enumerate()
+                .map(|(i, (ch, _))| (ch.clone(), i))
+                .collect();
+            self.emoji_textures_loaded = true;
+        }
+
         // Dépiler les événements réseau reçus depuis les tâches tokio
         {
             let mut s = self.state.lock().unwrap();
@@ -160,7 +267,7 @@ impl eframe::App for AbcomApp {
         egui::TopBottomPanel::bottom("input_panel")
             .exact_height(54.0)
             .show(ctx, |ui| {
-                ui.add_space(8.0);
+                ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     let (target, selected_addr, all_peers) = {
                         let s = self.state.lock().unwrap();
@@ -177,15 +284,26 @@ impl eframe::App for AbcomApp {
                             .color(egui::Color32::from_rgb(100, 180, 255)),
                     );
 
-                    let available_w = ui.available_width() - 145.0;
+                    let available_w = ui.available_width() - 105.0;
                     let resp = ui.add(
                         egui::TextEdit::singleline(&mut self.input)
                             .desired_width(available_w)
                             .hint_text("Écrire un message…"),
                     );
 
-                    // Bouton smileys
-                    if ui.button("😊").clicked() {
+                    // Bouton emoji (image PNG colorée)
+                    let emoji_btn_response = if !self.emoji_textures.is_empty() {
+                        let (_ch, tex) = &self.emoji_textures[0];
+                        let img_btn = egui::ImageButton::new(
+                            egui::Image::new(tex).fit_to_exact_size(egui::vec2(28.0, 28.0)),
+                        )
+                        .frame(true)
+                        .selected(self.show_emoji_picker);
+                        ui.add(img_btn)
+                    } else {
+                        ui.button("😊")
+                    };
+                    if emoji_btn_response.clicked() {
                         self.show_emoji_picker = !self.show_emoji_picker;
                     }
 
@@ -255,26 +373,60 @@ impl eframe::App for AbcomApp {
             }
         }
 
-        // ── Popup : Picker d'emojis ───────────────────────────────────────
+        // ── Popup : Picker d'emojis avec catégories ──────────────────────
         if self.show_emoji_picker {
             egui::Window::new("Emojis")
                 .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(0.0, -60.0))
                 .resizable(false)
                 .collapsible(false)
+                .fixed_size([310.0, 340.0])
                 .show(ctx, |ui| {
-                    egui::Grid::new("emoji_grid")
-                        .spacing([5.0, 5.0])
-                        .max_col_width(30.0)
-                        .show(ui, |ui| {
-                            for (idx, &emoji) in EMOJIS.iter().enumerate() {
-                                if ui.button(emoji).clicked() {
-                                    self.input.push_str(emoji);
-                                    self.show_emoji_picker = false;
-                                }
-                                if (idx + 1) % 8 == 0 {
-                                    ui.end_row();
-                                }
+                    // Ligne d'icônes de catégories
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        for (cat_idx, (cat_icon, _start, _end)) in
+                            crate::emoji_registry::EMOJI_CATEGORIES.iter().enumerate()
+                        {
+                            let selected = self.emoji_category == cat_idx;
+                            let btn = egui::Button::new(
+                                egui::RichText::new(*cat_icon).size(18.0)
+                            )
+                            .min_size(egui::vec2(24.0, 24.0))
+                            .selected(selected)
+                            .frame(selected);
+                            if ui.add(btn).clicked() {
+                                self.emoji_category = cat_idx;
                             }
+                        }
+                    });
+                    ui.separator();
+
+                    // Grille d'emojis — hauteur fixe
+                    let (_, start, end) =
+                        crate::emoji_registry::EMOJI_CATEGORIES[self.emoji_category];
+                    let slice = &self.emoji_textures[start..end.min(self.emoji_textures.len())];
+
+                    egui::ScrollArea::vertical()
+                        .max_height(270.0)
+                        .min_scrolled_height(270.0)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            egui::Grid::new("emoji_grid")
+                                .spacing([3.0, 3.0])
+                                .show(ui, |ui| {
+                                    for (idx, (ch, texture)) in slice.iter().enumerate() {
+                                        let img = egui::Image::new(texture)
+                                            .fit_to_exact_size(egui::vec2(34.0, 34.0));
+                                        let btn = egui::ImageButton::new(img).frame(false);
+                                        if ui.add(btn).on_hover_text(ch.as_str()).clicked() {
+                                            self.input.push_str(ch);
+                                            self.show_emoji_picker = false;
+                                        }
+                                        if (idx + 1) % 8 == 0 {
+                                            ui.end_row();
+                                        }
+                                    }
+                                });
                         });
                 });
         }
@@ -343,7 +495,15 @@ impl eframe::App for AbcomApp {
                                     .color(name_color)
                                     .strong(),
                             );
-                            ui.label(&msg.content);
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 1.0;
+                                render_inline(
+                                    ui,
+                                    &msg.content,
+                                    &self.emoji_map,
+                                    &self.emoji_textures,
+                                );
+                            });
                         });
                     }
                 });

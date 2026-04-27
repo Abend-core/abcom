@@ -20,13 +20,14 @@ checksum = "366ffbaa4442f4684d91e2cd7c5ea7c4ed8add41959a31447066e279e432b618"
 
 [[package]]
 name = "abcom"
-version = "0.1.0"
+version = "0.0.1"
 dependencies = [
  "anyhow",
  "chrono",
  "dirs",
  "eframe",
  "egui",
+ "image",
  "serde",
  "serde_json",
  "tokio",

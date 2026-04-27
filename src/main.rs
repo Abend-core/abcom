@@ -3,6 +3,7 @@ use tokio::sync::mpsc;
 
 mod app;
 mod discovery;
+mod emoji_registry;
 mod message;
 mod network;
 mod ui;
