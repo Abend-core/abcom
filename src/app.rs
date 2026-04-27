@@ -1,4 +1,7 @@
+use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::path::PathBuf;
+use std::time::SystemTime;
 
 use crate::message::ChatMessage;
 use crate::network::TCP_PORT;
@@ -15,15 +18,47 @@ pub struct AppState {
     pub peers: Vec<Peer>,
     pub messages: Vec<ChatMessage>,
     pub selected_peer: Option<usize>,
+    pub typing_users: HashMap<String, SystemTime>,  // qui tape, jusqu'à quand
+    history_path: PathBuf,
 }
 
 impl AppState {
     pub fn new(username: String) -> Self {
-        Self {
+        let history_path = dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("abcom")
+            .join("messages.json");
+
+        let mut state = Self {
             my_username: username,
             peers: Vec::new(),
             messages: Vec::new(),
             selected_peer: None,
+            typing_users: HashMap::new(),
+            history_path,
+        };
+
+        // Charge les messages historiques
+        state.load_messages();
+        state
+    }
+
+    fn load_messages(&mut self) {
+        if self.history_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&self.history_path) {
+                if let Ok(msgs) = serde_json::from_str::<Vec<ChatMessage>>(&content) {
+                    self.messages = msgs;
+                }
+            }
+        }
+    }
+
+    fn save_messages(&self) {
+        if let Some(parent) = self.history_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(json) = serde_json::to_string_pretty(&self.messages) {
+            let _ = std::fs::write(&self.history_path, json);
         }
     }
 
@@ -44,6 +79,24 @@ impl AppState {
         if self.messages.len() > 500 {
             self.messages.drain(0..100);
         }
+        self.save_messages();
+    }
+
+    pub fn set_user_typing(&mut self, username: String) {
+        self.typing_users.insert(username, SystemTime::now());
+    }
+
+    pub fn clear_typing_if_old(&mut self) {
+        let now = SystemTime::now();
+        self.typing_users.retain(|_, time| {
+            now.duration_since(*time)
+                .map(|d| d.as_secs() < 3)  // garde pendant 3 secondes
+                .unwrap_or(false)
+        });
+    }
+
+    pub fn typing_users_list(&self) -> Vec<String> {
+        self.typing_users.keys().cloned().collect()
     }
 
     /// Retourne l'adresse TCP du pair sélectionné
