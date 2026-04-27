@@ -9,6 +9,12 @@ pub struct ChatMessage {
     pub timestamp: String,
 }
 
+/// Indicateur: quelqu'un est en train d'écrire
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct TypingIndicator {
+    pub from: String,
+}
+
 /// Paquet UDP pour la découverte des pairs sur le LAN
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DiscoveryPacket {
@@ -20,6 +26,8 @@ pub struct DiscoveryPacket {
 pub enum AppEvent {
     MessageReceived(ChatMessage),
     PeerDiscovered { username: String, addr: SocketAddr },
+    UserTyping(String),  // nom d'utilisateur qui tape
+    UserStoppedTyping(String),
 }
 
 /// Demande d'envoi d'un message à une adresse TCP
