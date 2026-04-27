@@ -53,11 +53,41 @@ C4Context
 ```
 
 ## 🚀 Quick start
+
+### Pour développer localement:
 ```bash
 cd /chemin/vers/abcom
 make install
-~/.local/bin/abcom
+~/.local/bin/abcom MonPseudo
 ```
+
+### Pour déployer sur plusieurs machines (le plus facile):
+
+**Sur ta machine (avec Rust):**
+```bash
+bash build-and-distribute.sh
+# Crée un ZIP prêt à partager: dist/abcom_DATE.zip
+```
+
+**Envoie le ZIP aux copains (USB, email, etc.)**
+
+**Sur la machine du copain:**
+```bash
+unzip abcom_DATE.zip
+cd abcom_DATE
+bash abcom-install.sh ./abcom
+# Terminé ! Aucune compilation, aucune dépendance.
+```
+
+📖 **Guides complets:**
+- **[DEPLOY_SIMPLE.md](DEPLOY_SIMPLE.md)** ⭐ — Commençe par celui-ci !
+- **[QUICK_DEPLOY.md](QUICK_DEPLOY.md)** — Déploiement détaillé avec options
+- **[INSTALL_FRIEND.md](INSTALL_FRIEND.md)** — Guide pour les copains
+- **[DEPLOYMENT.md](DEPLOYMENT.md)** — Test 3 machines, diag complet
+
+---
+
+## 🚀 Quick start (hérité)
 
 Pour développement et tests :
 ```bash
