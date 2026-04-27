@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Abcom
+Comment=Chat LAN peer-to-peer avec découverte automatique
+Keywords=chat;lan;p2p;distributed;messaging;
+Exec=bash -c 'read -p "Pseudonyme: " username; ~/.local/bin/abcom "$username"'
+Icon=chat
+Terminal=true
+Categories=Network;Chat;Utility;
+StartupNotify=false
+X-GNOME-UsesNotifications=true

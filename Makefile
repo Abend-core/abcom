@@ -22,7 +22,7 @@ release:
 run:
 	$(CARGO) run -- $(USER)
 
-## Installe le binaire + active le service systemd
+## Installe le binaire + active le service systemd + raccourci menu
 install: release
 	@mkdir -p $(INSTALL_DIR)
 	systemctl --user stop $(SERVICE_NAME) 2>/dev/null || true
@@ -30,12 +30,39 @@ install: release
 	chmod +x $(INSTALL_DIR)/$(BINARY_NAME)
 	@mkdir -p $(SERVICE_DIR)
 	cp contrib/$(SERVICE_NAME) $(SERVICE_DIR)/$(SERVICE_NAME)
+	@mkdir -p $(HOME)/.local/share/applications
+	cp contrib/abcom.desktop $(HOME)/.local/share/applications/abcom.desktop
+	@mkdir -p $(HOME)/.local/share/$(BINARY_NAME)
 	loginctl enable-linger $(USER) 2>/dev/null || true
 	systemctl --user daemon-reload
 	systemctl --user enable --now $(SERVICE_NAME)
 	@echo ""
 	@echo "✓ $(BINARY_NAME) installé dans $(INSTALL_DIR)"
+	@echo "✓ Raccourci menu créé (Applications → Abcom)"
 	@echo "✓ Service systemd activé (démarrage automatique)"
+
+## Prépare le binaire pour distribution (copie dans /tmp)
+deploy-bin: release
+	@cp target/release/$(BINARY_NAME) /tmp/$(BINARY_NAME)
+	@cp abcom-install.sh /tmp/abcom-install.sh
+	@chmod +x /tmp/abcom-install.sh
+	@echo ""
+	@echo "📦 Binaire prêt pour distribution:"
+	@echo "   Fichier: /tmp/$(BINARY_NAME)"
+	@echo "   Script:  /tmp/abcom-install.sh"
+	@echo ""
+	@echo "💾 Pour partager:"
+	@echo "   zip /tmp/abcom-deploy.zip /tmp/abcom /tmp/abcom-install.sh"
+	@echo "   # Puis envoie le ZIP à tes copains !"
+
+## Installe depuis un binaire pré-compilé (sans compiler)
+install-bin: 
+	@if [ ! -f "$(CURDIR)/target/release/$(BINARY_NAME)" ]; then \
+		echo "❌ Erreur: binaire non trouvé !"; \
+		echo "   Lance d'abord: make deploy-bin"; \
+		exit 1; \
+	fi
+	bash abcom-install.sh $(CURDIR)/target/release/$(BINARY_NAME)
 
 ## Désinstalle le binaire et le service
 uninstall:
