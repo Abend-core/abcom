@@ -116,6 +116,10 @@ struct AbcomApp {
     emoji_category: usize,
     emoji_map: std::collections::HashMap<String, usize>,
     last_cleanup_time: std::time::Instant,
+    // Gestion des groupes
+    show_group_modal: bool,
+    group_name_input: String,
+    group_members_selected: std::collections::HashSet<String>,
 }
 
 fn load_emoji_textures(ctx: &egui::Context) -> Vec<(String, egui::TextureHandle)> {
@@ -237,6 +241,9 @@ impl AbcomApp {
             emoji_category: 0,
             emoji_map: std::collections::HashMap::new(),
             last_cleanup_time: std::time::Instant::now(),
+            show_group_modal: false,
+            group_name_input: String::new(),
+            group_members_selected: std::collections::HashSet::new(),
         }
     }
 }
@@ -286,6 +293,11 @@ impl eframe::App for AbcomApp {
                     AppEvent::UserTyping(username) => s.set_user_typing(username),
                     AppEvent::UserStoppedTyping(_username) => {
                         s.clear_typing_if_old();
+                    }
+                    AppEvent::GroupEventReceived(_evt) => {
+                        // TODO: Traiter l'événement de synchronisation du groupe
+                        // Pour maintenant, on recharge les groupes
+                        s.load_groups();
                     }
                 }
             }
@@ -418,14 +430,55 @@ impl eframe::App for AbcomApp {
 
                 ui.separator();
                 ui.add_space(4.0);
-                // Section: Groupes (TODO: implémenter la persistence)
+                // Section: Groupes
                 ui.horizontal(|ui| {
                     ui.heading("🔗 Groupes");
                     if ui.small_button("+").clicked() {
-                        // TODO: Open dialog to create new group
+                        self.show_group_modal = true;
+                        self.group_name_input.clear();
+                        self.group_members_selected.clear();
                     }
                 });
                 ui.add_space(4.0);
+
+                // Afficher les groupes
+                let groups = self.state.lock().unwrap().groups.clone();
+                if groups.is_empty() {
+                    ui.weak("Aucun groupe");
+                } else {
+                    for group in &groups {
+                        let is_selected = selected_conv.as_ref().map(|c| c == &format!("#{}", group.name)).unwrap_or(false);
+                        let desired = egui::vec2(ui.available_width(), 56.0);
+                        let (rect, resp) = ui.allocate_exact_size(desired, egui::Sense::click());
+                        let visuals = ui.style().interact(&resp);
+                        let fill = if is_selected {
+                            ui.visuals().selection.bg_fill
+                        } else {
+                            visuals.bg_fill
+                        };
+                        let stroke = if is_selected {
+                            ui.visuals().selection.stroke
+                        } else {
+                            visuals.bg_stroke
+                        };
+
+                        ui.painter().rect_filled(rect, 8.0, fill);
+                        ui.painter().rect_stroke(rect, 8.0, stroke, egui::StrokeKind::Outside);
+
+                        // Icône de groupe
+                        let text_color = ui.visuals().text_color();
+                        let font_id = egui::TextStyle::Button.resolve(ui.style());
+                        let text_pos = rect.left_center() + egui::vec2(10.0, 0.0);
+                        ui.painter().text(text_pos, egui::Align2::LEFT_CENTER, &format!("🔗 {}", group.name), font_id.clone(), text_color);
+
+                        if resp.clicked() {
+                            let mut s = self.state.lock().unwrap();
+                            s.selected_conversation = Some(format!("#{}", group.name));
+                        }
+
+                        ui.add_space(4.0);
+                    }
+                }
 
                 // Global conversation
                 let is_global_selected = selected_conv.is_none();
@@ -436,8 +489,6 @@ impl eframe::App for AbcomApp {
                 if resp.clicked() {
                     self.state.lock().unwrap().selected_conversation = None;
                 }
-                ui.add_space(4.0);
-                ui.weak("(Groupes personnalisés à venir)");
 
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                     let my_name = self.state.lock().unwrap().my_username.clone();
@@ -652,6 +703,76 @@ impl eframe::App for AbcomApp {
                                 });
                         });
                 });
+        }
+
+
+        // ── Modal de création de groupe ──────────────────────────────────
+        if self.show_group_modal {
+            let peers = self.state.lock().unwrap().peers.clone();
+            let all_peers: Vec<String> = peers.iter().map(|p| p.username.clone()).collect();
+            
+            let mut is_open = true;
+            egui::Window::new("Créer un groupe")
+                .fixed_size([400.0, 350.0])
+                .resizable(true)
+                .collapsible(false)
+                .open(&mut is_open)
+                .show(ctx, |ui| {
+                    ui.label("Nom du groupe:");
+                    ui.text_edit_singleline(&mut self.group_name_input);
+                    ui.add_space(12.0);
+
+                    ui.label("Sélectionner les pairs à inviter:");
+                    ui.add_space(8.0);
+
+                    // ScrollArea pour la liste des pairs avec checkboxes
+                    egui::ScrollArea::vertical()
+                        .max_height(150.0)
+                        .show(ui, |ui| {
+                            if all_peers.is_empty() {
+                                ui.label("(Aucun pair disponible)");
+                            } else {
+                                for peer in &all_peers {
+                                    let mut is_selected = self.group_members_selected.contains(peer);
+                                    let response = ui.checkbox(&mut is_selected, peer);
+                                    if response.changed() {
+                                        if is_selected {
+                                            self.group_members_selected.insert(peer.clone());
+                                        } else {
+                                            self.group_members_selected.remove(peer);
+                                        }
+                                    }
+                                }
+                            }
+                        });
+
+                    ui.add_space(12.0);
+
+                    ui.horizontal(|ui| {
+                        let create_enabled = !self.group_name_input.trim().is_empty();
+                        if ui.add_enabled(create_enabled, egui::Button::new("✓ Créer")).clicked() {
+                            let group_name = self.group_name_input.trim().to_string();
+                            let members: Vec<String> = self.group_members_selected.iter().cloned().collect();
+                            
+                            self.state.lock().unwrap().create_group(group_name, members);
+                            
+                            self.show_group_modal = false;
+                            self.group_name_input.clear();
+                            self.group_members_selected.clear();
+                        }
+
+                        if ui.button("✕ Annuler").clicked() {
+                            self.show_group_modal = false;
+                            self.group_name_input.clear();
+                            self.group_members_selected.clear();
+                        }
+                    });
+                });
+
+            // Si la croix (×) a été cliquée
+            if !is_open {
+                self.show_group_modal = false;
+            }
         }
 
 
