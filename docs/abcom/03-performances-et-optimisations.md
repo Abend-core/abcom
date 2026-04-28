@@ -1,39 +1,37 @@
-> [🏠 Accueil](../../README.md) > [📦 Composant Abcom](README.md) > [⚡ Performances et optimisations](03-performances-et-optimisations.md)
+> [🏠 Accueil](../../README.md) > [📦 Composant Abcom](README.md) > Performances et optimisations
 
-> 📅 **Généré le** : 2026-04-27  
-> 🔖 **Stack analysée** : Rust 2021, tokio 1, serde 1, serde_json 1, eframe 0.31, egui 0.31, chrono 0.4, anyhow 1  
-> 🔄 **À régénérer si** : refonte archi, changement majeur de stack, ajout/suppression de composant
+> 📅 **Généré le** : 2026-04-28
+> 🔖 **Stack analysée** : Rust 2021, tokio 1, serde 1, serde_json 1, eframe 0.31, egui 0.31, chrono 0.4, anyhow 1
+> 🔄 **À régénérer si** : optimisation de la boucle UI, gestion de gros volumes de messages, amélioration du rendu emoji
 
 # Performances et optimisations
 
-## 🌱 Pour comprendre
-Abcom est une application réseau et interface graphique. Les performances dépendent de la gestion du runtime Tokio, de la fréquence de rafraîchissement de l’UI et de la stratégie de buffering des messages.
+## 🌱 Points de performance essentiels
+Abcom fonctionne en flux continu : découverte périodique, réception TCP et UI rafraîchie fréquemment. Les deux domaines critiques sont le CPU du runtime asynchrone et l’écriture disque du journal JSON.
 
-## 🔧 Pour utiliser
-### Comportement de rendu
-- L’UI demande un repaint toutes les `100 ms`.
-- Les événements réseau sont consommés avec `try_recv()` depuis `event_rx`.
+## 🔧 Limites identifiées
+- `save_messages` est appelé à chaque nouveau message et écrit tout le fichier en JSON formaté.
+- La persistance des messages peut générer des I/O importants sur de longues sessions.
+- Les textures emoji sont chargées paresseusement dans `ui.rs`, ce qui est bon, mais la mémoire graphique augmente.
+- Le runtime Tokio tourne sur plusieurs threads, mais le partage de l’état se fait via un `Mutex` global.
 
-### Tampon de messages
-- Historique stocké dans `AppState.messages`.
-- L’historique est tronqué lorsque la taille dépasse `500`, en supprimant les `100` premiers messages.
+## ⚙️ Optimisations déjà en place
+- `AppState::add_message` conserve un maximum de 500 messages et supprime les plus anciens par paquets de 100.
+- `ui.rs` demande un repaint toutes les 100 ms seulement.
+- `load_emoji_textures` est exécuté une seule fois au démarrage de l’UI.
 
-## ⚙️ Pour maîtriser
-### Points de contention
-- `Arc<Mutex<AppState>>` est un verrou global partagé entre UI et flux réseau.
-- `try_recv()` sur `event_rx` est non bloquant, ce qui limite les interférences avec l’UI.
-- `tokio::spawn` par envoi de message peut créer un grand nombre de tâches si de nombreux messages sont envoyés simultanément.
+### Proposition d’améliorations
+- remplacer la persistance JSON synchrone par un buffer asynchrone ou un journal append-only.
+- découpler l’état des messages de l’UI via un canal dédié pour réduire le temps de blocage du `Mutex`.
+- utiliser des structures indexées pour les conversations privées au lieu de filtrer à chaque rendu.
+- limiter le nombre de textures chargées simultanément dans le picker emoji.
 
-### Optimisations possibles
-- Remplacer `Mutex` par `tokio::sync::RwLock` si les lectures majorent les écritures.
-- Ajouter un framing TCP explicite pour éviter de dépendre de `read_to_end`.
-- Limiter le nombre de tâches `tokio::spawn` en utilisant un pool ou un backpressure explicite.
-
-### Mesure de performance
-- Aucun outil de profilage n’est intégré dans le dépôt actuel.
-- Recommandation : utiliser `cargo flamegraph` ou `tokio-console` pour analyser les goulots.
-
-## 📚 Voir aussi
-- [Architecture et structure](01-architecture-et-structure.md)
-- [Mécanismes et données](02-mecanismes-et-donnees.md)
-- [Fiabilité et tests](04-fiabilite-et-tests.md)
+```mermaid
+flowchart TB
+    Start[Abcom démarre] -->|spawn| Discovery[Discovery UDP]
+    Start -->|spawn| Server[Serveur TCP]
+    Start -->|spawn| Sender[Expéditeur TCP]
+    UI[UI eframe] -->|lecture| AppState[AppState Mutex]
+    Msg[Message reçu] -->|save| Disk[Persistance JSON]
+    Msg -->|render| UI
+```
