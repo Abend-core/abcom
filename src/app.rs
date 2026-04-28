@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::message::ChatMessage;
+use crate::message::{ChatMessage, Group};
 use crate::network::TCP_PORT;
 
 #[derive(Clone, Debug)]
@@ -21,11 +21,13 @@ pub struct AppState {
     pub my_username: String,
     pub peers: Vec<Peer>,
     pub messages: Vec<ChatMessage>,
-    pub selected_conversation: Option<String>,  // None = "Global", Some("Alice") = direct with Alice
+    pub groups: Vec<Group>,
+    pub selected_conversation: Option<String>,  // None = "Global", Some("Alice") = direct with Alice, Some("#GroupName") = group
     pub typing_users: HashMap<String, SystemTime>,  // qui tape, jusqu'à quand
     pub read_counts: HashMap<String, usize>,
     history_path: PathBuf,
     read_counts_path: PathBuf,
+    groups_path: PathBuf,
 }
 
 impl AppState {
@@ -38,22 +40,30 @@ impl AppState {
             .unwrap_or_else(|| PathBuf::from("."))
             .join("abcom")
             .join("read_counts.json");
+        let groups_path = dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("abcom")
+            .join("groups.json");
 
         let mut state = Self {
             my_username: username,
             peers: Vec::new(),
             messages: Vec::new(),
+            groups: Vec::new(),
             selected_conversation: None,  // Starts with "Global"
             typing_users: HashMap::new(),
             read_counts: HashMap::new(),
             history_path,
             read_counts_path,
+            groups_path,
         };
 
         // Charge les messages historiques
         state.load_messages();
         // Charge les compteurs de lecture
         state.load_read_counts();
+        // Charge les groupes
+        state.load_groups();
         // Reconstruit les pairs connus depuis l'historique (hors ligne par défaut)
         state.restore_peers_from_history();
         state
@@ -111,6 +121,16 @@ impl AppState {
         }
     }
 
+    pub fn load_groups(&mut self) {
+        if self.groups_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&self.groups_path) {
+                if let Ok(groups) = serde_json::from_str::<Vec<Group>>(&content) {
+                    self.groups = groups;
+                }
+            }
+        }
+    }
+
     fn save_messages(&self) {
         if let Some(parent) = self.history_path.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -126,6 +146,15 @@ impl AppState {
         }
         if let Ok(json) = serde_json::to_string_pretty(&self.read_counts) {
             let _ = std::fs::write(&self.read_counts_path, json);
+        }
+    }
+
+    fn save_groups(&self) {
+        if let Some(parent) = self.groups_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(json) = serde_json::to_string_pretty(&self.groups) {
+            let _ = std::fs::write(&self.groups_path, json);
         }
     }
 
@@ -283,5 +312,90 @@ impl AppState {
 
     pub fn is_peer_online(&self, username: &str) -> bool {
         self.peers.iter().any(|p| p.username == username && p.online)
+    }
+
+    // ──── Gestion des groupes ────
+
+    pub fn create_group(&mut self, name: String, members: Vec<String>) -> Option<Group> {
+        // Vérifier que le groupe n'existe pas déjà
+        if self.groups.iter().any(|g| g.name == name) {
+            return None;
+        }
+
+        let mut group_members = vec![self.my_username.clone()];
+        for member in members {
+            if member != self.my_username && !group_members.contains(&member) {
+                group_members.push(member);
+            }
+        }
+
+        let group = Group {
+            name: name.clone(),
+            owner: self.my_username.clone(),
+            members: group_members,
+            created_at: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+        };
+
+        self.groups.push(group.clone());
+        self.save_groups();
+        Some(group)
+    }
+
+    pub fn add_member_to_group(&mut self, group_name: &str, username: String) -> bool {
+        if let Some(group) = self.groups.iter_mut().find(|g| g.name == group_name) {
+            if group.owner == self.my_username && !group.members.contains(&username) {
+                group.members.push(username);
+                self.save_groups();
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn remove_member_from_group(&mut self, group_name: &str, username: &str) -> bool {
+        if let Some(group) = self.groups.iter_mut().find(|g| g.name == group_name) {
+            if group.owner == self.my_username && username != &group.owner {
+                group.members.retain(|m| m != username);
+                self.save_groups();
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn rename_group(&mut self, group_name: &str, new_name: String) -> bool {
+        if let Some(group) = self.groups.iter_mut().find(|g| g.name == group_name) {
+            if group.owner == self.my_username {
+                group.name = new_name;
+                self.save_groups();
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn delete_group(&mut self, group_name: &str) -> bool {
+        if let Some(pos) = self.groups.iter().position(|g| g.name == group_name && g.owner == self.my_username) {
+            self.groups.remove(pos);
+            self.save_groups();
+            return true;
+        }
+        false
+    }
+
+    pub fn get_group(&self, group_name: &str) -> Option<&Group> {
+        self.groups.iter().find(|g| g.name == group_name)
+    }
+
+    pub fn is_group_owner(&self, group_name: &str) -> bool {
+        self.groups
+            .iter()
+            .any(|g| g.name == group_name && g.owner == self.my_username)
+    }
+
+    pub fn is_in_group(&self, group_name: &str) -> bool {
+        self.groups
+            .iter()
+            .any(|g| g.name == group_name && g.members.contains(&self.my_username))
     }
 }
