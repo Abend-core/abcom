@@ -7,7 +7,9 @@
 # CICD et déploiement
 
 ## 🌱 Situation actuelle
-Le dépôt ne contient pas de configuration CI/CD formelle (`.github/workflows`, `gitlab-ci.yml`, etc.). La livraison actuelle repose sur des exécutables locaux, un service `systemd` utilisateur et des scripts Docker.
+Le dépôt ne contient pas de configuration CI/CD formelle (`.github/workflows`, `gitlab-ci.yml`, etc.). La livraison actuelle repose sur des exécutables locaux et des scripts Docker.
+
+> Pour Windows, voir aussi : [Installation Windows](INSTALL_WINDOWS.md).
 
 ## 🔧 Déploiement local recommandé
 ### Pour un développeur Linux
