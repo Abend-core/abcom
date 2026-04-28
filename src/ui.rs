@@ -13,26 +13,6 @@ fn emoji_font_path() -> std::path::PathBuf {
         .join("abcom/NotoEmoji-Regular.ttf")
 }
 
-fn download_emoji_font_if_needed() {
-    let path = emoji_font_path();
-    if path.exists() {
-        return;
-    }
-    eprintln!("[abcom] Téléchargement de la police emoji (première fois)...");
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let url = "https://github.com/googlefonts/noto-emoji/raw/main/fonts/NotoEmoji-Regular.ttf";
-    let status = std::process::Command::new("curl")
-        .args(["-sf", "-L", "-o", path.to_str().unwrap_or(""), url])
-        .status();
-    if status.map(|s| s.success()).unwrap_or(false) {
-        eprintln!("[abcom] Police emoji téléchargée.");
-    } else {
-        eprintln!("[abcom] Impossible de télécharger la police emoji (pas de connexion ?)");
-    }
-}
-
 fn configure_fonts(cc: &eframe::CreationContext<'_>) {
     let path = emoji_font_path();
     if let Ok(bytes) = std::fs::read(&path) {
@@ -53,8 +33,6 @@ pub fn run(
     event_rx: mpsc::Receiver<AppEvent>,
     send_tx: mpsc::Sender<SendRequest>,
 ) -> anyhow::Result<()> {
-    download_emoji_font_if_needed();
-
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("Abcom")
@@ -265,10 +243,11 @@ impl eframe::App for AbcomApp {
 
         // ── Barre du bas : champ de saisie ────────────────────────────────
         egui::TopBottomPanel::bottom("input_panel")
-            .exact_height(54.0)
+            .exact_height(72.0)  // Hauteur pour 2 lignes + padding
             .show(ctx, |ui| {
-                ui.add_space(6.0);
+                ui.add_space(4.0);
                 ui.horizontal(|ui| {
+                    // ─── Destinataire (à gauche) ───
                     let (target, selected_addr, all_peers) = {
                         let s = self.state.lock().unwrap();
                         let target = s
@@ -281,27 +260,33 @@ impl eframe::App for AbcomApp {
 
                     ui.label(
                         egui::RichText::new(format!("→ {}", target))
-                            .color(egui::Color32::from_rgb(100, 180, 255)),
+                            .color(egui::Color32::from_rgb(100, 180, 255))
+                            .size(12.0),
                     );
 
-                    let available_w = ui.available_width() - 105.0;
+                    ui.add_space(6.0);
+
+                    // ─── Zone de saisie avec scrollbar interne (2 lignes visibles) ───
+                    let available_w = ui.available_width() - 75.0;  // Espace pour les 2 boutons
                     let resp = egui::ScrollArea::vertical()
-                        .max_height(60.0)  // Hauteur max pour 3-4 lignes
+                        .max_height(44.0)  // Exact pour 2 lignes (~18px + padding par ligne)
                         .show(ui, |ui| {
                             ui.add(
                                 egui::TextEdit::multiline(&mut self.input)
-                                    .desired_width(available_w - 20.0)  // Ajuster pour la scrollbar
+                                    .desired_width(available_w - 12.0)
                                     .desired_rows(1)
                                     .hint_text("Écrire un message…"),
                             )
                         })
                         .inner;
 
-                    // Bouton emoji (image PNG colorée)
+                    ui.add_space(4.0);
+
+                    // ─── Bouton emoji (plus petit) ───
                     let emoji_btn_response = if !self.emoji_textures.is_empty() {
                         let (_ch, tex) = &self.emoji_textures[0];
                         let img_btn = egui::ImageButton::new(
-                            egui::Image::new(tex).fit_to_exact_size(egui::vec2(28.0, 28.0)),
+                            egui::Image::new(tex).fit_to_exact_size(egui::vec2(20.0, 20.0)),
                         )
                         .frame(true)
                         .selected(self.show_emoji_picker);
@@ -313,9 +298,10 @@ impl eframe::App for AbcomApp {
                         self.show_emoji_picker = !self.show_emoji_picker;
                     }
 
+                    // ─── Bouton envoyer (plus petit) ───
                     let pressed_enter =
                         resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    let clicked_send = ui.button("Envoyer").clicked();
+                    let clicked_send = ui.button("📤").clicked();
 
                     if (pressed_enter || clicked_send) && !self.input.trim().is_empty() {
                         let content = self.input.trim().to_string();
