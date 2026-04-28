@@ -110,7 +110,7 @@ fn render_inline(
                 let s: String = chars[i..i + len].iter().collect();
                 if let Some(&idx) = emoji_map.get(&s) {
                     if !acc.is_empty() {
-                        ui.label(&acc);
+                        ui.label(egui::RichText::new(&acc).wrap());
                         acc.clear();
                     }
                     if let Some((_, tex)) = textures.get(idx) {
@@ -132,7 +132,7 @@ fn render_inline(
         }
     }
     if !acc.is_empty() {
-        ui.label(&acc);
+        ui.label(egui::RichText::new(&acc).wrap());
     }
 }
 
@@ -269,7 +269,7 @@ impl eframe::App for AbcomApp {
                     // ─── Zone de saisie avec scrollbar interne (2 lignes visibles) ───
                     let available_w = ui.available_width() - 75.0;  // Espace pour les 2 boutons
                     let resp = egui::ScrollArea::vertical()
-                        .max_height(36.0)  // Réduit pour vraiment 2 lignes
+                        .max_height(32.0)  // Réduit pour 2 lignes max
                         .show(ui, |ui| {
                             ui.add(
                                 egui::TextEdit::multiline(&mut self.input)
@@ -471,31 +471,32 @@ impl eframe::App for AbcomApp {
                     }
                     
                     for msg in &conv_messages {
-                        ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new(format!("[{}]", msg.timestamp))
-                                    .color(egui::Color32::DARK_GRAY)
-                                    .small(),
-                            );
-                            let name_color = if msg.from == my_name {
-                                egui::Color32::from_rgb(80, 200, 120)
-                            } else {
-                                egui::Color32::from_rgb(100, 180, 255)
-                            };
-                            ui.label(
-                                egui::RichText::new(format!("{}:", msg.from))
-                                    .color(name_color)
-                                    .strong(),
-                            );
+                        ui.vertical(|ui| {
                             ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 1.0;
-                                render_inline(
-                                    ui,
-                                    &msg.content,
-                                    &self.emoji_map,
-                                    &self.emoji_textures,
+                                ui.label(
+                                    egui::RichText::new(format!("[{}]", msg.timestamp))
+                                        .color(egui::Color32::DARK_GRAY)
+                                        .small(),
+                                );
+                                let name_color = if msg.from == my_name {
+                                    egui::Color32::from_rgb(80, 200, 120)
+                                } else {
+                                    egui::Color32::from_rgb(100, 180, 255)
+                                };
+                                ui.label(
+                                    egui::RichText::new(format!("{}:", msg.from))
+                                        .color(name_color)
+                                        .strong(),
                                 );
                             });
+                            // Message content with word-wrapping
+                            ui.spacing_mut().item_spacing.x = 1.0;
+                            render_inline(
+                                ui,
+                                &msg.content,
+                                &self.emoji_map,
+                                &self.emoji_textures,
+                            );
                         });
                     }
                 });
