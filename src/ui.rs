@@ -243,9 +243,9 @@ impl eframe::App for AbcomApp {
 
         // ── Barre du bas : champ de saisie ────────────────────────────────
         egui::TopBottomPanel::bottom("input_panel")
-            .exact_height(72.0)  // Hauteur pour 2 lignes + padding
+            .exact_height(78.0)  // Hauteur avec bon padding
             .show(ctx, |ui| {
-                ui.add_space(4.0);
+                ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     // ─── Destinataire (à gauche) ───
                     let (target, selected_addr, all_peers) = {
@@ -269,7 +269,7 @@ impl eframe::App for AbcomApp {
                     // ─── Zone de saisie avec scrollbar interne (2 lignes visibles) ───
                     let available_w = ui.available_width() - 75.0;  // Espace pour les 2 boutons
                     let resp = egui::ScrollArea::vertical()
-                        .max_height(44.0)  // Exact pour 2 lignes (~18px + padding par ligne)
+                        .max_height(36.0)  // Réduit pour vraiment 2 lignes
                         .show(ui, |ui| {
                             ui.add(
                                 egui::TextEdit::multiline(&mut self.input)
