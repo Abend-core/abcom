@@ -299,11 +299,15 @@ impl eframe::App for AbcomApp {
                     }
 
                     // ─── Bouton envoyer (plus petit) ───
-                    let pressed_enter =
-                        resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    let pressed_enter = ui.input(|i| {
+                        i.key_pressed(egui::Key::Enter) && !i.modifiers.shift
+                    });
                     let clicked_send = ui.button("📤").clicked();
 
                     if (pressed_enter || clicked_send) && !self.input.trim().is_empty() {
+                        if pressed_enter && self.input.ends_with('\n') {
+                            self.input.pop();
+                        }
                         let content = self.input.trim().to_string();
                         let now = chrono::Local::now().format("%H:%M").to_string();
                         let (my_name, selected_peer_name) = {
