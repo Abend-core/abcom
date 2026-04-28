@@ -97,45 +97,43 @@ fn render_inline(
     emoji_map: &std::collections::HashMap<String, usize>,
     textures: &[(String, egui::TextureHandle)],
 ) {
-    ui.horizontal(|ui| {
-        let chars: Vec<char> = text.chars().collect();
-        let mut i = 0;
-        let mut acc = String::new();
-        let size = egui::vec2(16.0, 16.0);
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    let mut acc = String::new();
+    let size = egui::vec2(16.0, 16.0);
 
-        while i < chars.len() {
-            let mut matched = false;
-            // Essayer séquences de 2 chars (drapeaux, ZWJ) puis 1 char
-            for len in [2usize, 1] {
-                if i + len <= chars.len() {
-                    let s: String = chars[i..i + len].iter().collect();
-                    if let Some(&idx) = emoji_map.get(&s) {
-                        if !acc.is_empty() {
-                            ui.label(&acc);
-                            acc.clear();
-                        }
-                        if let Some((_, tex)) = textures.get(idx) {
-                            ui.add(egui::Image::new(tex).fit_to_exact_size(size));
-                        }
-                        i += len;
-                        matched = true;
-                        break;
+    while i < chars.len() {
+        let mut matched = false;
+        // Essayer séquences de 2 chars (drapeaux, ZWJ) puis 1 char
+        for len in [2usize, 1] {
+            if i + len <= chars.len() {
+                let s: String = chars[i..i + len].iter().collect();
+                if let Some(&idx) = emoji_map.get(&s) {
+                    if !acc.is_empty() {
+                        ui.label(&acc);
+                        acc.clear();
                     }
+                    if let Some((_, tex)) = textures.get(idx) {
+                        ui.add(egui::Image::new(tex).fit_to_exact_size(size));
+                    }
+                    i += len;
+                    matched = true;
+                    break;
                 }
             }
-            if !matched {
-                let ch = chars[i];
-                // Ignorer les variation selectors (FE0F) qui ne s'affichent pas
-                if ch != '\u{fe0f}' && ch != '\u{200d}' {
-                    acc.push(ch);
-                }
-                i += 1;
+        }
+        if !matched {
+            let ch = chars[i];
+            // Ignorer les variation selectors (FE0F) qui ne s'affichent pas
+            if ch != '\u{fe0f}' && ch != '\u{200d}' {
+                acc.push(ch);
             }
+            i += 1;
         }
-        if !acc.is_empty() {
-            ui.label(&acc);
-        }
-    });
+    }
+    if !acc.is_empty() {
+        ui.label(&acc);
+    }
 }
 
 impl AbcomApp {
@@ -491,14 +489,16 @@ impl eframe::App for AbcomApp {
                                         .strong(),
                                 );
                             });
-                            // Message content with word-wrapping
-                            ui.spacing_mut().item_spacing.x = 1.0;
-                            render_inline(
-                                ui,
-                                &msg.content,
-                                &self.emoji_map,
-                                &self.emoji_textures,
-                            );
+                            // Message content - render inline with horizontal_wrapped for automatic wrapping
+                            ui.horizontal_wrapped(|ui| {
+                                ui.spacing_mut().item_spacing.x = 0.0;
+                                render_inline(
+                                    ui,
+                                    &msg.content,
+                                    &self.emoji_map,
+                                    &self.emoji_textures,
+                                );
+                            });
                         });
                     }
                 });
