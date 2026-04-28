@@ -54,6 +54,7 @@ pub fn run(
 
     let options = eframe::NativeOptions {
         viewport,
+        renderer: eframe::Renderer::Glow,
         ..Default::default()
     };
 
@@ -65,7 +66,12 @@ pub fn run(
             Ok(Box::new(AbcomApp::new(state, event_rx, send_tx)))
         }),
     )
-    .map_err(|e| anyhow::anyhow!("{}", e))?;
+    .map_err(|e| {
+        eprintln!("Erreur lors du lancement de l'interface graphique : {}", e);
+        eprintln!("Cela peut être dû à un environnement graphique non supporté (par exemple WSL sans pilote OpenGL approprié).");
+        eprintln!("Pour déployer sur Windows, utilisez le script d'installation : scripts/install-windows.ps1");
+        anyhow::anyhow!("Échec de l'initialisation de l'interface graphique : {}", e)
+    })?;
 
     Ok(())
 }
