@@ -285,12 +285,17 @@ impl eframe::App for AbcomApp {
                     );
 
                     let available_w = ui.available_width() - 105.0;
-                    let resp = ui.add(
-                        egui::TextEdit::multiline(&mut self.input)
-                            .desired_width(available_w)
-                            .desired_rows(1)
-                            .hint_text("Écrire un message…"),
-                    );
+                    let resp = egui::ScrollArea::vertical()
+                        .max_height(60.0)  // Hauteur max pour 3-4 lignes
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::TextEdit::multiline(&mut self.input)
+                                    .desired_width(available_w - 20.0)  // Ajuster pour la scrollbar
+                                    .desired_rows(1)
+                                    .hint_text("Écrire un message…"),
+                            )
+                        })
+                        .inner;
 
                     // Bouton emoji (image PNG colorée)
                     let emoji_btn_response = if !self.emoji_textures.is_empty() {
