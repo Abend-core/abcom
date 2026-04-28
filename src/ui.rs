@@ -87,6 +87,7 @@ struct AbcomApp {
     last_notification: Option<String>,
     notification_time: std::time::Instant,
     has_unread: bool,
+    window_focused: bool,
     emoji_textures: Vec<(String, egui::TextureHandle)>,
     emoji_textures_loaded: bool,
     emoji_category: usize,
@@ -206,6 +207,7 @@ impl AbcomApp {
             last_notification: None,
             notification_time: std::time::Instant::now(),
             has_unread: false,
+            window_focused: true,
             emoji_textures: Vec::new(),
             emoji_textures_loaded: false,
             emoji_category: 0,
@@ -216,6 +218,9 @@ impl AbcomApp {
 
 impl eframe::App for AbcomApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // Capturer l'état du focus au début (avant le traitement des événements)
+        self.window_focused = ctx.input(|i| i.focused);
+
         // Chargement paresseux des textures emoji (nécessite le contexte egui)
         if !self.emoji_textures_loaded {
             self.emoji_textures = load_emoji_textures(ctx);
@@ -240,8 +245,8 @@ impl eframe::App for AbcomApp {
                             self.notification_time = std::time::Instant::now();
                             // Flash barre des tâches si fenêtre pas au premier plan
                             self.has_unread = true;
-                            // Son
-                            if self.enable_sound_notifications {
+                            // Son uniquement si la fenêtre n'est pas au premier plan
+                            if self.enable_sound_notifications && !self.window_focused {
                                 play_notification_sound();
                             }
                         }
