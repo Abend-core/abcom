@@ -59,6 +59,8 @@ struct AbcomApp {
     send_tx: mpsc::Sender<SendRequest>,
     input: String,
     show_emoji_picker: bool,
+    show_participants: bool,
+    enable_sound_notifications: bool,
     last_notification: Option<String>,
     notification_time: std::time::Instant,
     emoji_textures: Vec<(String, egui::TextureHandle)>,
@@ -136,6 +138,11 @@ fn render_inline(
     }
 }
 
+fn play_notification_sound() {
+    // Beep console (fonctionne sur la plupart des terminaux)
+    print!("\x07");
+}
+
 impl AbcomApp {
     fn new(
         state: Arc<Mutex<AppState>>,
@@ -148,6 +155,8 @@ impl AbcomApp {
             send_tx,
             input: String::new(),
             show_emoji_picker: false,
+            show_participants: false,
+            enable_sound_notifications: true,
             last_notification: None,
             notification_time: std::time::Instant::now(),
             emoji_textures: Vec::new(),
@@ -178,9 +187,13 @@ impl eframe::App for AbcomApp {
                 match evt {
                     AppEvent::MessageReceived(msg) => {
                         s.add_message(msg.clone());
-                        // Notification
+                        // Notification visuelle
                         self.last_notification = Some(format!("{}: {}", msg.from, msg.content));
                         self.notification_time = std::time::Instant::now();
+                        // Notification sonore si pas de moi-même et activé
+                        if msg.from != s.my_username && self.enable_sound_notifications {
+                            play_notification_sound();
+                        }
                     }
                     AppEvent::PeerDiscovered { username, addr } => s.add_peer(username, addr),
                     AppEvent::UserTyping(username) => s.set_user_typing(username),
@@ -195,38 +208,66 @@ impl eframe::App for AbcomApp {
         // Repeindre toutes les 100 ms pour capter les nouveaux messages
         ctx.request_repaint_after(Duration::from_millis(100));
 
-        // ── Panneau gauche : liste des pairs ──────────────────────────────
+        // ── Panneau gauche : conversations et salons ──────────────────────
         egui::SidePanel::left("peers_panel")
             .resizable(false)
-            .exact_width(180.0)
+            .exact_width(220.0)
             .show(ctx, |ui| {
                 ui.add_space(6.0);
-                ui.heading("Pairs LAN");
-                ui.separator();
 
                 let (peers, selected_conv) = {
                     let s = self.state.lock().unwrap();
                     (s.peers.clone(), s.selected_conversation.clone())
                 };
 
+                // Section: Conversations privées
+                ui.heading("👥 Conversations");
+                ui.add_space(4.0);
                 if peers.is_empty() {
-                    ui.add_space(8.0);
                     ui.weak("En attente de pairs...");
                 } else {
                     for peer in peers.iter() {
                         let is_selected = selected_conv.as_ref().map(|c| c == &peer.username).unwrap_or(false);
-                        let resp = ui.selectable_label(is_selected, format!("● {}", peer.username));
+                        let label = format!("{}\nPrivé", peer.username);
+                        let resp = ui.add_sized(
+                            [ui.available_width(), 56.0],
+                            egui::SelectableLabel::new(is_selected, label),
+                        );
                         if resp.clicked() {
                             self.state.lock().unwrap().selected_conversation =
                                 if is_selected { None } else { Some(peer.username.clone()) };
                         }
+                        ui.add_space(4.0);
                     }
                 }
+
+                ui.separator();
+                ui.add_space(4.0);
+                // Section: Groupes (TODO: implémenter la persistence)
+                ui.horizontal(|ui| {
+                    ui.heading("🔗 Groupes");
+                    if ui.small_button("+").clicked() {
+                        // TODO: Open dialog to create new group
+                    }
+                });
+                ui.add_space(4.0);
+
+                // Global conversation
+                let is_global_selected = selected_conv.is_none();
+                let resp = ui.add_sized(
+                    [ui.available_width(), 56.0],
+                    egui::SelectableLabel::new(is_global_selected, "📢 Tous"),
+                );
+                if resp.clicked() {
+                    self.state.lock().unwrap().selected_conversation = None;
+                }
+                ui.add_space(4.0);
+                ui.weak("(Groupes personnalisés à venir)");
 
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                     let my_name = self.state.lock().unwrap().my_username.clone();
                     ui.separator();
-                    ui.label(egui::RichText::new(format!("Connecté : {}", my_name)).small());
+                    ui.label(egui::RichText::new(format!("Vous : {}", my_name)).small());
                 });
             });
 
@@ -243,52 +284,19 @@ impl eframe::App for AbcomApp {
 
         // ── Barre du bas : champ de saisie ────────────────────────────────
         egui::TopBottomPanel::bottom("input_panel")
-            .exact_height(78.0)  // Hauteur avec bon padding
+            .exact_height(68.0)  // Hauteur légère avec padding
             .show(ctx, |ui| {
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
-                    // ─── Destinataire (à gauche) ───
-                    let (target, selected_addr, all_peers) = {
-                        let s = self.state.lock().unwrap();
-                        let target = s
-                            .selected_conversation
-                            .as_ref()
-                            .map(|u| u.clone())
-                            .unwrap_or_else(|| "tous".to_string());
-                        (target, s.selected_peer_addr(), s.peers.clone())
-                    };
+                    ui.add_space(8.0);
 
-                    ui.label(
-                        egui::RichText::new(format!("→ {}", target))
-                            .color(egui::Color32::from_rgb(100, 180, 255))
-                            .size(12.0),
-                    );
-
-                    ui.add_space(6.0);
-
-                    // ─── Zone de saisie avec scrollbar interne (2 lignes visibles) ───
-                    let available_w = ui.available_width() - 75.0;  // Espace pour les 2 boutons
-                    let resp = egui::ScrollArea::vertical()
-                        .max_height(32.0)  // Réduit pour 2 lignes max
-                        .show(ui, |ui| {
-                            ui.add(
-                                egui::TextEdit::multiline(&mut self.input)
-                                    .desired_width(available_w - 12.0)
-                                    .desired_rows(1)
-                                    .hint_text("Écrire un message…"),
-                            )
-                        })
-                        .inner;
-
-                    ui.add_space(4.0);
-
-                    // ─── Bouton emoji (plus petit) ───
+                    // ─── Bouton emoji intégré (avant le champ) ───
                     let emoji_btn_response = if !self.emoji_textures.is_empty() {
                         let (_ch, tex) = &self.emoji_textures[0];
                         let img_btn = egui::ImageButton::new(
-                            egui::Image::new(tex).fit_to_exact_size(egui::vec2(20.0, 20.0)),
+                            egui::Image::new(tex).fit_to_exact_size(egui::vec2(18.0, 18.0)),
                         )
-                        .frame(true)
+                        .frame(false)  // Pas de frame pour style Discord
                         .selected(self.show_emoji_picker);
                         ui.add(img_btn)
                     } else {
@@ -298,14 +306,36 @@ impl eframe::App for AbcomApp {
                         self.show_emoji_picker = !self.show_emoji_picker;
                     }
 
-                    // ─── Bouton envoyer (plus petit) ───
+                    ui.add_space(4.0);
+
+                    // ─── Zone de saisie (prend toute la place disponible) ───
+                    let (selected_addr, all_peers) = {
+                        let s = self.state.lock().unwrap();
+                        (s.selected_peer_addr(), s.peers.clone())
+                    };
+
+                    let available_w = ui.available_width() - 8.0;
+                    let resp = egui::ScrollArea::vertical()
+                        .max_height(32.0)
+                        .show(ui, |ui| {
+                            ui.add(
+                                egui::TextEdit::multiline(&mut self.input)
+                                    .desired_width(available_w - 12.0)
+                                    .desired_rows(1)
+                                    .hint_text("Message")
+                                    .frame(false),  // Pas de frame pour style Discord
+                            )
+                        })
+                        .inner;
+
+                    ui.add_space(4.0);
+
                     let pressed_enter = ui.input(|i| {
                         i.key_pressed(egui::Key::Enter) && !i.modifiers.shift
                     });
-                    let clicked_send = ui.button("📤").clicked();
 
-                    if (pressed_enter || clicked_send) && !self.input.trim().is_empty() {
-                        if pressed_enter && self.input.ends_with('\n') {
+                    if pressed_enter && !self.input.trim().is_empty() {
+                        if self.input.ends_with('\n') {
                             self.input.pop();
                         }
                         let content = self.input.trim().to_string();
@@ -321,11 +351,10 @@ impl eframe::App for AbcomApp {
                             from: my_name, 
                             content, 
                             timestamp: now,
-                            to_user: selected_peer_name.clone(),  // Direct if peer selected, broadcast if None
+                            to_user: selected_peer_name.clone(),
                         };
 
                         self.state.lock().unwrap().add_message(msg.clone());
-                        // Also update conversation view to show sent message
                         if let Some(peer_name) = &selected_peer_name {
                             self.state.lock().unwrap().selected_conversation = Some(peer_name.clone());
                         }
@@ -439,30 +468,96 @@ impl eframe::App for AbcomApp {
                 (selected, my_username, conv_msgs)
             };
 
-            // ── Header avec tabs des conversations ────────────────────
+            let conversation_title = selected_conv.as_deref().unwrap_or("Tous");
+            let is_broadcast = selected_conv.is_none();
+
             ui.horizontal(|ui| {
-                ui.label("💬 Conversations:");
-                ui.separator();
-                
-                // Global tab
-                let is_global_selected = selected_conv.is_none();
-                if ui.selectable_label(is_global_selected, "📢 Global").clicked() {
-                    self.state.lock().unwrap().selected_conversation = None;
-                }
+                ui.add_space(8.0);
+                ui.vertical_centered(|ui| {
+                    ui.heading(conversation_title);
+                });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.menu_button("▾ Actions", |ui| {
+                        // Activer/désactiver notifications sonores
+                        let sound_text = if self.enable_sound_notifications {
+                            "🔊 Désactiver les notifications sonores"
+                        } else {
+                            "🔇 Activer les notifications sonores"
+                        };
+                        if ui.button(sound_text).clicked() {
+                            self.enable_sound_notifications = !self.enable_sound_notifications;
+                            ui.close_menu();
+                        }
 
-                // User conversations tabs
-                let peers: Vec<String> = self.state.lock().unwrap()
-                    .peers.iter().map(|p| p.username.clone()).collect();
-                for peer in &peers {
-                    let is_selected = selected_conv.as_ref() == Some(peer);
-                    let display_name = format!("🙋 {}", peer);
-                    if ui.selectable_label(is_selected, &display_name).clicked() {
-                        self.state.lock().unwrap().selected_conversation = Some(peer.clone());
-                    }
-                }
+                        // Voir les participants
+                        if ui.button("👥 Voir les participants").clicked() {
+                            self.show_participants = true;
+                            ui.close_menu();
+                        }
+
+                        // Effacer l'historique : pas disponible sur "Tous"
+                        if !is_broadcast {
+                            if ui.button("🗑 Effacer l'historique").clicked() {
+                                self.state.lock().unwrap().clear_conversation_history();
+                                ui.close_menu();
+                            }
+                        }
+
+                        // Quitter le salon : uniquement pour les groupes (pas privé, pas broadcast)
+                        // TODO: différencier groupe vs privé quand les groupes seront implémentés
+                    });
+                });
             });
-
             ui.separator();
+
+            // ── Popup participants ─────────────────────────────────────
+            if self.show_participants {
+                let (conv_name, my_name, selected_conv, peers) = {
+                    let s = self.state.lock().unwrap();
+                    (
+                        s.selected_conversation.clone().unwrap_or_else(|| "Tous".to_string()),
+                        s.my_username.clone(),
+                        s.selected_conversation.clone(),
+                        s.peers.clone(),
+                    )
+                };
+                let is_broadcast = selected_conv.is_none();
+                let mut open = self.show_participants;
+                egui::Window::new("Participants")
+                    .open(&mut open)
+                    .resizable(false)
+                    .collapsible(false)
+                    .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                    .show(ctx, |ui| {
+                        ui.label(egui::RichText::new(format!("Conversation : {}", conv_name)).strong());
+                        ui.separator();
+                        if is_broadcast {
+                            // Afficher tous les peers connectés
+                            for peer in &peers {
+                                ui.horizontal(|ui| {
+                                    ui.label("👤");
+                                    ui.label(&peer.username);
+                                });
+                            }
+                            if peers.is_empty() {
+                                ui.label("Aucun participant connecté");
+                            }
+                        } else {
+                            // Conversation privée : moi + l'autre
+                            ui.horizontal(|ui| {
+                                ui.label("👤");
+                                ui.label(format!("{} (vous)", my_name));
+                            });
+                            if let Some(peer) = selected_conv {
+                                ui.horizontal(|ui| {
+                                    ui.label("👤");
+                                    ui.label(&peer);
+                                });
+                            }
+                        }
+                    });
+                self.show_participants = open;
+            }
 
             // ── Messages filtrés ────────────────────────────────────────
             egui::ScrollArea::vertical()
