@@ -19,7 +19,8 @@ function New-Shortcut {
         [string]$TargetPath,
         [string]$ShortcutPath,
         [string]$Arguments = '',
-        [string]$Description = 'Abcom - LAN chat'
+        [string]$Description = 'Abcom - LAN chat',
+        [string]$IconLocation = ''
     )
 
     $WshShell = New-Object -ComObject WScript.Shell
@@ -28,7 +29,11 @@ function New-Shortcut {
     $Shortcut.Arguments = $Arguments
     $Shortcut.WorkingDirectory = Split-Path $TargetPath
     $Shortcut.Description = $Description
-    $Shortcut.IconLocation = $TargetPath
+    if ($IconLocation) {
+        $Shortcut.IconLocation = $IconLocation
+    } else {
+        $Shortcut.IconLocation = $TargetPath
+    }
     $Shortcut.Save()
 }
 
@@ -42,6 +47,8 @@ $TargetDir = Join-Path $RepoRoot "target\release"
 $BinaryName = "abcom.exe"
 $BinaryPath = Join-Path $TargetDir $BinaryName
 $InstallDir = Join-Path $env:LOCALAPPDATA "Programs\abcom"
+$IconSource = Join-Path $RepoRoot "assets\app_icon.png"
+$IconPath = Join-Path $InstallDir "app_icon.png"
 $DesktopShortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) "Abcom.lnk"
 $StartMenuDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Abcom"
 $StartMenuShortcut = Join-Path $StartMenuDir "Abcom.lnk"
@@ -59,6 +66,7 @@ if (-not (Test-Path $BinaryPath)) {
 Write-Host "Installation dans $InstallDir"
 New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
 Copy-Item -Path $BinaryPath -Destination $InstallDir -Force
+Copy-Item -Path $IconSource -Destination $IconPath -Force
 
 $ReadmeSource = Join-Path $RepoRoot "README.md"
 if (Test-Path $ReadmeSource) {
@@ -67,8 +75,8 @@ if (Test-Path $ReadmeSource) {
 
 Write-Host "Création de raccourcis"
 New-Item -ItemType Directory -Path $StartMenuDir -Force | Out-Null
-New-Shortcut -TargetPath (Join-Path $InstallDir $BinaryName) -ShortcutPath $DesktopShortcut -Arguments $Username
-New-Shortcut -TargetPath (Join-Path $InstallDir $BinaryName) -ShortcutPath $StartMenuShortcut -Arguments $Username
+New-Shortcut -TargetPath (Join-Path $InstallDir $BinaryName) -ShortcutPath $DesktopShortcut -Arguments $Username -IconLocation $IconPath
+New-Shortcut -TargetPath (Join-Path $InstallDir $BinaryName) -ShortcutPath $StartMenuShortcut -Arguments $Username -IconLocation $IconPath
 
 Write-Host "✅ Installation Windows terminée."
 Write-Host "Lance Abcom depuis le bureau ou le menu Démarrer."
