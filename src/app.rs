@@ -25,6 +25,7 @@ pub struct AppState {
     pub typing_users: HashMap<String, SystemTime>,  // qui tape, jusqu'à quand
     pub read_counts: HashMap<String, usize>,
     history_path: PathBuf,
+    read_counts_path: PathBuf,
 }
 
 impl AppState {
@@ -33,6 +34,10 @@ impl AppState {
             .unwrap_or_else(|| PathBuf::from("."))
             .join("abcom")
             .join("messages.json");
+        let read_counts_path = dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("abcom")
+            .join("read_counts.json");
 
         let mut state = Self {
             my_username: username,
@@ -42,10 +47,13 @@ impl AppState {
             typing_users: HashMap::new(),
             read_counts: HashMap::new(),
             history_path,
+            read_counts_path,
         };
 
         // Charge les messages historiques
         state.load_messages();
+        // Charge les compteurs de lecture
+        state.load_read_counts();
         // Reconstruit les pairs connus depuis l'historique (hors ligne par défaut)
         state.restore_peers_from_history();
         state
@@ -93,12 +101,31 @@ impl AppState {
         }
     }
 
+    fn load_read_counts(&mut self) {
+        if self.read_counts_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&self.read_counts_path) {
+                if let Ok(counts) = serde_json::from_str::<HashMap<String, usize>>(&content) {
+                    self.read_counts = counts;
+                }
+            }
+        }
+    }
+
     fn save_messages(&self) {
         if let Some(parent) = self.history_path.parent() {
             let _ = std::fs::create_dir_all(parent);
         }
         if let Ok(json) = serde_json::to_string_pretty(&self.messages) {
             let _ = std::fs::write(&self.history_path, json);
+        }
+    }
+
+    fn save_read_counts(&self) {
+        if let Some(parent) = self.read_counts_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(json) = serde_json::to_string_pretty(&self.read_counts) {
+            let _ = std::fs::write(&self.read_counts_path, json);
         }
     }
 
@@ -142,6 +169,7 @@ impl AppState {
             m.from == peer_username && m.to_user == Some(self.my_username.clone())
         }).count();
         self.read_counts.insert(peer_username.to_string(), count);
+        self.save_read_counts();
     }
 
     /// Get messages for the selected conversation
@@ -233,18 +261,12 @@ impl AppState {
 
         let mut disconnected = Vec::new();
 
-        self.peers.retain(|peer| {
+        for peer in &mut self.peers {
             let is_active = now - peer.last_seen < timeout_secs;
-            if !is_active {
+            if !is_active && peer.online {
+                // Marquer comme hors ligne au lieu de supprimer
+                peer.online = false;
                 disconnected.push(peer.username.clone());
-            }
-            is_active
-        });
-
-        // Si des peers ont été supprimés, décochecter si c'était la conversation sélectionnée
-        if let Some(ref username) = self.selected_conversation {
-            if !self.peers.iter().any(|p| p.username == *username) {
-                self.selected_conversation = None;
             }
         }
 
