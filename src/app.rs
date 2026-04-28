@@ -13,6 +13,8 @@ pub struct Peer {
     pub addr: SocketAddr,
     /// Epoch timestamp de la dernière réception d'un broadcast UDP
     pub last_seen: u64,
+    /// Indique si le pair est actuellement connecté
+    pub online: bool,
 }
 
 pub struct AppState {
@@ -78,10 +80,11 @@ impl AppState {
             if peer.username == username {
                 peer.addr = tcp_addr;
                 peer.last_seen = now;
+                peer.online = true;
                 return;
             }
         }
-        self.peers.push(Peer { username, addr: tcp_addr, last_seen: now });
+        self.peers.push(Peer { username, addr: tcp_addr, last_seen: now, online: true });
     }
 
     pub fn add_message(&mut self, msg: ChatMessage) {
@@ -218,7 +221,11 @@ impl AppState {
     pub fn selected_peer_addr(&self) -> Option<SocketAddr> {
         self.selected_conversation
             .as_ref()
-            .and_then(|username| self.peers.iter().find(|p| p.username == *username))
+            .and_then(|username| self.peers.iter().find(|p| p.username == *username && p.online))
             .map(|p| p.addr)
+    }
+
+    pub fn is_peer_online(&self, username: &str) -> bool {
+        self.peers.iter().any(|p| p.username == username && p.online)
     }
 }

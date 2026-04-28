@@ -20,9 +20,15 @@ build:
 release:
 	$(CARGO) build --release
 
-## Lance directement (développement)
+## Lance directement sur Windows (cross-compilation depuis WSL)
+WIN_TARGET := x86_64-pc-windows-gnu
+WIN_INSTALL_DIR := /mnt/c/Users/$(USER)/AppData/Local/abcom
 run:
-	$(CARGO) run -- $(USER)
+	$(CARGO) build --release --target $(WIN_TARGET)
+	@mkdir -p $(WIN_INSTALL_DIR)
+	@cp target/$(WIN_TARGET)/release/abcom.exe $(WIN_INSTALL_DIR)/abcom.exe
+	@cp -r assets $(WIN_INSTALL_DIR)/ 2>/dev/null || true
+	@/mnt/c/Windows/System32/cmd.exe /c start "" "C:\Users\$(USER)\AppData\Local\abcom\abcom.exe" $(USER)
 
 ## Installe le binaire + active le service systemd + raccourci menu
 install: release
