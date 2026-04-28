@@ -7,6 +7,17 @@ use tokio::sync::mpsc;
 use crate::app::AppState;
 use crate::message::{AppEvent, ChatMessage, SendRequest};
 
+fn app_icon_data() -> Option<egui::IconData> {
+    let data = include_bytes!("../Sans titre.png");
+    match eframe::icon_data::from_png_bytes(data) {
+        Ok(icon) => Some(icon),
+        Err(err) => {
+            eprintln!("[ui] Impossible de charger l’icône d’application : {}", err);
+            None
+        }
+    }
+}
+
 fn emoji_font_path() -> std::path::PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("~/.local/share"))
@@ -33,10 +44,16 @@ pub fn run(
     event_rx: mpsc::Receiver<AppEvent>,
     send_tx: mpsc::Sender<SendRequest>,
 ) -> anyhow::Result<()> {
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("Abcom")
+        .with_inner_size([860.0, 600.0]);
+
+    if let Some(icon) = app_icon_data() {
+        viewport = viewport.with_icon(icon);
+    }
+
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("Abcom")
-            .with_inner_size([860.0, 600.0]),
+        viewport,
         ..Default::default()
     };
 
