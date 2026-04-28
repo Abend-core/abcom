@@ -86,6 +86,7 @@ struct AbcomApp {
     enable_sound_notifications: bool,
     last_notification: Option<String>,
     notification_time: std::time::Instant,
+    has_unread: bool,
     emoji_textures: Vec<(String, egui::TextureHandle)>,
     emoji_textures_loaded: bool,
     emoji_category: usize,
@@ -161,8 +162,30 @@ fn render_inline(
     }
 }
 
+#[cfg(windows)]
 fn play_notification_sound() {
-    // Beep console (fonctionne sur la plupart des terminaux)
+    std::thread::spawn(|| {
+        use rodio::source::Source;
+        use std::time::Duration;
+
+        let Ok((_stream, stream_handle)) = rodio::OutputStream::try_default() else { return };
+        let Ok(sink) = rodio::Sink::try_new(&stream_handle) else { return };
+
+        let tone1 = rodio::source::SineWave::new(880.0)
+            .take_duration(Duration::from_millis(80))
+            .amplify(0.25);
+        let tone2 = rodio::source::SineWave::new(1100.0)
+            .take_duration(Duration::from_millis(80))
+            .amplify(0.20);
+
+        sink.append(tone1);
+        sink.append(tone2);
+        sink.sleep_until_end();
+    });
+}
+
+#[cfg(not(windows))]
+fn play_notification_sound() {
     print!("\x07");
 }
 
@@ -182,6 +205,7 @@ impl AbcomApp {
             enable_sound_notifications: true,
             last_notification: None,
             notification_time: std::time::Instant::now(),
+            has_unread: false,
             emoji_textures: Vec::new(),
             emoji_textures_loaded: false,
             emoji_category: 0,
@@ -210,21 +234,23 @@ impl eframe::App for AbcomApp {
                 match evt {
                     AppEvent::MessageReceived(msg) => {
                         s.add_message(msg.clone());
-                        // Notification visuelle
-                        self.last_notification = Some(format!("{}: {}", msg.from, msg.content));
-                        self.notification_time = std::time::Instant::now();
-                        // Notification sonore si pas de moi-même et activé
-                        if msg.from != s.my_username && self.enable_sound_notifications {
-                            play_notification_sound();
+                        if msg.from != s.my_username {
+                            // Notification visuelle dans l'app
+                            self.last_notification = Some(format!("{}: {}", msg.from, msg.content));
+                            self.notification_time = std::time::Instant::now();
+                            // Flash barre des tâches si fenêtre pas au premier plan
+                            self.has_unread = true;
+                            // Son
+                            if self.enable_sound_notifications {
+                                play_notification_sound();
+                            }
                         }
                     }
                     AppEvent::PeerDiscovered { username, addr } => s.add_peer(username, addr),
                     AppEvent::PeerDisconnected { username } => {
-                        // Retirer le peer de la liste
-                        s.peers.retain(|p| p.username != username);
-                        // Si c'était la conversation sélectionnée, revenir à Global
-                        if s.selected_conversation.as_ref() == Some(&username) {
-                            s.selected_conversation = None;
+                        // Marquer le pair hors ligne (sans supprimer l'historique ni la carte)
+                        if let Some(peer) = s.peers.iter_mut().find(|p| p.username == username) {
+                            peer.online = false;
                         }
                     }
                     AppEvent::UserTyping(username) => s.set_user_typing(username),
@@ -238,6 +264,22 @@ impl eframe::App for AbcomApp {
 
         // Repeindre toutes les 100 ms pour capter les nouveaux messages
         ctx.request_repaint_after(Duration::from_millis(100));
+
+        // Flash de la barre des tâches si message non lu et fenêtre non focalisée
+        if self.has_unread {
+            let focused = ctx.input(|i| i.focused);
+            if !focused {
+                ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
+                    egui::UserAttentionType::Informational,
+                ));
+            } else {
+                // La fenêtre est revenue au premier plan : effacer le flag
+                self.has_unread = false;
+                ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
+                    egui::UserAttentionType::Reset,
+                ));
+            }
+        }
 
         // ── Panneau gauche : conversations et salons ──────────────────────
         egui::SidePanel::left("peers_panel")
@@ -283,9 +325,19 @@ impl eframe::App for AbcomApp {
                         ui.painter().rect_filled(rect, 8.0, fill);
                         ui.painter().rect_stroke(rect, 8.0, stroke, egui::StrokeKind::Outside);
 
+                        // Diode de statut (verte = en ligne, rouge = hors ligne)
+                        let dot_radius = 5.0;
+                        let dot_center = egui::pos2(rect.left() + 10.0, rect.center().y);
+                        let dot_color = if peer.online {
+                            egui::Color32::from_rgb(50, 200, 80)
+                        } else {
+                            egui::Color32::from_rgb(180, 40, 40)
+                        };
+                        ui.painter().circle_filled(dot_center, dot_radius, dot_color);
+
                         let text_color = ui.visuals().text_color();
                         let font_id = egui::TextStyle::Button.resolve(ui.style());
-                        let text_pos = rect.left_center() + egui::vec2(12.0, 0.0);
+                        let text_pos = rect.left_center() + egui::vec2(24.0, 0.0);
                         ui.painter().text(text_pos, egui::Align2::LEFT_CENTER, &peer.username, font_id.clone(), text_color);
 
                         if unread > 0 {
@@ -366,6 +418,28 @@ impl eframe::App for AbcomApp {
         }
 
         // ── Barre du bas : champ de saisie ────────────────────────────────
+        // Cacher la saisie si la conversation sélectionnée est un pair hors ligne
+        let selected_peer_online = {
+            let s = self.state.lock().unwrap();
+            match &s.selected_conversation {
+                None => true, // Global = toujours actif
+                Some(username) => s.is_peer_online(username),
+            }
+        };
+
+        if !selected_peer_online {
+            egui::TopBottomPanel::bottom("input_panel")
+                .exact_height(40.0)
+                .show(ctx, |ui| {
+                    ui.centered_and_justified(|ui| {
+                        ui.label(
+                            egui::RichText::new("🔴 Cet utilisateur est hors ligne")
+                                .color(egui::Color32::from_rgb(180, 40, 40))
+                                .small(),
+                        );
+                    });
+                });
+        } else {
         egui::TopBottomPanel::bottom("input_panel")
             .exact_height(68.0)  // Hauteur légère avec padding
             .show(ctx, |ui| {
@@ -459,6 +533,7 @@ impl eframe::App for AbcomApp {
                     }
                 });
             });
+        } // fin else selected_peer_online
 
         // ── Notification popup ─────────────────────────────────────────────
         if let Some(notif) = &self.last_notification {
