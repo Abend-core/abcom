@@ -20,3 +20,6 @@ chrono = "0.4"
 anyhow = "1"
 dirs = "5"
 image = { version = "0.25", default-features = false, features = ["png"] }
+
+[target.'cfg(windows)'.dependencies]
+rodio = { version = "0.19", default-features = false, features = ["symphonia-wav"] }
