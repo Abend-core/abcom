@@ -111,6 +111,22 @@ impl AppState {
         convos
     }
 
+    pub fn clear_conversation_history(&mut self) {
+        match &self.selected_conversation {
+            None => {
+                // Remove all global broadcast messages
+                self.messages.retain(|m| m.to_user.is_some());
+            }
+            Some(username) => {
+                self.messages.retain(|m| {
+                    !((m.from == *username && m.to_user == Some(self.my_username.clone()))
+                        || (m.from == self.my_username && m.to_user == Some(username.clone())))
+                });
+            }
+        }
+        self.save_messages();
+    }
+
     pub fn set_user_typing(&mut self, username: String) {
         self.typing_users.insert(username, SystemTime::now());
     }
