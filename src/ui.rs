@@ -110,7 +110,7 @@ fn render_inline(
                 let s: String = chars[i..i + len].iter().collect();
                 if let Some(&idx) = emoji_map.get(&s) {
                     if !acc.is_empty() {
-                        ui.label(egui::RichText::new(&acc).wrap());
+                        ui.label(&acc);
                         acc.clear();
                     }
                     if let Some((_, tex)) = textures.get(idx) {
@@ -132,7 +132,7 @@ fn render_inline(
         }
     }
     if !acc.is_empty() {
-        ui.label(egui::RichText::new(&acc).wrap());
+        ui.label(&acc);
     }
 }
 
