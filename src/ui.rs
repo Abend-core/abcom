@@ -286,8 +286,9 @@ impl eframe::App for AbcomApp {
 
                     let available_w = ui.available_width() - 105.0;
                     let resp = ui.add(
-                        egui::TextEdit::singleline(&mut self.input)
+                        egui::TextEdit::multiline(&mut self.input)
                             .desired_width(available_w)
+                            .desired_rows(1)
                             .hint_text("Écrire un message…"),
                     );
 
