@@ -1,44 +1,31 @@
 > [🏠 Accueil](../README.md) > [📖 Glossaire](05-glossaire.md)
 
-> 📅 **Généré le** : 2026-04-27  
-> 🔖 **Stack analysée** : Rust 2021, tokio 1, serde 1, serde_json 1, eframe 0.31, egui 0.31, chrono 0.4, anyhow 1  
-> 🔄 **À régénérer si** : refonte archi, changement majeur de stack, ajout/suppression de composant
+> 📅 **Généré le** : 2026-04-28
+> 🔖 **Stack analysée** : Rust 2021, tokio 1, serde 1, serde_json 1, eframe 0.31, egui 0.31, chrono 0.4, anyhow 1
+> 🔄 **À régénérer si** : évolution du vocabulaire technique, ajout d’un nouveau composant
 
 # Glossaire
 
-## 🌱 Pour comprendre
-Ce glossaire définit les termes techniques clés utilisés dans la documentation Abcom.
+## LAN
+Local Area Network. Réseau local où toutes les machines peuvent communiquer sans traverser Internet. Abcom est conçu pour fonctionner exclusivement sur un LAN de confiance.
 
-### LAN
-Local Area Network. Un réseau local composé de machines sur une même plage d’adresses, généralement de confiance.
+## UDP broadcast
+Méthode d’envoi de paquets UDP à l’adresse de diffusion du réseau local (`255.255.255.255`). Utilisée ici pour annoncer la présence d’un pair sur le port `9001`.
 
-### UDP broadcast
-Type de paquet UDP envoyé à l’adresse de diffusion du réseau local (`255.255.255.255`) pour annoncer la présence d’un hôte.
+## TCP
+Transmission Control Protocol. Protocole orienté connexion et fiable. Abcom l’utilise pour transmettre les messages JSON d’un pair à un autre sur le port `9000`.
 
-### TCP
-Transmission Control Protocol. Protocole orienté connexion et fiable, utilisé ici pour envoyer les messages texte.
+## Tokio
+Runtime asynchrone Rust. Il gère les tâches concurrentes de découverte, d’écoute TCP et d’envoi TCP dans Abcom.
 
-### Tokio
-Runtime asynchrone Rust utilisé pour exécuter les tâches réseau en parallèle avec l’interface graphique.
+## eframe / egui
+Bibliothèques Rust pour interface graphique native. `eframe` lance la fenêtre native et `egui` gère les widgets, les panneaux et les contrôles.
 
-### egui / eframe
-Bibliothèque Rust pour interface graphique native. `eframe` fournit le conteneur d’application autour de `egui`.
+## systemd user
+Mode de service systemd exécuté au niveau utilisateur, sans privilèges root. Abcom peut être démarré et activé via `systemctl --user`.
 
-### JSON
-JavaScript Object Notation. Format de sérialisation utilisé pour les structures `DiscoveryPacket` et `ChatMessage`.
+## JSON
+JavaScript Object Notation. Format texte utilisé pour sérialiser les paquets de découverte et les messages échangés.
 
-## 🔧 Pour utiliser
-- `ChatMessage` : structure contenant `from`, `content`, `timestamp`.
-- `DiscoveryPacket` : structure de découverte UDP contenant `username`.
-- `AppEvent` : enum de communication interne entre le réseau et l’UI.
-
-## ⚙️ Pour maîtriser
-- Le protocole interne est simple :
-  - UDP broadcast pour annoncer son pseudo,
-  - TCP pour envoyer un message JSON à un pair.
-- L’état local est géré par `AppState` dans `src/app.rs`.
-- L’UI consomme `AppEvent` pour mettre à jour la liste des pairs et des messages.
-
-## 📚 Voir aussi
-- [Architecture globale](01-architecture-globale.md)
-- [Mécanismes et données](abcom/02-mecanismes-et-donnees.md)
+## Peer
+Pair. Une autre instance Abcom détectée sur le LAN. Chaque pair est identifiée par un nom d’utilisateur et une adresse TCP calculée à partir de son adresse IP.

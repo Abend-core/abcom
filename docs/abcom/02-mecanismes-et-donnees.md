@@ -1,65 +1,63 @@
-> [🏠 Accueil](../../README.md) > [📦 Composant Abcom](README.md) > [🔄 Mécanismes et données](02-mecanismes-et-donnees.md)
+> [🏠 Accueil](../../README.md) > [📦 Composant Abcom](README.md) > Mécanismes et données
 
-> 📅 **Généré le** : 2026-04-27  
-> 🔖 **Stack analysée** : Rust 2021, tokio 1, serde 1, serde_json 1, eframe 0.31, egui 0.31, chrono 0.4, anyhow 1  
-> 🔄 **À régénérer si** : refonte archi, changement majeur de stack, ajout/suppression de composant
+> 📅 **Généré le** : 2026-04-28
+> 🔖 **Stack analysée** : Rust 2021, tokio 1, serde 1, serde_json 1, eframe 0.31, egui 0.31, chrono 0.4, anyhow 1
+> 🔄 **À régénérer si** : nouveau protocole de message, mode multi-groupe ou persistence modifiée
 
 # Mécanismes et données
 
-## 🌱 Pour comprendre
-Le flux de données Abcom repose sur deux mécanismes réseau distincts : la découverte de pairs par UDP et l’échange de messages par TCP. Chaque message est sérialisé en JSON et porté par des structures Rust dédiées.
+## 🌱 Protocole réseau
+Abcom utilise deux canaux distincts :
+- **découverte** : UDP broadcast sur `9001/udp`, paquet JSON `DiscoveryPacket { username }`.
+- **messages** : TCP point à point sur `9000/tcp`, message JSON `ChatMessage`.
 
-## 🔧 Pour utiliser
-### Protocoles et formats
-- `DiscoveryPacket` :
-  - `username: String`
-  - envoyé en UDP broadcast toutes les 3 secondes.
-- `ChatMessage` :
-  - `from: String`
-  - `content: String`
-  - `timestamp: String`
-  - envoyé en TCP à `TCP_PORT`.
-
-### Flux de données
-```mermaid
-sequenceDiagram
-    participant U as UI
-    participant D as Discovery
-    participant N as Network
-    participant P as Peers
-
-    U->>D: démarrage, username
-    D->>P: broadcast UDP 255.255.255.255:9001
-    P-->>D: réponse discovery UDP
-    D->>U: AppEvent::PeerDiscovered
-    U->>P: sélection pair
-    U->>N: SendRequest avec ChatMessage
-    N->>Peer: TCP 9000
-    Peer-->>N: confirmation implicite (fermeture stream)
-    N->>U: AppEvent::MessageReceived
+### Schéma du paquet de découverte
+```json
+{
+  "username": "Alice"
+}
 ```
 
-### Modèle d’état
-- `AppState.peers` : liste des pairs découverts.
-- `AppState.messages` : historique des messages afficher.
-- `AppState.selected_peer` : index du pair choisi.
+### Schéma du message de chat
+```json
+{
+  "from": "Alice",
+  "content": "Salut !",
+  "timestamp": "12:34",
+  "to_user": null
+}
+```
 
-## ⚙️ Pour maîtriser
-### Découverte de pairs
-- `discovery::run` bind sur `0.0.0.0:9001`.
-- Activation du broadcast UDP via `socket.set_broadcast(true)`.
-- Ignorer son propre broadcast en comparant le pseudo.
+## 🔧 Comportement de découverte
+- `src/discovery.rs` bind `0.0.0.0:9001` et active le broadcast.
+- Toutes les 3 secondes, un `DiscoveryPacket` est envoyé vers `255.255.255.255:9001`.
+- Les paquets entrants sont parsés et seuls les pairs avec un nom différent sont ajoutés.
+- Un événement `AppEvent::PeerDiscovered` est envoyé à l’UI.
 
-### Envoi de messages
-- `network::run_sender` reçoit `SendRequest` et crée une tâche `tokio::spawn` par envoi.
-- Le TCP s’achève avec `stream.shutdown().await` pour forcer `read_to_end` côté serveur.
-- Aucun chiffrement ni authentification n’est appliqué.
+## 🔧 Transmission des messages
+- Le serveur TCP de `src/network.rs` écoute `0.0.0.0:9000`.
+- À chaque connexion entrante, le corps est lu en entier et converti en `ChatMessage`.
+- L’expéditeur `run_sender` se connecte au `SocketAddr` du pair et envoie le JSON.
+- La connexion est explicitement fermée après l’envoi pour permettre `read_to_end`.
 
-### Traitement des messages entrants
-- `handle_incoming` lit tout le flux dans un buffer `Vec<u8>`.
-- Le JSON est désérialisé en `ChatMessage`.
-- Les erreurs de lecture ou de désérialisation sont silencieusement ignorées.
+## ⚙️ Persistance locale
+- Le chemin de stockage est `dirs::data_dir()/abcom/messages.json`.
+- `AppState::new` charge l’historique au démarrage si le fichier existe.
+- À chaque nouveau message, `save_messages` écrit le JSON formaté.
+- Une limitation conservatrice supprime les plus anciens messages au-delà de 500 entrées.
 
-## 📚 Voir aussi
-- [Architecture et structure](01-architecture-et-structure.md)
-- [Sécurité globale](../../04-securite-globale.md)
+### Cas de figure des conversations
+- Canal global : `to_user == None`.
+- Conversation privée : `to_user == Some(username)`.
+- `AppState::get_conversation_messages` filtre selon la sélection active.
+
+```mermaid
+flowchart TB
+    User[Utilisateur] -->|Découverte| Discovery[discovery.rs]
+    Discovery -->|PeerDiscovered| UI[ui.rs]
+    User -->|Envoie message| UI
+    UI -->|SendRequest| Sender[network.rs]
+    Sender -->|TCP 9000| Peer[Pair]
+    Peer -->|Message reçu| Server[network.rs]
+    Server -->|MessageReceived| UI
+```
