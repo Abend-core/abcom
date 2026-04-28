@@ -8,11 +8,19 @@ use crate::app::AppState;
 use crate::message::{AppEvent, ChatMessage, SendRequest};
 
 fn app_icon_data() -> Option<egui::IconData> {
-    let data = include_bytes!("../assets/app_icon.png");
-    match eframe::icon_data::from_png_bytes(data) {
-        Ok(icon) => Some(icon),
+    let data = include_bytes!("../assets/app_icon.jpg");
+    match image::load_from_memory(data) {
+        Ok(img) => {
+            let rgba = img.to_rgba8();
+            let (w, h) = rgba.dimensions();
+            Some(egui::IconData {
+                rgba: rgba.to_vec(),
+                width: w,
+                height: h,
+            })
+        }
         Err(err) => {
-            eprintln!("[ui] Impossible de charger l’icône d’application : {}", err);
+            eprintln!("[ui] Impossible de charger l'icone d'application : {}", err);
             None
         }
     }
