@@ -26,9 +26,9 @@ WIN_INSTALL_DIR := /mnt/c/Users/$(USER)/AppData/Local/abcom
 run:
 	$(CARGO) build --release --target $(WIN_TARGET)
 	@mkdir -p $(WIN_INSTALL_DIR)
-	@cp target/$(WIN_TARGET)/release/abcom.exe $(WIN_INSTALL_DIR)/abcom.exe
+	@cp target/$(WIN_TARGET)/release/abcom.exe $(WIN_INSTALL_DIR)/abcom_new.exe 2>/dev/null || true
 	@cp -r assets $(WIN_INSTALL_DIR)/ 2>/dev/null || true
-	@/mnt/c/Windows/System32/cmd.exe /c start "" "C:\Users\$(USER)\AppData\Local\abcom\abcom.exe" $(USER)
+	@/mnt/c/Windows/System32/cmd.exe /c start "" "C:\Users\$(USER)\AppData\Local\abcom\abcom_new.exe" $(USER)
 
 ## Installe le binaire + active le service systemd + raccourci menu
 install: release

@@ -46,7 +46,41 @@ impl AppState {
 
         // Charge les messages historiques
         state.load_messages();
+        // Reconstruit les pairs connus depuis l'historique (hors ligne par défaut)
+        state.restore_peers_from_history();
         state
+    }
+
+    /// Extrait les noms d'utilisateurs des messages privés et les ajoute comme pairs hors ligne.
+    /// Cela permet d'afficher les cartes de conversation même avant la reconnexion.
+    fn restore_peers_from_history(&mut self) {
+        let mut known: Vec<String> = Vec::new();
+        for msg in &self.messages {
+            // Message reçu en privé : l'expéditeur est un pair connu
+            if msg.to_user == Some(self.my_username.clone()) && !known.contains(&msg.from) {
+                known.push(msg.from.clone());
+            }
+            // Message envoyé en privé : le destinataire est un pair connu
+            if msg.from == self.my_username {
+                if let Some(to) = &msg.to_user {
+                    if !known.contains(to) {
+                        known.push(to.clone());
+                    }
+                }
+            }
+        }
+        for username in known {
+            if !self.peers.iter().any(|p| p.username == username) {
+                // Adresse fictive — sera mise à jour dès la reconnexion
+                let dummy_addr: SocketAddr = "0.0.0.0:0".parse().unwrap();
+                self.peers.push(Peer {
+                    username,
+                    addr: dummy_addr,
+                    last_seen: 0,
+                    online: false,
+                });
+            }
+        }
     }
 
     fn load_messages(&mut self) {
