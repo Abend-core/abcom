@@ -9,10 +9,12 @@ use crate::message::{AppEvent, ChatMessage, SendRequest};
 
 fn app_icon_data() -> Option<egui::IconData> {
     let data = include_bytes!("../assets/app_icon.jpg");
+    eprintln!("[ui] Tentative de chargement de l'icône JPG ({} bytes)", data.len());
     match image::load_from_memory(data) {
         Ok(img) => {
             let rgba = img.to_rgba8();
             let (w, h) = rgba.dimensions();
+            eprintln!("[ui] Icône chargée avec succès : {}x{}", w, h);
             Some(egui::IconData {
                 rgba: rgba.to_vec(),
                 width: w,
@@ -20,8 +22,21 @@ fn app_icon_data() -> Option<egui::IconData> {
             })
         }
         Err(err) => {
-            eprintln!("[ui] Impossible de charger l'icone d'application : {}", err);
-            None
+            eprintln!("[ui] Erreur de chargement icône JPG : {}", err);
+            // Fallback: créer une simple icône 32x32 rouge
+            let mut rgba = vec![0u8; 32 * 32 * 4];
+            for i in 0..(32 * 32) {
+                rgba[i * 4] = 200;     // R
+                rgba[i * 4 + 1] = 50;  // G
+                rgba[i * 4 + 2] = 50;  // B
+                rgba[i * 4 + 3] = 255; // A
+            }
+            eprintln!("[ui] Utilisation de l'icône par défaut (carrée rouge)");
+            Some(egui::IconData {
+                rgba,
+                width: 32,
+                height: 32,
+            })
         }
     }
 }
