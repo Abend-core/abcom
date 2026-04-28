@@ -223,9 +223,14 @@ impl eframe::App for AbcomApp {
             .show(ctx, |ui| {
                 ui.add_space(6.0);
 
-                let (peers, selected_conv) = {
+                let (peers, selected_conv, unread_counts) = {
                     let s = self.state.lock().unwrap();
-                    (s.peers.clone(), s.selected_conversation.clone())
+                    let peers = s.peers.clone();
+                    let unread_counts = peers
+                        .iter()
+                        .map(|peer| s.unread_count(&peer.username))
+                        .collect::<Vec<_>>();
+                    (peers, s.selected_conversation.clone(), unread_counts)
                 };
 
                 // Section: Conversations privées
@@ -234,17 +239,64 @@ impl eframe::App for AbcomApp {
                 if peers.is_empty() {
                     ui.weak("En attente de pairs...");
                 } else {
-                    for peer in peers.iter() {
+                    for (idx, peer) in peers.iter().enumerate() {
                         let is_selected = selected_conv.as_ref().map(|c| c == &peer.username).unwrap_or(false);
-                        let label = format!("{}\nPrivé", peer.username);
-                        let resp = ui.add_sized(
-                            [ui.available_width(), 56.0],
-                            egui::SelectableLabel::new(is_selected, label),
-                        );
-                        if resp.clicked() {
-                            self.state.lock().unwrap().selected_conversation =
-                                if is_selected { None } else { Some(peer.username.clone()) };
+                        let unread = unread_counts[idx];
+
+                        let desired = egui::vec2(ui.available_width(), 56.0);
+                        let (rect, resp) = ui.allocate_exact_size(desired, egui::Sense::click());
+                        let visuals = ui.style().interact(&resp);
+                        let fill = if is_selected {
+                            ui.visuals().selection.bg_fill
+                        } else {
+                            visuals.bg_fill
+                        };
+                        let stroke = if is_selected {
+                            ui.visuals().selection.stroke
+                        } else {
+                            visuals.bg_stroke
+                        };
+
+                        ui.painter().rect_filled(rect, 8.0, fill);
+                        ui.painter().rect_stroke(rect, 8.0, stroke, egui::StrokeKind::Outside);
+
+                        let text_color = ui.visuals().text_color();
+                        let font_id = egui::TextStyle::Button.resolve(ui.style());
+                        let text_pos = rect.left_center() + egui::vec2(12.0, 0.0);
+                        ui.painter().text(text_pos, egui::Align2::LEFT_CENTER, &peer.username, font_id.clone(), text_color);
+
+                        if unread > 0 {
+                            let badge_text = if unread > 99 {
+                                "99+".to_string()
+                            } else {
+                                unread.to_string()
+                            };
+                            let badge_size = 24.0;
+                            let badge_rect = egui::Rect::from_min_size(
+                                egui::pos2(rect.right() - badge_size - 12.0, rect.center().y - badge_size / 2.0),
+                                egui::vec2(badge_size, badge_size),
+                            );
+
+                            ui.painter().rect_filled(badge_rect, badge_size / 2.0, egui::Color32::from_rgb(220, 40, 60));
+                            ui.painter().text(
+                                badge_rect.center(),
+                                egui::Align2::CENTER_CENTER,
+                                badge_text,
+                                egui::TextStyle::Body.resolve(ui.style()),
+                                egui::Color32::WHITE,
+                            );
                         }
+
+                        if resp.clicked() {
+                            let mut s = self.state.lock().unwrap();
+                            if is_selected {
+                                s.selected_conversation = None;
+                            } else {
+                                s.selected_conversation = Some(peer.username.clone());
+                                s.mark_conversation_read(&peer.username);
+                            }
+                        }
+
                         ui.add_space(4.0);
                     }
                 }

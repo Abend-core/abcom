@@ -21,6 +21,7 @@ pub struct AppState {
     pub messages: Vec<ChatMessage>,
     pub selected_conversation: Option<String>,  // None = "Global", Some("Alice") = direct with Alice
     pub typing_users: HashMap<String, SystemTime>,  // qui tape, jusqu'à quand
+    pub read_counts: HashMap<String, usize>,
     history_path: PathBuf,
 }
 
@@ -37,6 +38,7 @@ impl AppState {
             messages: Vec::new(),
             selected_conversation: None,  // Starts with "Global"
             typing_users: HashMap::new(),
+            read_counts: HashMap::new(),
             history_path,
         };
 
@@ -83,11 +85,26 @@ impl AppState {
     }
 
     pub fn add_message(&mut self, msg: ChatMessage) {
-        self.messages.push(msg);
+        let incoming_from_selected = self.selected_conversation.as_ref().map(|username| {
+            msg.from == *username && msg.to_user == Some(self.my_username.clone())
+        }).unwrap_or(false);
+
+        self.messages.push(msg.clone());
+        if incoming_from_selected {
+            self.mark_conversation_read(&msg.from);
+        }
+
         if self.messages.len() > 500 {
             self.messages.drain(0..100);
         }
         self.save_messages();
+    }
+
+    pub fn mark_conversation_read(&mut self, peer_username: &str) {
+        let count = self.messages.iter().filter(|m| {
+            m.from == peer_username && m.to_user == Some(self.my_username.clone())
+        }).count();
+        self.read_counts.insert(peer_username.to_string(), count);
     }
 
     /// Get messages for the selected conversation
@@ -117,6 +134,23 @@ impl AppState {
             convos.push(format!("🙋 {}", peer.username));
         }
         convos
+    }
+
+    pub fn unread_count(&self, peer_username: &str) -> usize {
+        if self.selected_conversation.as_ref() == Some(&peer_username.to_string()) {
+            return 0;
+        }
+
+        let total_inbound = self.messages
+            .iter()
+            .filter(|m| {
+                m.from == peer_username
+                    && m.to_user == Some(self.my_username.clone())
+            })
+            .count();
+
+        let read = *self.read_counts.get(peer_username).unwrap_or(&0);
+        total_inbound.saturating_sub(read)
     }
 
     pub fn clear_conversation_history(&mut self) {
