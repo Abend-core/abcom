@@ -8,7 +8,7 @@ use crate::app::AppState;
 use crate::message::{AppEvent, ChatMessage, SendRequest};
 
 fn app_icon_data() -> Option<egui::IconData> {
-    let data = include_bytes!("../Sans titre.png");
+    let data = include_bytes!("../assets/app_icon.png");
     match eframe::icon_data::from_png_bytes(data) {
         Ok(icon) => Some(icon),
         Err(err) => {
