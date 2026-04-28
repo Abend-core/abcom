@@ -28,6 +28,7 @@ pub struct DiscoveryPacket {
 pub enum AppEvent {
     MessageReceived(ChatMessage),
     PeerDiscovered { username: String, addr: SocketAddr },
+    PeerDisconnected { username: String },  // Peer n'a pas répondu depuis trop longtemps
     UserTyping(String),  // nom d'utilisateur qui tape
     UserStoppedTyping(String),
 }
