@@ -196,6 +196,14 @@ impl eframe::App for AbcomApp {
                         }
                     }
                     AppEvent::PeerDiscovered { username, addr } => s.add_peer(username, addr),
+                    AppEvent::PeerDisconnected { username } => {
+                        // Retirer le peer de la liste
+                        s.peers.retain(|p| p.username != username);
+                        // Si c'était la conversation sélectionnée, revenir à Global
+                        if s.selected_conversation.as_ref() == Some(&username) {
+                            s.selected_conversation = None;
+                        }
+                    }
                     AppEvent::UserTyping(username) => s.set_user_typing(username),
                     AppEvent::UserStoppedTyping(_username) => {
                         s.clear_typing_if_old();
