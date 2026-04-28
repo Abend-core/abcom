@@ -14,7 +14,8 @@ Le projet est centré sur un binaire unique `abcom` décrit dans `Cargo.toml`. L
 - `src/` : code source applicatif.
 - `Makefile` : commandes de build, run, install, uninstall.
 - `contrib/abcom.service` : service `systemd` utilisateur.
-- `scripts/abcom-install.sh` : installation locale pour utilisateur.
+- `scripts/abcom-install.sh` : installation locale pour utilisateur Linux.
+- `scripts/install-windows.ps1` : installation Windows avec raccourcis.
 - `scripts/docker/Dockerfile` et `scripts/docker/docker-compose.yml` : image et exécution Docker.
 
 ## 🔧 Build et lancement
@@ -63,6 +64,9 @@ Les scripts Docker construisent une image à partir de `scripts/docker/Dockerfil
 cd scripts/docker
 docker compose up --build
 ```
+
+### Installation sur Windows
+Un guide dédié existe dans `docs/INSTALL_WINDOWS.md` et le script d’installation est `scripts/install-windows.ps1`.
 
 ### Conseils pratiques
 - Vérifie que le dossier `~/.local/share/abcom` existe et est accessible en écriture.
