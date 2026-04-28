@@ -1,25 +1,27 @@
+> [🏠 Accueil](../../README.md) > [📘 ADR](ADR-001-langage-et-stack-rust.md)
+
 # ADR-001 — Choix du langage Rust et de la stack
 
 ## Statut
 Accepté (rétro-actif)
 
-## Contexte
-Le projet Abcom est une application cliente de messagerie locale avec des exigences de performance, de concurrence et de stabilité. Il doit fonctionner sur des postes utilisateurs avec un affichage natif.
+## 🌱 Contexte
+Abcom est une application cliente de messagerie LAN avec des besoins de performance, d’interface native et de concurrence réseau. Le projet doit rester léger et exécutable localement sans serveur central.
 
-## Décision
-Le projet utilise Rust comme langage principal, avec les dépendances suivantes :
+## 🔧 Décision retenue
+Le projet utilise Rust comme langage principal, avec la stack suivante :
 - `tokio` pour le runtime asynchrone,
-- `serde` et `serde_json` pour la sérialisation,
-- `eframe` / `egui` pour l’interface graphique native,
+- `serde` / `serde_json` pour la sérialisation JSON,
+- `eframe` et `egui` pour l’interface native,
 - `chrono` pour les horodatages,
 - `anyhow` pour la gestion d’erreurs.
 
-## Alternatives écartées
-- Electron ou frameworks web : trop lourds pour une application LAN native.
-- Python ou Node.js : moins adaptés pour la compilation statique et les exigences de performance.
-- GUI multiplateforme lourde (Qt, GTK) : dépassement de complexité pour un outil simple.
+## ⚙️ Conséquences techniques
+- Positives : performance, sécurité mémoire, binaire natif léger.
+- Négatives : courbe d’adoption pour des contributeurs non-Rust, compilation plus longue.
+- Neutres : dépendance à l’écosystème Rust et aux versions de `Cargo`.
 
-## Conséquences
-- Positives : performance, sécurité mémoire, application native légère.
-- Négatives : courbe d’adoption pour des contributeurs Rust, compilation plus longue.
-- Neutres : besoin de maîtriser le runtime asynchrone et l’écosystème Rust.
+## Alternatives écartées
+- Electron / web : trop lourds pour une application LAN simple.
+- Python / Node.js : moins adaptés aux binaires statiques et à la concurrence native.
+- Qt / GTK : complexité excessive pour un outil de chat léger.

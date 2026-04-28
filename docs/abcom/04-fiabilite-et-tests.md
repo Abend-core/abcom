@@ -1,44 +1,37 @@
-> [🏠 Accueil](../../README.md) > [📦 Composant Abcom](README.md) > [🧪 Fiabilité et tests](04-fiabilite-et-tests.md)
+> [🏠 Accueil](../../README.md) > [📦 Composant Abcom](README.md) > Fiabilité et tests
 
-> 📅 **Généré le** : 2026-04-27  
-> 🔖 **Stack analysée** : Rust 2021, tokio 1, serde 1, serde_json 1, eframe 0.31, egui 0.31, chrono 0.4, anyhow 1  
-> 🔄 **À régénérer si** : refonte archi, changement majeur de stack, ajout/suppression de composant
+> 📅 **Généré le** : 2026-04-28
+> 🔖 **Stack analysée** : Rust 2021, tokio 1, serde 1, serde_json 1, eframe 0.31, egui 0.31, chrono 0.4, anyhow 1
+> 🔄 **À régénérer si** : couverture de tests ajoutée, robustesse réseau renforcée, persistance modifiée
 
 # Fiabilité et tests
 
-## 🌱 Pour comprendre
-La fiabilité d’Abcom repose sur la robustesse du code réseau et de la boucle UI. Actuellement, le dépôt ne contient pas de tests automatisés ou de suite de validation.
+## 🌱 Robustesse existante
+La fiabilité d’Abcom repose sur des mécanismes simples : gestion d’erreurs locale, `try_recv` non bloquant dans l’UI, et persistance JSON qui tolère l’absence du fichier initial.
 
-## 🔧 Pour utiliser
-### Gestion des erreurs
-- `discovery.rs` : affiche les erreurs de bind et de broadcast sur stderr.
-- `network.rs` : ignore les erreurs de connexion et de lecture, en les journalisant sur stderr.
-- `ui.rs` : ne déclenche pas d’erreur visible à l’utilisateur en cas de problème réseau.
+### Traitement des erreurs
+- `discovery.rs` gère les échecs de `bind` et d’activation du broadcast.
+- `network.rs` ignore les échecs d’acceptation de connexion et logue les erreurs de connexion sortante.
+- `app.rs` tente de créer les dossiers de stockage sans planter l’application.
 
-### Limitations connues
-- Pas de tests unitaires ou d’intégration dans le dépôt actuel.
-- Pas de validation explicite des données reçues sur le réseau.
-- Aucun mécanisme de retry ou de délai exponentiel pour les connexions TCP.
+## 🔧 Scénarios de tolérance
+- perte d’un pair : l’adresse est mise à jour à chaque découverte.
+- duplication de nom : le pair est ignoré si le nom correspond au poste local.
+- message mal formé : la conversion JSON échoue silencieusement et ne bloque pas le serveur.
 
-## ⚙️ Pour maîtriser
-### Points d’amélioration
-- Ajouter des tests unitaires pour `AppState`, `DiscoveryPacket`, et `ChatMessage`.
-- Ajouter des tests d’intégration TCP/UDP pour vérifier la découverte et la transmission.
-- Enrichir la gestion d’erreurs réseau avec des messages d’alerte pour l’utilisateur.
+## ⚙️ Tests et couverture
+### Situation actuelle
+Aucun test automatisé n’a été détecté dans le dépôt.
 
-### Comportement opérationnel
-- Si `tokio::net::UdpSocket::bind` échoue, `discovery::run` termine silencieusement.
-- Si `TcpListener::bind` échoue, le serveur ne redémarre pas automatiquement.
-- `handle_incoming` ne traite que les flux correctement terminés et ignore les paquets JSON malformés.
+### Priorités de test recommandées
+- tests unitaires de `ChatMessage` et `DiscoveryPacket` pour la sérialisation JSON,
+- tests d’intégration pour la découverte UDP et la transmission TCP,
+- tests de persistance sur `AppState::save_messages` et `load_messages`,
+- tests de filtrage de conversation avec `get_conversation_messages`.
 
-### Recommandations de tests
-- `cargo test` devrait être ajouté avec des cas pour :
-  - découverte de pair valide,
-  - envoi TCP vers un pair simulé,
-  - stockage et purge de l’historique de messages.
-- Environnement de test : réseau local simulé ou tests basés sur sockets sur `127.0.0.1`.
+### Actions immédiates
+- ajouter un module `tests/` ou des tests intégrés `#[cfg(test)]` dans les modules existants,
+- exécuter `cargo test` sur chaque merge request,
+- documenter le périmètre de non-régression.
 
-## 📚 Voir aussi
-- [Architecture et structure](01-architecture-et-structure.md)
-- [Mécanismes et données](02-mecanismes-et-donnees.md)
-- [Developer Experience](../../docs/02-developer-experience.md)
+> [À COMPLÉTER PAR L'ÉQUIPE] : inventaire des cas d’erreur de l’UI, priorisation des scénarios de charge.

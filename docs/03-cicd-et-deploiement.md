@@ -1,55 +1,57 @@
 > [🏠 Accueil](../README.md) > [🚚 CICD et déploiement](03-cicd-et-deploiement.md)
 
-> 📅 **Généré le** : 2026-04-27  
-> 🔖 **Stack analysée** : Rust 2021, tokio 1, serde 1, serde_json 1, eframe 0.31, egui 0.31, chrono 0.4, anyhow 1  
-> 🔄 **À régénérer si** : refonte archi, changement majeur de stack, ajout/suppression de composant
+> 📅 **Généré le** : 2026-04-28
+> 🔖 **Stack analysée** : Rust 2021, tokio 1, serde 1, serde_json 1, eframe 0.31, egui 0.31, chrono 0.4, anyhow 1
+> 🔄 **À régénérer si** : mise en place d’un pipeline CI/CD, distribution multi-plateforme, packaging par release
 
 # CICD et déploiement
 
-## 🌱 Pour comprendre
-Le dépôt ne contient pas de configuration CI/CD formelle (`.github/workflows`, `gitlab-ci.yml`, etc.). La stratégie de déploiement actuelle repose sur un `Makefile` local et un service systemd utilisateur dans `contrib/abcom.service`.
+## 🌱 Situation actuelle
+Le dépôt ne contient pas de configuration CI/CD formelle (`.github/workflows`, `gitlab-ci.yml`, etc.). La livraison actuelle repose sur des exécutables locaux, un service `systemd` utilisateur et des scripts Docker.
 
-## 🔧 Pour utiliser
-### Installation locale
+## 🔧 Déploiement local recommandé
+### Pour un développeur Linux
 ```bash
 make install
 ```
 
-### Lancement manuel
+### Pour partager un binaire
 ```bash
-~/.local/bin/abcom
+bash scripts/abcom-install.sh ./target/release/abcom
 ```
 
-### Démarrage systemd utilisateur
-Le service est installé dans `~/.config/systemd/user/abcom.service` et activé par :
+### Activer le service
 ```bash
 systemctl --user daemon-reload
 systemctl --user enable --now abcom.service
 ```
 
-### Arrêt et désinstallation
+### Docker
+Le dossier `scripts/docker` contient :
+- `Dockerfile` : image de build basée sur `rust:1.95`, avec dépendances graphiques pour `egui`.
+- `docker-compose.yml` : trois services `alice`, `bob`, `charlie` sur `network_mode: host`.
+
 ```bash
-make uninstall
+cd scripts/docker
+docker compose up --build
 ```
 
-## ⚙️ Pour maîtriser
-### Contenu du service systemd
-- `ExecStart=%h/.local/bin/abcom`
-- `Restart=on-failure`
-- `PassEnvironment=DISPLAY WAYLAND_DISPLAY XDG_RUNTIME_DIR DBUS_SESSION_BUS_ADDRESS`
-- `WantedBy=graphical-session.target`
+## ⚙️ Choix de déploiement
+- **Local** : idéal pour le développement et les utilisateurs finaux sur Linux.
+- **Service `systemd` utilisateur** : simple à activer, adapté à une session graphique.
+- **Docker** : utile pour tests isolés, mais nécessite un accès au socket X11.
 
-### Limites du déploiement actuel
-- Pas de gestion de versions ou de paquets dans un dépôt de packages.
-- Pas de pipeline CI automatique dans le dépôt.
-- Installation dépend d’un environnement Linux avec systemd et d’une session graphique.
+## 🔧 Points d’amélioration CI/CD
+- Ajouter un workflow GitHub Actions ou GitLab CI pour `cargo build --release` et `cargo test`.
+- Publier des artefacts de release pour les binaires Linux.
+- Vérifier la compatibilité du service `systemd` sur différentes distributions.
 
-### Améliorations possibles
-- ajouter un workflow GitHub Actions ou GitLab CI pour construire et publier le binaire.
-- packager l’application en `cargo deb`, `flatpak`, ou `AppImage`.
-- introduire une vérification des versions du service au démarrage.
-
-## 📚 Voir aussi
-- [Developer Experience](02-developer-experience.md)
-- [Architecture globale](01-architecture-globale.md)
-- [Sécurité globale](04-securite-globale.md)
+### Diagramme de déploiement
+```mermaid
+flowchart TB
+    Dev[Développeur] -->|cargo build| Binary[Abcom binaire]
+    Dev -->|make install| UserService[Service systemd user]
+    Dev -->|docker compose| Docker[Conteneur Docker]
+    UserService -->|start| Host[Machine Linux]
+    Docker -->|host network| LAN[Réseau local]
+```

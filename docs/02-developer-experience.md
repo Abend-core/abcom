@@ -1,31 +1,35 @@
 > [🏠 Accueil](../README.md) > [🛠️ Developer Experience](02-developer-experience.md)
 
-> 📅 **Généré le** : 2026-04-27  
-> 🔖 **Stack analysée** : Rust 2021, tokio 1, serde 1, serde_json 1, eframe 0.31, egui 0.31, chrono 0.4, anyhow 1  
-> 🔄 **À régénérer si** : refonte archi, changement majeur de stack, ajout/suppression de composant
+> 📅 **Généré le** : 2026-04-28
+> 🔖 **Stack analysée** : Rust 2021, tokio 1, serde 1, serde_json 1, eframe 0.31, egui 0.31, chrono 0.4, anyhow 1
+> 🔄 **À régénérer si** : ajout d’un workflow CI, nouvelle cible de packaging, changement de runtime graphique
 
 # Developer Experience
 
-## 🌱 Pour comprendre
-Le dépôt est organisé autour d’un binaire unique `abcom`. La compilation utilise Cargo et la distribution profite d’un `Makefile` pour simplifier l’installation locale et l’activation du service systemd.
+## 🌱 Comprendre la structure du dépôt
+Le projet est centré sur un binaire unique `abcom` décrit dans `Cargo.toml`. Le code est organisé en modules Rust, et l’interface graphique est native via `eframe`.
 
-### Structure de base
-- `Cargo.toml` : dépendances et binaire `abcom`.
-- `src/` : code source Rust.
-- `contrib/abcom.service` : service systemd utilisateur.
-- `Makefile` : commandes `build`, `run`, `install`, `uninstall`.
+### Fichiers clefs
+- `Cargo.toml` : configuration du package et dépendances.
+- `src/` : code source applicatif.
+- `Makefile` : commandes de build, run, install, uninstall.
+- `contrib/abcom.service` : service `systemd` utilisateur.
+- `scripts/abcom-install.sh` : installation locale pour utilisateur.
+- `scripts/docker/Dockerfile` et `scripts/docker/docker-compose.yml` : image et exécution Docker.
 
-## 🔧 Pour utiliser
-### Compilation
+## 🔧 Build et lancement
+### Compilation rapide
 ```bash
 cargo build
+```
+
+### Compilation optimisée
+```bash
 cargo build --release
 ```
 
-### Exécution locale
+### Lancement local
 ```bash
-make run
-# ou
 cargo run --release -- <username>
 ```
 
@@ -35,34 +39,32 @@ make install
 ```
 
 Cette commande :
-- compile en release,
-- copie `target/release/abcom` vers `~/.local/bin/abcom`,
-- installe `contrib/abcom.service` dans `~/.config/systemd/user/`,
-- active et démarre le service user.
+- compile le binaire en release,
+- copie `target/release/abcom` dans `~/.local/bin`,
+- installe le service `contrib/abcom.service` dans `~/.config/systemd/user`,
+- crée un lanceur desktop dans `~/.local/share/applications`.
 
-### Désinstallation
+## ⚙️ Environnements supportés
+### Service systemd utilisateur
+Le service `abcom.service` est prévu pour une session graphique et utilise :
+- `DISPLAY`
+- `WAYLAND_DISPLAY`
+- `XDG_RUNTIME_DIR`
+- `DBUS_SESSION_BUS_ADDRESS`
+
+Il s’exécute en tant qu’utilisateur, sans besoin de `sudo`, via :
 ```bash
-make uninstall
+systemctl --user enable --now abcom.service
 ```
 
-## ⚙️ Pour maîtriser
-### Arborescence des modules
-- `main.rs` orchestre les canaux et le runtime.
-- `app.rs` contient `AppState` et la logique de gestion des pairs/messages.
-- `discovery.rs` émet et reçoit des paquets UDP.
-- `network.rs` gère le serveur TCP et l’envoi des messages.
-- `ui.rs` gère l’interface `eframe`/`egui` et la boucle de rendu.
+### Distribution par Docker
+Les scripts Docker construisent une image à partir de `scripts/docker/Dockerfile` et exposent l’application dans le réseau hôte :
+```bash
+cd scripts/docker
+docker compose up --build
+```
 
-### Variables d’environnement et configuration
-- `USER` : utilisé par `cargo run` et `Makefile`.
-- `HOME` : pour l’installation dans `~/.local/bin`.
-- Systemd passe `DISPLAY`, `WAYLAND_DISPLAY`, `XDG_RUNTIME_DIR`, `DBUS_SESSION_BUS_ADDRESS`.
-
-### Développement et contribution
-- Les tests ne sont pas présents dans le dépôt actuel. Voir [Fiabilité et tests](../docs/abcom/04-fiabilite-et-tests.md).
-- Les dépendances sont déclarées dans `Cargo.toml` et peuvent être mises à jour avec `cargo update`.
-
-## 📚 Voir aussi
-- [Architecture globale](01-architecture-globale.md)
-- [Composant Abcom](../docs/abcom/README.md)
-- [CICD et déploiement](03-cicd-et-deploiement.md)
+### Conseils pratiques
+- Vérifie que le dossier `~/.local/share/abcom` existe et est accessible en écriture.
+- Si l’application ne démarre pas en service, lance-la d’abord en local pour détecter les erreurs d’affichage.
+- Les noms d’utilisateur sont extraits de l’argument `username` ou de la variable d’environnement `USER`.
