@@ -97,43 +97,45 @@ fn render_inline(
     emoji_map: &std::collections::HashMap<String, usize>,
     textures: &[(String, egui::TextureHandle)],
 ) {
-    let chars: Vec<char> = text.chars().collect();
-    let mut i = 0;
-    let mut acc = String::new();
-    let size = egui::vec2(16.0, 16.0);
+    ui.horizontal(|ui| {
+        let chars: Vec<char> = text.chars().collect();
+        let mut i = 0;
+        let mut acc = String::new();
+        let size = egui::vec2(16.0, 16.0);
 
-    while i < chars.len() {
-        let mut matched = false;
-        // Essayer séquences de 2 chars (drapeaux, ZWJ) puis 1 char
-        for len in [2usize, 1] {
-            if i + len <= chars.len() {
-                let s: String = chars[i..i + len].iter().collect();
-                if let Some(&idx) = emoji_map.get(&s) {
-                    if !acc.is_empty() {
-                        ui.label(&acc);
-                        acc.clear();
+        while i < chars.len() {
+            let mut matched = false;
+            // Essayer séquences de 2 chars (drapeaux, ZWJ) puis 1 char
+            for len in [2usize, 1] {
+                if i + len <= chars.len() {
+                    let s: String = chars[i..i + len].iter().collect();
+                    if let Some(&idx) = emoji_map.get(&s) {
+                        if !acc.is_empty() {
+                            ui.label(&acc);
+                            acc.clear();
+                        }
+                        if let Some((_, tex)) = textures.get(idx) {
+                            ui.add(egui::Image::new(tex).fit_to_exact_size(size));
+                        }
+                        i += len;
+                        matched = true;
+                        break;
                     }
-                    if let Some((_, tex)) = textures.get(idx) {
-                        ui.add(egui::Image::new(tex).fit_to_exact_size(size));
-                    }
-                    i += len;
-                    matched = true;
-                    break;
                 }
             }
-        }
-        if !matched {
-            let ch = chars[i];
-            // Ignorer les variation selectors (FE0F) qui ne s'affichent pas
-            if ch != '\u{fe0f}' && ch != '\u{200d}' {
-                acc.push(ch);
+            if !matched {
+                let ch = chars[i];
+                // Ignorer les variation selectors (FE0F) qui ne s'affichent pas
+                if ch != '\u{fe0f}' && ch != '\u{200d}' {
+                    acc.push(ch);
+                }
+                i += 1;
             }
-            i += 1;
         }
-    }
-    if !acc.is_empty() {
-        ui.label(&acc);
-    }
+        if !acc.is_empty() {
+            ui.label(&acc);
+        }
+    });
 }
 
 impl AbcomApp {
