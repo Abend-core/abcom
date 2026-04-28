@@ -92,6 +92,7 @@ struct AbcomApp {
     emoji_textures_loaded: bool,
     emoji_category: usize,
     emoji_map: std::collections::HashMap<String, usize>,
+    last_cleanup_time: std::time::Instant,
 }
 
 fn load_emoji_textures(ctx: &egui::Context) -> Vec<(String, egui::TextureHandle)> {
@@ -212,6 +213,7 @@ impl AbcomApp {
             emoji_textures_loaded: false,
             emoji_category: 0,
             emoji_map: std::collections::HashMap::new(),
+            last_cleanup_time: std::time::Instant::now(),
         }
     }
 }
@@ -265,6 +267,16 @@ impl eframe::App for AbcomApp {
                 }
             }
             s.clear_typing_if_old();
+        }
+
+        // Nettoyer les pairs inactifs toutes les 5 secondes (timeout: 15 secondes)
+        if self.last_cleanup_time.elapsed().as_secs() >= 5 {
+            self.last_cleanup_time = std::time::Instant::now();
+            {
+                let mut s = self.state.lock().unwrap();
+                let _disconnected = s.cleanup_inactive_peers(15);
+                // Les pairs sont marqués offline automatiquement, la UI se mettra à jour
+            }
         }
 
         // Repeindre toutes les 100 ms pour capter les nouveaux messages
