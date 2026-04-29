@@ -101,6 +101,7 @@ struct AbcomApp {
     emoji_map: std::collections::HashMap<String, usize>,
     emoji_alias_to_char: std::collections::HashMap<String, String>,
     emoji_aliases: Vec<String>,
+    shortcode_selected: usize,
     last_cleanup_time: std::time::Instant,
     // Gestion des groupes
     show_group_modal: bool,
@@ -456,6 +457,7 @@ fn custom_composer_input(
     emoji_textures: &[(String, egui::TextureHandle)],
     emoji_alias_to_char: &std::collections::HashMap<String, String>,
     emoji_aliases: &[String],
+    shortcode_menu_open: bool,
     width: f32,
 ) -> (egui::Response, bool, bool) {
     let line_height = 22.0;
@@ -490,10 +492,6 @@ fn custom_composer_input(
         }
     }
 
-    if ui.input(|i| i.pointer.any_pressed()) && !response.contains_pointer() {
-        *input_has_focus = false;
-    }
-
     let has_focus = *input_has_focus || response.has_focus();
     let mut changed = false;
     let mut submit = false;
@@ -514,6 +512,24 @@ fn custom_composer_input(
     }
 
     if has_focus {
+        let caret = caret_points
+            .get(*cursor_char)
+            .copied()
+            .unwrap_or_else(|| *caret_points.last().unwrap_or(&egui::pos2(0.0, 0.0)));
+        let cursor_x = content_rect.left() + caret.x + 1.0;
+        let cursor_top = content_rect.top() + caret.y + 2.0 - (*scroll_lines * line_height);
+        let cursor_bottom = (cursor_top + 18.0).min(content_rect.bottom() - 2.0);
+        ui.ctx().output_mut(|o| {
+            o.mutable_text_under_cursor = true;
+            o.ime = Some(egui::output::IMEOutput {
+                rect,
+                cursor_rect: egui::Rect::from_min_max(
+                    egui::pos2(cursor_x, cursor_top.max(content_rect.top())),
+                    egui::pos2(cursor_x + 1.0, cursor_bottom.max(cursor_top.max(content_rect.top()))),
+                ),
+            });
+        });
+
         if response.hovered() {
             let wheel_y = ui.input(|i| i.raw_scroll_delta.y + i.smooth_scroll_delta.y);
             if wheel_y.abs() > 0.0 && max_scroll > 0.0 {
@@ -538,6 +554,12 @@ fn custom_composer_input(
                                 }
                             }
                         }
+                        insert_text_at_cursor(input, cursor_char, &t);
+                        changed = true;
+                    }
+                }
+                egui::Event::Ime(egui::ImeEvent::Commit(t)) => {
+                    if !t.contains('\n') && !t.contains('\r') && !t.is_empty() {
                         insert_text_at_cursor(input, cursor_char, &t);
                         changed = true;
                     }
@@ -593,12 +615,16 @@ fn custom_composer_input(
                         }
                     }
                     egui::Key::ArrowUp => {
-                        let points = composer_caret_positions(ui, input, emoji_map, 18.0);
-                        move_cursor_vertical(&points, cursor_char, -1, line_height);
+                        if !shortcode_menu_open {
+                            let points = composer_caret_positions(ui, input, emoji_map, 18.0);
+                            move_cursor_vertical(&points, cursor_char, -1, line_height);
+                        }
                     }
                     egui::Key::ArrowDown => {
-                        let points = composer_caret_positions(ui, input, emoji_map, 18.0);
-                        move_cursor_vertical(&points, cursor_char, 1, line_height);
+                        if !shortcode_menu_open {
+                            let points = composer_caret_positions(ui, input, emoji_map, 18.0);
+                            move_cursor_vertical(&points, cursor_char, 1, line_height);
+                        }
                     }
                     egui::Key::Home => {
                         *cursor_char = 0;
@@ -671,16 +697,36 @@ fn custom_composer_input(
             }
 
             if !matched {
-                let ch = chars[i].to_string();
+                let run_start = i;
+                while i < chars.len() {
+                    if chars[i] == '\n' {
+                        break;
+                    }
+                    let mut next_is_emoji = false;
+                    for len in [2usize, 1] {
+                        if i + len <= chars.len() {
+                            let s: String = chars[i..i + len].iter().collect();
+                            if emoji_map.contains_key(&s) {
+                                next_is_emoji = true;
+                                break;
+                            }
+                        }
+                    }
+                    if next_is_emoji {
+                        break;
+                    }
+                    i += 1;
+                }
+
+                let run: String = chars[run_start..i].iter().collect();
                 painter.text(
                     egui::pos2(x, y),
                     egui::Align2::LEFT_CENTER,
-                    &ch,
+                    &run,
                     egui::TextStyle::Body.resolve(ui.style()),
                     ui.visuals().text_color(),
                 );
-                x += measure_text_width(ui, &ch);
-                i += 1;
+                x += measure_text_width(ui, &run);
             }
         }
 
@@ -790,6 +836,7 @@ impl AbcomApp {
             emoji_map: std::collections::HashMap::new(),
             emoji_alias_to_char: std::collections::HashMap::new(),
             emoji_aliases: Vec::new(),
+            shortcode_selected: 0,
             last_cleanup_time: std::time::Instant::now(),
             show_group_modal: false,
             group_name_input: String::new(),
@@ -1111,6 +1158,7 @@ impl eframe::App for AbcomApp {
                 Some(username) => s.is_peer_online(username),
             }
         };
+        let mut emoji_button_clicked = false;
 
         if !selected_peer_online {
             egui::TopBottomPanel::bottom("input_panel")
@@ -1167,6 +1215,7 @@ impl eframe::App for AbcomApp {
                         .inner;
                     if emoji_btn_response.clicked() {
                         self.show_emoji_picker = !self.show_emoji_picker;
+                        emoji_button_clicked = true;
                     }
 
                     ui.add_space(4.0);
@@ -1178,7 +1227,11 @@ impl eframe::App for AbcomApp {
                     };
 
                     let available_w = ui.available_width() - 8.0;
-                    let (resp, pressed_enter, changed) = custom_composer_input(
+                    let menu_open_now = emoji_shortcode_trigger(&self.input, self.input_cursor_char)
+                        .map(|(_, q)| !q.is_empty())
+                        .unwrap_or(false);
+
+                    let (resp, mut pressed_enter, changed) = custom_composer_input(
                         ui,
                         &mut self.input,
                         &mut self.input_cursor_char,
@@ -1188,36 +1241,151 @@ impl eframe::App for AbcomApp {
                         &self.emoji_textures,
                         &self.emoji_alias_to_char,
                         &self.emoji_aliases,
+                        menu_open_now,
                         available_w - 12.0,
                     );
+
+                    let shortcode_limit = match emoji_shortcode_trigger(&self.input, self.input_cursor_char) {
+                        Some((_start, query)) if query.is_empty() => 5,
+                        _ => 12,
+                    };
 
                     let shortcode_list = shortcode_suggestions(
                         &self.input,
                         self.input_cursor_char,
                         &self.emoji_alias_to_char,
                         &self.emoji_aliases,
-                        8,
+                        shortcode_limit,
                     );
+                    let mut clicked_shortcode: Option<String> = None;
+                    if shortcode_list.is_empty() {
+                        self.shortcode_selected = 0;
+                    } else if self.shortcode_selected >= shortcode_list.len() {
+                        self.shortcode_selected = shortcode_list.len() - 1;
+                    }
+
                     if self.input_has_focus && !shortcode_list.is_empty() {
-                        let row_h = 24.0;
-                        let popup_h = (shortcode_list.len() as f32 * row_h + 8.0).min(220.0);
-                        let popup_pos = egui::pos2(resp.rect.left(), resp.rect.top() - popup_h - 6.0);
-                        egui::Area::new("emoji_shortcode_popup".into())
-                            .order(egui::Order::Foreground)
-                            .fixed_pos(popup_pos)
-                            .show(ctx, |ui| {
-                                egui::Frame::popup(ui.style()).show(ui, |ui| {
-                                    ui.set_min_width(resp.rect.width().max(260.0));
-                                    for (idx, (alias, ch)) in shortcode_list.iter().enumerate() {
-                                        let text = format!("{}  :{}", ch, alias);
-                                        if idx == 0 {
-                                            ui.label(egui::RichText::new(text).strong());
-                                        } else {
-                                            ui.label(text);
-                                        }
-                                    }
+                        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)) {
+                            self.shortcode_selected = (self.shortcode_selected + 1).min(shortcode_list.len() - 1);
+                        }
+                        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)) {
+                            self.shortcode_selected = self.shortcode_selected.saturating_sub(1);
+                        }
+                    }
+
+                    if self.input_has_focus && !shortcode_list.is_empty() {
+                        let row_h = 28.0;
+                        let desired_h = (shortcode_list.len() as f32 * row_h + 8.0).min(220.0);
+                        let screen = ctx.screen_rect();
+                        let gap = 14.0;
+                        let popup_bottom = resp.rect.top() - gap;
+                        let available_above = (popup_bottom - (screen.top() + 4.0)).max(0.0);
+                        let popup_h = desired_h.min(available_above);
+                        if popup_h > 8.0 {
+                            let popup_w = resp.rect.width().max(260.0);
+                            let popup_y = popup_bottom - popup_h;
+                            let popup_pos = egui::pos2(resp.rect.left(), popup_y);
+                            egui::Area::new("emoji_shortcode_popup".into())
+                                .order(egui::Order::Foreground)
+                                .fixed_pos(popup_pos)
+                                .show(ctx, |ui| {
+                                    ui.set_min_size(egui::vec2(popup_w, popup_h));
+                                    egui::Frame::popup(ui.style()).show(ui, |ui| {
+                                        ui.set_min_width(popup_w);
+                                        ui.set_min_height(popup_h);
+                                        egui::ScrollArea::vertical()
+                                            .auto_shrink([false, false])
+                                            .max_height((popup_h - 8.0).max(row_h))
+                                            .show_rows(ui, row_h, shortcode_list.len(), |ui, row_range| {
+                                                for idx in row_range {
+                                                    let (alias, ch) = &shortcode_list[idx];
+                                                    let row_w = ui.available_width().max(popup_w - 16.0);
+                                                    let (row_rect, row_resp) = ui.allocate_exact_size(
+                                                        egui::vec2(row_w, row_h),
+                                                        egui::Sense::click(),
+                                                    );
+
+                                                    let hovered = row_resp.hovered();
+                                                    let selected = idx == self.shortcode_selected;
+                                                    if hovered || selected {
+                                                        let fill = if hovered {
+                                                            ui.visuals().widgets.hovered.bg_fill
+                                                        } else {
+                                                            ui.visuals().widgets.active.bg_fill.gamma_multiply(0.6)
+                                                        };
+                                                        ui.painter().rect_filled(row_rect, 4.0, fill);
+                                                    }
+
+                                                    let mut x = row_rect.left() + 8.0;
+                                                    let y = row_rect.center().y;
+                                                    if let Some(&tex_idx) = self.emoji_map.get(ch) {
+                                                        if let Some((_, tex)) = self.emoji_textures.get(tex_idx) {
+                                                            let img_rect = egui::Rect::from_center_size(
+                                                                egui::pos2(x + 9.0, y),
+                                                                egui::vec2(18.0, 18.0),
+                                                            );
+                                                            ui.painter().image(
+                                                                tex.id(),
+                                                                img_rect,
+                                                                egui::Rect::from_min_max(
+                                                                    egui::pos2(0.0, 0.0),
+                                                                    egui::pos2(1.0, 1.0),
+                                                                ),
+                                                                egui::Color32::WHITE,
+                                                            );
+                                                        }
+                                                    }
+                                                    x += 26.0;
+
+                                                    let label = format!(":{}", alias);
+                                                    let text_color = if selected {
+                                                        ui.visuals().strong_text_color()
+                                                    } else {
+                                                        ui.visuals().text_color()
+                                                    };
+                                                    ui.painter().text(
+                                                        egui::pos2(x, y),
+                                                        egui::Align2::LEFT_CENTER,
+                                                        label,
+                                                        egui::TextStyle::Body.resolve(ui.style()),
+                                                        text_color,
+                                                    );
+
+                                                    if row_resp.clicked() {
+                                                        self.shortcode_selected = idx;
+                                                        clicked_shortcode = Some(alias.clone());
+                                                    }
+                                                }
+                                            });
+                                    });
                                 });
-                            });
+                        }
+                    }
+
+                    if self.input_has_focus && !shortcode_list.is_empty() && pressed_enter {
+                        if let Some((alias, _ch)) = shortcode_list.get(self.shortcode_selected) {
+                            clicked_shortcode = Some(alias.clone());
+                            pressed_enter = false;
+                        }
+                    }
+
+                    if let Some(alias) = clicked_shortcode {
+                        if let Some((start, _query)) =
+                            emoji_shortcode_trigger(&self.input, self.input_cursor_char)
+                        {
+                            if let Some(ch) = self.emoji_alias_to_char.get(&alias) {
+                                let end = self.input_cursor_char;
+                                replace_char_range(
+                                    &mut self.input,
+                                    &mut self.input_cursor_char,
+                                    start,
+                                    end,
+                                    ch,
+                                );
+                                self.input_has_focus = true;
+                                self.show_emoji_picker = false;
+                            }
+                        }
                     }
 
                     // Détecter la frappe et envoyer l'indicateur uniquement au pair de la conversation active (max 1 fois/1.5s)
@@ -1312,11 +1480,14 @@ impl eframe::App for AbcomApp {
 
         // ── Popup : Picker d'emojis avec catégories ──────────────────────
         if self.show_emoji_picker {
-            egui::Window::new("Emojis")
+            let picker_window = egui::Window::new("Emojis")
                 .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(0.0, -60.0))
                 .resizable(false)
                 .collapsible(false)
-                .fixed_size([310.0, 340.0])
+                .fixed_size([310.0, 340.0]);
+
+            let mut picker_rect: Option<egui::Rect> = None;
+            if let Some(window_resp) = picker_window
                 .show(ctx, |ui| {
                     // Ligne d'icônes de catégories
                     ui.horizontal(|ui| {
@@ -1352,10 +1523,30 @@ impl eframe::App for AbcomApp {
                                 .spacing([3.0, 3.0])
                                 .show(ui, |ui| {
                                     for (idx, (ch, texture)) in slice.iter().enumerate() {
-                                        let img = egui::Image::new(texture)
-                                            .fit_to_exact_size(egui::vec2(34.0, 34.0));
-                                        let btn = egui::ImageButton::new(img).frame(false);
-                                        if ui.add(btn).on_hover_text(ch.as_str()).clicked() {
+                                        let (cell_rect, cell_resp) = ui.allocate_exact_size(
+                                            egui::vec2(36.0, 36.0),
+                                            egui::Sense::click(),
+                                        );
+                                        if cell_resp.hovered() {
+                                            ui.painter().rect_filled(
+                                                cell_rect,
+                                                6.0,
+                                                ui.visuals().widgets.hovered.bg_fill,
+                                            );
+                                        }
+
+                                        let img_rect = cell_rect.shrink(1.0);
+                                        ui.painter().image(
+                                            texture.id(),
+                                            img_rect,
+                                            egui::Rect::from_min_max(
+                                                egui::pos2(0.0, 0.0),
+                                                egui::pos2(1.0, 1.0),
+                                            ),
+                                            egui::Color32::WHITE,
+                                        );
+
+                                        if cell_resp.on_hover_text(ch.as_str()).clicked() {
                                             insert_emoji_at_cursor(
                                                 &mut self.input,
                                                 &mut self.input_cursor_char,
@@ -1369,7 +1560,23 @@ impl eframe::App for AbcomApp {
                                     }
                                 });
                         });
-                });
+                })
+            {
+                picker_rect = Some(window_resp.response.rect);
+            }
+
+            if self.show_emoji_picker
+                && !emoji_button_clicked
+                && ctx.input(|i| i.pointer.any_pressed())
+            {
+                if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
+                    if let Some(rect) = picker_rect {
+                        if !rect.contains(pos) {
+                            self.show_emoji_picker = false;
+                        }
+                    }
+                }
+            }
         }
 
 
