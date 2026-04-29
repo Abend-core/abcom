@@ -92,6 +92,10 @@ impl AppState {
         state.load_networks();
         // Charge les enregistrements de pairs
         state.load_peer_records();
+        // Assurer que le réseau actuel est enregistré (même sans pairs)
+        if let Some(ref subnet) = state.current_subnet.clone() {
+            state.ensure_network_known(subnet);
+        }
         // Reconstruit les pairs connus depuis l'historique (hors ligne par défaut)
         state.restore_peers_from_history();
         state
@@ -99,13 +103,41 @@ impl AppState {
 
     /// Détecte le subnet /24 de l'interface principale (ex: "192.168.1")
     pub fn detect_subnet() -> Option<String> {
+        // Tentative 1 : via routage (nécessite une route vers 8.8.8.8)
         if let Ok(ip) = local_ip_address::local_ip() {
             if let std::net::IpAddr::V4(v4) = ip {
                 let octs = v4.octets();
-                return Some(format!("{}.{}.{}", octs[0], octs[1], octs[2]));
+                // Ignorer loopback
+                if octs[0] != 127 {
+                    return Some(format!("{}.{}.{}", octs[0], octs[1], octs[2]));
+                }
+            }
+        }
+        // Tentative 2 : scanner les interfaces réseau directement
+        if let Ok(ifaces) = local_ip_address::list_afinet_netifas() {
+            for (_name, ip) in &ifaces {
+                if let std::net::IpAddr::V4(v4) = ip {
+                    let octs = v4.octets();
+                    // Ignorer loopback et link-local
+                    if octs[0] != 127 && !(octs[0] == 169 && octs[1] == 254) {
+                        return Some(format!("{}.{}.{}", octs[0], octs[1], octs[2]));
+                    }
+                }
             }
         }
         None
+    }
+
+    /// Assure que le réseau est dans known_networks, même sans pairs (ex: réseau actuel sans voisins)
+    pub fn ensure_network_known(&mut self, subnet: &str) {
+        if !self.known_networks.iter().any(|n| n.subnet == subnet) {
+            self.known_networks.push(KnownNetwork {
+                subnet: subnet.to_string(),
+                alias: None,
+                seen_peers: Vec::new(),
+            });
+            self.save_networks();
+        }
     }
 
     /// Extrait les noms d'utilisateurs des messages privés et les ajoute comme pairs hors ligne.
