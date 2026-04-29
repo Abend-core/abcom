@@ -457,6 +457,17 @@ impl AppState {
 mod tests {
     use super::*;
 
+    /// Create an AppState for testing without loading persisted data
+    fn new_test_state(username: &str) -> AppState {
+        let mut state = AppState::new(username.to_string());
+        // Clear any loaded data to ensure clean test environment
+        state.groups.clear();
+        state.messages.clear();
+        state.peers.clear();
+        state.read_counts.clear();
+        state
+    }
+
     #[test]
     fn test_validate_group_name_valid() {
         assert!(AppState::validate_group_name("my-group"));
@@ -475,7 +486,7 @@ mod tests {
 
     #[test]
     fn test_create_group_success() {
-        let mut state = AppState::new("alice".to_string());
+        let mut state = new_test_state("alice");
         state.peers.push(Peer {
             username: "bob".to_string(),
             addr: "127.0.0.1:9000".parse().unwrap(),
@@ -491,7 +502,7 @@ mod tests {
 
     #[test]
     fn test_create_group_invalid_name() {
-        let mut state = AppState::new("alice".to_string());
+        let mut state = new_test_state("alice");
         
         let group = state.create_group("".to_string(), vec![]);
         assert!(group.is_none());
@@ -500,7 +511,7 @@ mod tests {
 
     #[test]
     fn test_create_group_duplicate() {
-        let mut state = AppState::new("alice".to_string());
+        let mut state = new_test_state("alice");
         
         state.create_group("DevTeam".to_string(), vec![]);
         let second = state.create_group("DevTeam".to_string(), vec![]);
@@ -511,7 +522,7 @@ mod tests {
 
     #[test]
     fn test_create_group_invalid_member() {
-        let mut state = AppState::new("alice".to_string());
+        let mut state = new_test_state("alice");
         
         // Try to add non-existent peer
         let group = state.create_group("Team".to_string(), vec!["unknown".to_string()]);
@@ -520,7 +531,7 @@ mod tests {
 
     #[test]
     fn test_is_group_owner() {
-        let mut state = AppState::new("alice".to_string());
+        let mut state = new_test_state("alice");
         state.create_group("MyGroup".to_string(), vec![]);
         
         assert!(state.is_group_owner("MyGroup"));
@@ -529,7 +540,7 @@ mod tests {
 
     #[test]
     fn test_is_in_group() {
-        let mut state = AppState::new("alice".to_string());
+        let mut state = new_test_state("alice");
         state.create_group("MyGroup".to_string(), vec![]);
         
         assert!(state.is_in_group("MyGroup"));
@@ -538,7 +549,7 @@ mod tests {
 
     #[test]
     fn test_add_member_to_group() {
-        let mut state = AppState::new("alice".to_string());
+        let mut state = new_test_state("alice");
         state.peers.push(Peer {
             username: "bob".to_string(),
             addr: "127.0.0.1:9000".parse().unwrap(),
@@ -555,7 +566,7 @@ mod tests {
 
     #[test]
     fn test_remove_member_from_group() {
-        let mut state = AppState::new("alice".to_string());
+        let mut state = new_test_state("alice");
         state.peers.push(Peer {
             username: "bob".to_string(),
             addr: "127.0.0.1:9000".parse().unwrap(),
