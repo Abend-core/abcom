@@ -41,6 +41,36 @@ pub struct TypingIndicator {
     pub from: String,
 }
 
+/// Réseau connu (identifié par son subnet /24)
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct KnownNetwork {
+    /// Subnet sous forme de préfixe ex: "192.168.1"
+    pub subnet: String,
+    /// Alias optionnel donné par l'utilisateur
+    pub alias: Option<String>,
+    /// Noms des pairs vus sur ce réseau
+    pub seen_peers: Vec<String>,
+}
+
+impl KnownNetwork {
+    pub fn display_name(&self) -> String {
+        if let Some(alias) = &self.alias {
+            alias.clone()
+        } else {
+            format!("{}.x", self.subnet)
+        }
+    }
+}
+
+/// Alias donné à un pair
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct PeerRecord {
+    pub username: String,
+    pub alias: Option<String>,
+    /// Subnet du réseau sur lequel ce pair a été vu en dernier
+    pub last_subnet: Option<String>,
+}
+
 /// Paquet UDP pour la découverte des pairs sur le LAN
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DiscoveryPacket {

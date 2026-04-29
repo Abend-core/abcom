@@ -101,6 +101,13 @@ pub fn run(
     Ok(())
 }
 
+/// Vue active dans la zone centrale
+#[derive(PartialEq, Clone)]
+enum AppView {
+    Chat,
+    Networks,
+}
+
 struct AbcomApp {
     state: Arc<Mutex<AppState>>,
     event_rx: mpsc::Receiver<AppEvent>,
@@ -128,6 +135,17 @@ struct AbcomApp {
     last_typing_sent: std::time::Instant,
     // Sons désactivés par salon (clé = nom du salon, None = Global)
     muted_conversations: std::collections::HashSet<Option<String>>,
+    // Gestion des réseaux
+    /// Subnet sélectionné pour filtrer le panel gauche (None = réseau actuel)
+    selected_network_filter: Option<String>,
+    /// Vue active dans la zone centrale ("chat" | "networks")
+    active_view: AppView,
+    /// Réseau sélectionné dans la vue réseaux (pour voir ses pairs)
+    networks_view_selected: Option<String>,
+    /// Édition alias réseau
+    editing_network_alias: Option<(String, String)>, // (subnet, buffer)
+    /// Édition alias pair
+    editing_peer_alias: Option<(String, String)>, // (username, buffer)
 }
 
 fn load_emoji_textures(ctx: &egui::Context) -> Vec<(String, egui::TextureHandle)> {
@@ -259,6 +277,11 @@ impl AbcomApp {
             typing_tx,
             last_typing_sent: std::time::Instant::now() - Duration::from_secs(10),
             muted_conversations: std::collections::HashSet::new(),
+            selected_network_filter: None, // sera initialisé au premier update
+            active_view: AppView::Chat,
+            networks_view_selected: None,
+            editing_network_alias: None,
+            editing_peer_alias: None,
         }
     }
 }
@@ -396,14 +419,59 @@ impl eframe::App for AbcomApp {
             .show(ctx, |ui| {
                 ui.add_space(6.0);
 
-                let (peers, selected_conv, unread_counts) = {
+                // Initialiser le filtre réseau sur le réseau actuel si pas encore fait
+                let (current_subnet, known_networks, peers_all, selected_conv, unread_counts_all, peer_records) = {
                     let s = self.state.lock().unwrap();
                     let peers = s.peers.clone();
-                    let unread_counts = peers
-                        .iter()
-                        .map(|peer| s.unread_count(&peer.username))
-                        .collect::<Vec<_>>();
-                    (peers, s.selected_conversation.clone(), unread_counts)
+                    let unread_counts = peers.iter().map(|p| s.unread_count(&p.username)).collect::<Vec<_>>();
+                    (s.current_subnet.clone(), s.known_networks.clone(), peers, s.selected_conversation.clone(), unread_counts, s.peer_records.clone())
+                };
+                if self.selected_network_filter.is_none() {
+                    self.selected_network_filter = current_subnet.clone();
+                }
+
+                // ── Sélecteur de réseau ──
+                ui.horizontal(|ui| {
+                    ui.label("🌐");
+                    let current_label = self.selected_network_filter.as_ref()
+                        .and_then(|s| known_networks.iter().find(|n| &n.subnet == s))
+                        .map(|n| n.display_name())
+                        .unwrap_or_else(|| "Tous".to_string());
+                    egui::ComboBox::from_id_salt("network_filter")
+                        .selected_text(&current_label)
+                        .width(150.0)
+                        .show_ui(ui, |ui| {
+                            // Option "Tous les réseaux"
+                            if ui.selectable_label(self.selected_network_filter.is_none(), "🌐 Tous les réseaux").clicked() {
+                                self.selected_network_filter = None;
+                            }
+                            for net in &known_networks {
+                                let is_selected = self.selected_network_filter.as_ref() == Some(&net.subnet);
+                                let is_current = current_subnet.as_ref() == Some(&net.subnet);
+                                let label = if is_current {
+                                    format!("📡 {} (actuel)", net.display_name())
+                                } else {
+                                    format!("🔌 {}", net.display_name())
+                                };
+                                if ui.selectable_label(is_selected, label).clicked() {
+                                    self.selected_network_filter = Some(net.subnet.clone());
+                                }
+                            }
+                        });
+                });
+
+                // Filtrer les pairs selon le réseau sélectionné
+                let (peers, unread_counts): (Vec<_>, Vec<_>) = if let Some(ref subnet) = self.selected_network_filter {
+                    let seen: Vec<&str> = known_networks.iter()
+                        .find(|n| &n.subnet == subnet)
+                        .map(|n| n.seen_peers.iter().map(|s| s.as_str()).collect())
+                        .unwrap_or_default();
+                    peers_all.iter().zip(unread_counts_all.iter())
+                        .filter(|(p, _)| seen.contains(&p.username.as_str()))
+                        .map(|(p, u)| (p.clone(), *u))
+                        .unzip()
+                } else {
+                    (peers_all.clone(), unread_counts_all.clone())
                 };
 
                 // Section: Conversations privées
@@ -446,7 +514,12 @@ impl eframe::App for AbcomApp {
                         let text_color = ui.visuals().text_color();
                         let font_id = egui::TextStyle::Button.resolve(ui.style());
                         let text_pos = rect.left_center() + egui::vec2(24.0, 0.0);
-                        ui.painter().text(text_pos, egui::Align2::LEFT_CENTER, &peer.username, font_id.clone(), text_color);
+                        // Afficher l'alias s'il existe, sinon le username
+                        let display_name = peer_records.iter()
+                            .find(|r| r.username == peer.username)
+                            .and_then(|r| r.alias.clone())
+                            .unwrap_or_else(|| peer.username.clone());
+                        ui.painter().text(text_pos, egui::Align2::LEFT_CENTER, &display_name, font_id.clone(), text_color);
 
                         if unread > 0 {
                             let badge_text = if unread > 99 {
@@ -537,19 +610,32 @@ impl eframe::App for AbcomApp {
                 }
 
                 // Global conversation
-                let is_global_selected = selected_conv.is_none();
+                let is_global_selected = selected_conv.is_none() && self.active_view == AppView::Chat;
                 let resp = ui.add_sized(
                     [ui.available_width(), 56.0],
                     egui::SelectableLabel::new(is_global_selected, "📢 Tous"),
                 );
                 if resp.clicked() {
                     self.state.lock().unwrap().selected_conversation = None;
+                    self.active_view = AppView::Chat;
                 }
 
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                     let my_name = self.state.lock().unwrap().my_username.clone();
                     ui.separator();
                     ui.label(egui::RichText::new(format!("Vous : {}", my_name)).small());
+                    ui.add_space(4.0);
+                    let networks_btn = ui.add_sized(
+                        [ui.available_width(), 32.0],
+                        egui::SelectableLabel::new(self.active_view == AppView::Networks, "🌐  Gérer les réseaux"),
+                    );
+                    if networks_btn.clicked() {
+                        self.active_view = if self.active_view == AppView::Networks {
+                            AppView::Chat
+                        } else {
+                            AppView::Networks
+                        };
+                    }
                 });
             });
 
@@ -887,8 +973,13 @@ impl eframe::App for AbcomApp {
         }
 
 
-        // ── Zone centrale : messages avec conversations ───────────────────
+        // ── Zone centrale : messages OU vue réseaux ──────────────────────
         egui::CentralPanel::default().show(ctx, |ui| {
+            if self.active_view == AppView::Networks {
+                self.show_networks_view(ui);
+                return;
+            }
+
             let (selected_conv, my_name, conv_messages) = {
                 let s = self.state.lock().unwrap();
                 let selected = s.selected_conversation.clone();
@@ -1048,6 +1139,217 @@ impl eframe::App for AbcomApp {
                         });
                     }
                 });
+        });
+    }
+}
+
+impl AbcomApp {
+    fn show_networks_view(&mut self, ui: &mut egui::Ui) {
+        let (known_networks, peer_records, current_subnet) = {
+            let s = self.state.lock().unwrap();
+            (s.known_networks.clone(), s.peer_records.clone(), s.current_subnet.clone())
+        };
+
+        ui.add_space(8.0);
+        ui.horizontal(|ui| {
+            ui.heading("🌐 Réseaux connus");
+        });
+        ui.separator();
+
+        if known_networks.is_empty() {
+            ui.add_space(40.0);
+            ui.vertical_centered(|ui| {
+                ui.label(egui::RichText::new("Aucun réseau enregistré").weak());
+                ui.label(egui::RichText::new("Les réseaux apparaissent automatiquement quand vous détectez des pairs.").weak().small());
+            });
+            return;
+        }
+
+        // Panel gauche : liste des réseaux sous forme de cards
+        egui::SidePanel::left("networks_list_panel")
+            .resizable(false)
+            .exact_width(220.0)
+            .show_inside(ui, |ui| {
+                ui.add_space(4.0);
+                for net in &known_networks {
+                    let is_selected = self.networks_view_selected.as_ref() == Some(&net.subnet);
+                    let is_current = current_subnet.as_ref() == Some(&net.subnet);
+
+                    let desired = egui::vec2(ui.available_width(), 72.0);
+                    let (rect, resp) = ui.allocate_exact_size(desired, egui::Sense::click());
+                    let fill = if is_selected {
+                        ui.visuals().selection.bg_fill
+                    } else if resp.hovered() {
+                        ui.visuals().widgets.hovered.bg_fill
+                    } else {
+                        ui.visuals().widgets.inactive.bg_fill
+                    };
+                    ui.painter().rect_filled(rect, 8.0, fill);
+
+                    let icon = if is_current { "📡" } else { "🔌" };
+                    let title = net.display_name();
+                    let subtitle = format!("{} pair(s)", net.seen_peers.len());
+                    let text_color = ui.visuals().text_color();
+                    let font = egui::TextStyle::Button.resolve(ui.style());
+                    let small_font = egui::TextStyle::Small.resolve(ui.style());
+                    ui.painter().text(rect.left_top() + egui::vec2(10.0, 16.0), egui::Align2::LEFT_TOP,
+                        format!("{} {}", icon, title), font, text_color);
+                    ui.painter().text(rect.left_top() + egui::vec2(10.0, 38.0), egui::Align2::LEFT_TOP,
+                        &subtitle, small_font, egui::Color32::GRAY);
+                    if is_current {
+                        let badge_font = egui::TextStyle::Small.resolve(ui.style());
+                        ui.painter().text(rect.right_top() + egui::vec2(-8.0, 14.0), egui::Align2::RIGHT_TOP,
+                            "actuel", badge_font, egui::Color32::from_rgb(50, 200, 80));
+                    }
+                    if resp.clicked() {
+                        self.networks_view_selected = Some(net.subnet.clone());
+                        self.editing_network_alias = None;
+                    }
+                    ui.add_space(4.0);
+                }
+            });
+
+        // Zone droite : détail du réseau sélectionné
+        egui::CentralPanel::default().show_inside(ui, |ui| {
+            let Some(ref subnet) = self.networks_view_selected.clone() else {
+                ui.add_space(40.0);
+                ui.vertical_centered(|ui| {
+                    ui.label(egui::RichText::new("← Sélectionnez un réseau").weak());
+                });
+                return;
+            };
+            let Some(net) = known_networks.iter().find(|n| &n.subnet == subnet).cloned() else {
+                return;
+            };
+
+            ui.add_space(8.0);
+            // Titre + édition alias
+            ui.horizontal(|ui| {
+                ui.heading(format!("📡 {}", net.display_name()));
+                ui.label(egui::RichText::new(format!("  {}.x", net.subnet)).weak().small());
+                if let Some((ref edit_subnet, ref mut buf)) = self.editing_network_alias {
+                    if edit_subnet == subnet {
+                        let resp = ui.text_edit_singleline(buf);
+                        if resp.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                            let new_alias = buf.trim().to_string();
+                            let mut s = self.state.lock().unwrap();
+                            if let Some(n) = s.known_networks.iter_mut().find(|n| &n.subnet == subnet) {
+                                n.alias = if new_alias.is_empty() { None } else { Some(new_alias) };
+                            }
+                            s.save_networks();
+                            self.editing_network_alias = None;
+                        }
+                    }
+                } else {
+                    if ui.small_button("✏ Renommer").clicked() {
+                        let current = net.alias.clone().unwrap_or_default();
+                        self.editing_network_alias = Some((subnet.clone(), current));
+                    }
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button(egui::RichText::new("🗑 Oublier ce réseau").color(egui::Color32::from_rgb(220, 60, 60))).clicked() {
+                        self.state.lock().unwrap().forget_network(subnet);
+                        self.networks_view_selected = None;
+                    }
+                });
+            });
+            ui.separator();
+            ui.add_space(8.0);
+
+            // Cards des pairs de ce réseau
+            ui.label(egui::RichText::new(format!("{} paire(s) connu(s) sur ce réseau", net.seen_peers.len())).small().weak());
+            ui.add_space(8.0);
+
+            if net.seen_peers.is_empty() {
+                ui.weak("Aucun pair sur ce réseau.");
+                return;
+            }
+
+            let peers_state = {
+                let s = self.state.lock().unwrap();
+                s.peers.clone()
+            };
+
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                let card_w = 180.0;
+                let card_h = 90.0;
+                let columns = ((ui.available_width() + 12.0) / (card_w + 12.0)).floor().max(1.0) as usize;
+                let mut col = 0usize;
+                ui.horizontal_wrapped(|ui| {
+                    ui.spacing_mut().item_spacing = egui::vec2(12.0, 12.0);
+                    for username in &net.seen_peers {
+                        let peer_live = peers_state.iter().find(|p| &p.username == username);
+                        let online = peer_live.map(|p| p.online).unwrap_or(false);
+                        let alias = peer_records.iter()
+                            .find(|r| &r.username == username)
+                            .and_then(|r| r.alias.clone());
+                        let display = alias.clone().unwrap_or_else(|| username.clone());
+
+                        let (card_rect, card_resp) = ui.allocate_exact_size(egui::vec2(card_w, card_h), egui::Sense::click());
+                        let card_fill = if card_resp.hovered() {
+                            ui.visuals().widgets.hovered.bg_fill
+                        } else {
+                            ui.visuals().widgets.inactive.bg_fill
+                        };
+                        ui.painter().rect_filled(card_rect, 10.0, card_fill);
+                        ui.painter().rect_stroke(card_rect, 10.0, ui.visuals().widgets.inactive.bg_stroke, egui::StrokeKind::Outside);
+
+                        // Dot online
+                        let dot_color = if online { egui::Color32::from_rgb(50, 200, 80) } else { egui::Color32::GRAY };
+                        ui.painter().circle_filled(card_rect.left_top() + egui::vec2(14.0, 14.0), 5.0, dot_color);
+
+                        // Nom affiché
+                        let name_font = egui::TextStyle::Button.resolve(ui.style());
+                        ui.painter().text(card_rect.center_top() + egui::vec2(0.0, 14.0), egui::Align2::CENTER_TOP,
+                            &display, name_font, ui.visuals().text_color());
+
+                        // Username en petit si alias
+                        if alias.is_some() {
+                            let small = egui::TextStyle::Small.resolve(ui.style());
+                            ui.painter().text(card_rect.center_top() + egui::vec2(0.0, 35.0), egui::Align2::CENTER_TOP,
+                                username, small, egui::Color32::GRAY);
+                        }
+
+                        // Édition alias pair
+                        let is_editing = self.editing_peer_alias.as_ref().map(|(u, _)| u == username).unwrap_or(false);
+                        let btn_rect = egui::Rect::from_min_size(
+                            card_rect.left_bottom() + egui::vec2(8.0, -30.0),
+                            egui::vec2(card_w - 16.0, 22.0),
+                        );
+
+                        if is_editing {
+                            if let Some((_, ref mut buf)) = self.editing_peer_alias {
+                                let resp = ui.put(btn_rect, egui::TextEdit::singleline(buf).hint_text("Alias..."));
+                                if resp.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                    let new_alias = buf.trim().to_string();
+                                    let mut s = self.state.lock().unwrap();
+                                    if let Some(rec) = s.peer_records.iter_mut().find(|r| &r.username == username) {
+                                        rec.alias = if new_alias.is_empty() { None } else { Some(new_alias) };
+                                    } else {
+                                        s.peer_records.push(crate::message::PeerRecord {
+                                            username: username.clone(),
+                                            alias: if new_alias.is_empty() { None } else { Some(new_alias) },
+                                            last_subnet: Some(subnet.clone()),
+                                        });
+                                    }
+                                    s.save_peer_records();
+                                    self.editing_peer_alias = None;
+                                }
+                            }
+                        } else {
+                            let edit_btn = ui.put(btn_rect, egui::Button::new(
+                                egui::RichText::new("✏ Alias").small()
+                            ).frame(false));
+                            if edit_btn.clicked() {
+                                self.editing_peer_alias = Some((username.clone(), alias.clone().unwrap_or_default()));
+                            }
+                        }
+
+                        col += 1;
+                        if col >= columns { col = 0; }
+                    }
+                });
+            });
         });
     }
 }
