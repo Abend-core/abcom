@@ -5,7 +5,7 @@ use eframe::egui;
 use tokio::sync::mpsc;
 
 use crate::app::AppState;
-use crate::message::{AppEvent, ChatMessage, SendRequest, SendGroupRequest, SendTypingRequest};
+use crate::message::{AppEvent, ChatMessage, SendRequest, SendGroupRequest, TypingRequest, TypingIndicator, ReadReceiptRequest, MessageAckRequest};
 
 fn app_icon_data() -> Option<egui::IconData> {
     let data = include_bytes!("../assets/app_icon.jpg");
@@ -46,7 +46,9 @@ pub fn run(
     event_rx: mpsc::Receiver<AppEvent>,
     send_tx: mpsc::Sender<SendRequest>,
     send_group_tx: mpsc::Sender<SendGroupRequest>,
-    typing_tx: mpsc::Sender<SendTypingRequest>,
+    send_typing_tx: mpsc::Sender<TypingRequest>,
+    send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
+    send_ack_tx: mpsc::Sender<MessageAckRequest>,
 ) -> anyhow::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Abcom")
@@ -65,8 +67,9 @@ pub fn run(
     eframe::run_native(
         "Abcom",
         options,
-        Box::new(|_cc| {
-            Ok(Box::new(AbcomApp::new(state.clone(), event_rx, send_tx.clone(), send_group_tx.clone(), typing_tx.clone())))
+        Box::new(|cc| {
+            configure_fonts(cc);
+            Ok(Box::new(AbcomApp::new(state.clone(), event_rx, send_tx.clone(), send_group_tx.clone(), send_typing_tx.clone(), send_read_receipt_tx.clone(), send_ack_tx.clone())))
         }),
     )
     .map_err(|e| {
@@ -91,6 +94,9 @@ struct AbcomApp {
     event_rx: mpsc::Receiver<AppEvent>,
     send_tx: mpsc::Sender<SendRequest>,
     send_group_tx: mpsc::Sender<SendGroupRequest>,
+    send_typing_tx: mpsc::Sender<TypingRequest>,
+    send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
+    send_ack_tx: mpsc::Sender<MessageAckRequest>,
     input: String,
     input_cursor_char: usize,
     input_has_focus: bool,
@@ -116,8 +122,11 @@ struct AbcomApp {
     group_name_input: String,
     group_members_selected: std::collections::HashSet<String>,
     // Indicateur de frappe
-    typing_tx: mpsc::Sender<SendTypingRequest>,
-    last_typing_sent: std::time::Instant,
+    send_typing_tx: mpsc::Sender<TypingRequest>,
+    last_typing_broadcast: std::time::Instant,
+    // Message ACK retry
+    send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
+    send_ack_tx: mpsc::Sender<MessageAckRequest>,
     // Sons désactivés par salon (clé = nom du salon, None = Global)
     muted_conversations: std::collections::HashSet<Option<String>>,
     // Gestion des réseaux
@@ -840,13 +849,18 @@ impl AbcomApp {
         event_rx: mpsc::Receiver<AppEvent>,
         send_tx: mpsc::Sender<SendRequest>,
         send_group_tx: mpsc::Sender<SendGroupRequest>,
-        typing_tx: mpsc::Sender<SendTypingRequest>,
+        send_typing_tx: mpsc::Sender<TypingRequest>,
+        send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
+        send_ack_tx: mpsc::Sender<MessageAckRequest>,
     ) -> Self {
         Self {
             state,
             event_rx,
             send_tx,
             send_group_tx,
+            send_typing_tx,
+            send_read_receipt_tx,
+            send_ack_tx,
             input: String::new(),
             input_cursor_char: 0,
             input_has_focus: false,
@@ -870,8 +884,10 @@ impl AbcomApp {
             show_group_modal: false,
             group_name_input: String::new(),
             group_members_selected: std::collections::HashSet::new(),
-            typing_tx,
-            last_typing_sent: std::time::Instant::now() - Duration::from_secs(10),
+            send_typing_tx,
+            last_typing_broadcast: std::time::Instant::now(),
+            send_read_receipt_tx,
+            send_ack_tx,
             muted_conversations: std::collections::HashSet::new(),
             selected_network_filter: None, // sera initialisé au premier update
             active_view: AppView::Chat,
@@ -912,6 +928,29 @@ impl eframe::App for AbcomApp {
             while let Ok(evt) = self.event_rx.try_recv() {
                 match evt {
                     AppEvent::MessageReceived(msg) => {
+                        // Send automatic ACK for private messages
+                        if msg.to_user.is_some() && msg.from != s.my_username {
+                            use crate::app::AppState;
+                            use crate::message::MessageAck;
+                            
+                            if let Some(peer) = s.peers.iter().find(|p| p.username == msg.from) {
+                                let msg_hash = AppState::message_hash(&msg);
+                                let ack = MessageAck {
+                                    from: s.my_username.clone(),
+                                    to: msg.from.clone(),
+                                    message_hash: msg_hash,
+                                    timestamp: chrono::Local::now().format("%H:%M").to_string(),
+                                };
+                                let req = MessageAckRequest {
+                                    to_addr: peer.addr,
+                                    ack,
+                                };
+                                drop(s);  // Release lock before sending
+                                let _ = self.send_ack_tx.try_send(req);
+                                s = self.state.lock().unwrap();  // Re-acquire lock
+                            }
+                        }
+                        
                         s.add_message(msg.clone());
                         if msg.from != s.my_username {
                             // Notification visuelle dans l'app
@@ -982,6 +1021,14 @@ impl eframe::App for AbcomApp {
                             }
                         }
                     }
+                    AppEvent::ReadReceiptReceived(receipt) => {
+                        // Mark message as read in state
+                        s.mark_message_read(receipt.message_hash, receipt.from.clone());
+                    }
+                    AppEvent::MessageAckReceived(ack) => {
+                        // Mark message as acknowledged (received by peer)
+                        s.mark_message_acked(ack.message_hash);
+                    }
                 }
             }
             s.clear_typing_if_old();
@@ -1015,6 +1062,23 @@ impl eframe::App for AbcomApp {
                     drop(s);
                     // Basculer le filtre sur le nouveau réseau automatiquement
                     self.selected_network_filter = new_id;
+                }
+            }
+        }
+
+        // Retry messages with ACK timeout every 2 seconds
+        if self.last_retry_time.elapsed().as_secs_f32() >= 2.0 {
+            self.last_retry_time = std::time::Instant::now();
+            {
+                let mut s = self.state.lock().unwrap();
+                let retry_messages = s.get_retry_messages();
+                drop(s);  // Release lock before sending
+                
+                // Retry sending ACKs for messages that haven't been acknowledged
+                for (_msg_hash, to_addr) in retry_messages {
+                    // NOTE: In a full implementation, we would resend the message itself
+                    // For now, we just update the retry counter to implement exponential backoff
+                    eprintln!("[ui] Retrying message delivery to {}", to_addr);
                 }
             }
         }
@@ -1176,6 +1240,32 @@ impl eframe::App for AbcomApp {
                             } else {
                                 s.selected_conversation = Some(peer.username.clone());
                                 s.mark_conversation_read(&peer.username);
+                                
+                                // Send read receipts for all messages from this peer
+                                let my_name = s.my_username.clone();
+                                let messages_to_read = s.messages.iter()
+                                    .filter(|m| m.from == peer.username && m.to_user == Some(s.my_username.clone()))
+                                    .cloned()
+                                    .collect::<Vec<_>>();
+                                drop(s);  // Release lock before sending
+                                
+                                for msg in messages_to_read {
+                                    use crate::message::{ReadReceipt, ReadReceiptRequest};
+                                    use crate::app::AppState;
+                                    
+                                    let msg_hash = AppState::message_hash(&msg);
+                                    let receipt = ReadReceipt {
+                                        from: my_name.clone(),
+                                        to: msg.from.clone(),
+                                        message_hash: msg_hash,
+                                        timestamp: chrono::Local::now().format("%H:%M").to_string(),
+                                    };
+                                    let req = ReadReceiptRequest {
+                                        to_addr: peer.addr,
+                                        receipt,
+                                    };
+                                    let _ = self.send_read_receipt_tx.try_send(req);
+                                }
                             }
                         }
 
@@ -1552,7 +1642,27 @@ impl eframe::App for AbcomApp {
                     }
 
                     ui.add_space(4.0);
+                    let pressed_enter = ui.input(|i| {
+                        i.key_pressed(egui::Key::Enter) && !i.modifiers.shift
+                    });
 
+                    // Broadcast typing indicator si l'utilisateur est en train de taper
+                    if resp.changed() && !self.input.is_empty() && self.last_typing_broadcast.elapsed().as_millis() > 1000 {
+                        if let Some(addr) = selected_addr {
+                            let indicator = TypingIndicator {
+                                from: {
+                                    let s = self.state.lock().unwrap();
+                                    s.my_username.clone()
+                                },
+                            };
+                            let req = TypingRequest {
+                                to_addr: addr,
+                                indicator,
+                            };
+                            let _ = self.send_typing_tx.try_send(req);
+                            self.last_typing_broadcast = std::time::Instant::now();
+                        }
+                    }
                     if pressed_enter && !self.input.trim().is_empty() {
                         if self.input.ends_with('\n') {
                             self.input.pop();
@@ -1573,10 +1683,27 @@ impl eframe::App for AbcomApp {
                             to_user: selected_peer_name.clone(),
                         };
 
-                        self.state.lock().unwrap().add_message(msg.clone());
-                        if let Some(peer_name) = &selected_peer_name {
-                            self.state.lock().unwrap().selected_conversation = Some(peer_name.clone());
+                        // Mark message as pending ACK if it's private
+                        {
+                            use crate::app::AppState;
+                            let msg_hash = AppState::message_hash(&msg);
+                            let mut s = self.state.lock().unwrap();
+                            s.add_message(msg.clone());
+                            
+                            if let Some(peer_name) = &selected_peer_name {
+                                if peer_name.starts_with("#") {
+                                    // Group message - no ACK needed
+                                } else {
+                                    // Private message - mark as pending ACK
+                                    let peer_addr = s.peers.iter().find(|p| p.username == *peer_name).map(|p| p.addr);
+                                    if let Some(addr) = peer_addr {
+                                        s.mark_message_sent(msg_hash, addr);
+                                    }
+                                }
+                                s.selected_conversation = Some(peer_name.clone());
+                            }
                         }
+
                         self.input.clear();
                         self.input_cursor_char = 0;
                         self.input_has_focus = true;
@@ -1966,6 +2093,19 @@ impl eframe::App for AbcomApp {
                                         .color(name_color)
                                         .strong(),
                                 );
+                                
+                                // Show read receipts only for messages we sent
+                                if msg.from == my_name {
+                                    let s = self.state.lock().unwrap();
+                                    let msg_hash = crate::app::AppState::message_hash(msg);
+                                    let read_count = s.get_read_count(msg_hash);
+                                    
+                                    if read_count > 0 {
+                                        ui.label(egui::RichText::new("✓✓").color(egui::Color32::BLUE).small());
+                                    } else {
+                                        ui.label(egui::RichText::new("✓").color(egui::Color32::GRAY).small());
+                                    }
+                                }
                             });
                             // Message content - render inline with horizontal_wrapped for automatic wrapping
                             ui.horizontal_wrapped(|ui| {
