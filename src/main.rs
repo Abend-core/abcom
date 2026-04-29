@@ -18,6 +18,7 @@ fn main() -> anyhow::Result<()> {
     let (event_tx, event_rx) = mpsc::channel::<message::AppEvent>(256);
     let (send_tx, send_rx) = mpsc::channel::<message::SendRequest>(256);
     let (send_group_tx, send_group_rx) = mpsc::channel::<message::SendGroupRequest>(256);
+    let (send_typing_tx, send_typing_rx) = mpsc::channel::<message::SendTypingRequest>(256);
 
     // Runtime tokio multi-thread — tourne en arrière-plan pendant qu'egui
     // occupe le thread principal.
@@ -29,8 +30,9 @@ fn main() -> anyhow::Result<()> {
     rt.spawn(network::run_server(event_tx.clone()));
     rt.spawn(network::run_sender(send_rx));
     rt.spawn(network::run_sender_group(send_group_rx));
+    rt.spawn(network::run_sender_typing(send_typing_rx));
 
-    ui::run(state, event_rx, send_tx, send_group_tx)?;
+    ui::run(state, event_rx, send_tx, send_group_tx, send_typing_tx)?;
 
     Ok(())
 }

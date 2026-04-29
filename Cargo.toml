@@ -23,3 +23,6 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg"]
 
 [target.'cfg(windows)'.dependencies]
 rodio = { version = "0.19", default-features = false, features = ["symphonia-wav"] }
+
+[target.'cfg(not(windows))'.dependencies]
+rodio = { version = "0.19", default-features = false }

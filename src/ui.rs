@@ -5,7 +5,7 @@ use eframe::egui;
 use tokio::sync::mpsc;
 
 use crate::app::AppState;
-use crate::message::{AppEvent, ChatMessage, SendRequest, SendGroupRequest};
+use crate::message::{AppEvent, ChatMessage, SendRequest, SendGroupRequest, SendTypingRequest};
 
 fn app_icon_data() -> Option<egui::IconData> {
     let data = include_bytes!("../assets/app_icon.jpg");
@@ -67,6 +67,7 @@ pub fn run(
     event_rx: mpsc::Receiver<AppEvent>,
     send_tx: mpsc::Sender<SendRequest>,
     send_group_tx: mpsc::Sender<SendGroupRequest>,
+    typing_tx: mpsc::Sender<SendTypingRequest>,
 ) -> anyhow::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Abcom")
@@ -87,7 +88,7 @@ pub fn run(
         options,
         Box::new(|cc| {
             configure_fonts(cc);
-            Ok(Box::new(AbcomApp::new(state.clone(), event_rx, send_tx.clone(), send_group_tx.clone())))
+            Ok(Box::new(AbcomApp::new(state.clone(), event_rx, send_tx.clone(), send_group_tx.clone(), typing_tx.clone())))
         }),
     )
     .map_err(|e| {
@@ -122,6 +123,9 @@ struct AbcomApp {
     show_group_modal: bool,
     group_name_input: String,
     group_members_selected: std::collections::HashSet<String>,
+    // Indicateur de frappe
+    typing_tx: mpsc::Sender<SendTypingRequest>,
+    last_typing_sent: std::time::Instant,
 }
 
 fn load_emoji_textures(ctx: &egui::Context) -> Vec<(String, egui::TextureHandle)> {
@@ -193,7 +197,6 @@ fn render_inline(
     }
 }
 
-#[cfg(windows)]
 fn play_notification_sound() {
     std::thread::spawn(|| {
         use rodio::source::Source;
@@ -215,17 +218,13 @@ fn play_notification_sound() {
     });
 }
 
-#[cfg(not(windows))]
-fn play_notification_sound() {
-    print!("\x07");
-}
-
 impl AbcomApp {
     fn new(
         state: Arc<Mutex<AppState>>,
         event_rx: mpsc::Receiver<AppEvent>,
         send_tx: mpsc::Sender<SendRequest>,
         send_group_tx: mpsc::Sender<SendGroupRequest>,
+        typing_tx: mpsc::Sender<SendTypingRequest>,
     ) -> Self {
         Self {
             state,
@@ -248,6 +247,8 @@ impl AbcomApp {
             show_group_modal: false,
             group_name_input: String::new(),
             group_members_selected: std::collections::HashSet::new(),
+            typing_tx,
+            last_typing_sent: std::time::Instant::now() - Duration::from_secs(10),
         }
     }
 }
@@ -613,6 +614,26 @@ impl eframe::App for AbcomApp {
                             )
                         })
                         .inner;
+
+                    // Détecter la frappe et envoyer l'indicateur aux pairs (max 1 fois/1.5s)
+                    if resp.changed() && self.last_typing_sent.elapsed().as_millis() > 1500 {
+                        self.last_typing_sent = std::time::Instant::now();
+                        let (my_name, online_peers) = {
+                            let s = self.state.lock().unwrap();
+                            let name = s.my_username.clone();
+                            let addrs: Vec<_> = s.peers.iter()
+                                .filter(|p| p.online)
+                                .map(|p| p.addr)
+                                .collect();
+                            (name, addrs)
+                        };
+                        for addr in online_peers {
+                            let _ = self.typing_tx.try_send(SendTypingRequest {
+                                to_addr: addr,
+                                from: my_name.clone(),
+                            });
+                        }
+                    }
 
                     ui.add_space(4.0);
 
