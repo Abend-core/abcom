@@ -2,7 +2,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{Receiver, Sender};
 
-use crate::message::{AppEvent, ChatMessage, GroupEvent, SendRequest, SendGroupRequest};
+use crate::message::{AppEvent, ChatMessage, GroupEvent, SendRequest, SendGroupRequest, SendTypingRequest, TypingIndicator};
 
 pub const TCP_PORT: u16 = 9000;
 
@@ -38,7 +38,11 @@ async fn handle_incoming(mut stream: TcpStream, tx: Sender<AppEvent>) {
         else if let Ok(event) = serde_json::from_slice::<GroupEvent>(&buf) {
             let _ = tx.send(AppEvent::GroupEventReceived(event)).await;
         }
-        // If both fail, log error but don't crash
+        // Sinon essayer TypingIndicator
+        else if let Ok(typing) = serde_json::from_slice::<TypingIndicator>(&buf) {
+            let _ = tx.send(AppEvent::UserTyping(typing.from)).await;
+        }
+        // Si tout échoue, ignorer silencieusement
         else {
             eprintln!("[network] Failed to parse incoming message");
         }
@@ -60,6 +64,22 @@ pub async fn run_sender(mut rx: Receiver<SendRequest>) {
                 }
                 Err(e) => {
                     eprintln!("[network] Connexion échouée vers {}: {}", req.to_addr, e);
+                }
+            }
+        });
+    }
+}
+
+/// Expéditeur TCP pour les indicateurs de frappe (fire-and-forget, pas grave si ça rate)
+pub async fn run_sender_typing(mut rx: Receiver<SendTypingRequest>) {
+    while let Some(req) = rx.recv().await {
+        tokio::spawn(async move {
+            if let Ok(mut stream) = TcpStream::connect(req.to_addr).await {
+                let typing = TypingIndicator { from: req.from };
+                if let Ok(data) = serde_json::to_vec(&typing) {
+                    let _ = stream.write_all(&data).await;
+                    let _ = stream.flush().await;
+                    let _ = stream.shutdown().await;
                 }
             }
         });
