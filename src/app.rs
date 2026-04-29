@@ -374,6 +374,10 @@ impl AppState {
         Some(group)
     }
 
+    /// Add a member to a group (owner only).
+    /// 
+    /// # Status
+    /// Prepared for future UI: group member management panel.
     pub fn add_member_to_group(&mut self, group_name: &str, username: String) -> bool {
         if let Some(group) = self.groups.iter_mut().find(|g| g.name == group_name) {
             if group.owner == self.my_username && !group.members.contains(&username) {
@@ -385,6 +389,10 @@ impl AppState {
         false
     }
 
+    /// Remove a member from a group (owner only).
+    /// 
+    /// # Status
+    /// Prepared for future UI: group member management panel.
     pub fn remove_member_from_group(&mut self, group_name: &str, username: &str) -> bool {
         if let Some(group) = self.groups.iter_mut().find(|g| g.name == group_name) {
             if group.owner == self.my_username && username != &group.owner {
@@ -396,6 +404,10 @@ impl AppState {
         false
     }
 
+    /// Rename a group (owner only).
+    /// 
+    /// # Status
+    /// Prepared for future UI: group settings/admin panel.
     pub fn rename_group(&mut self, group_name: &str, new_name: String) -> bool {
         if let Some(group) = self.groups.iter_mut().find(|g| g.name == group_name) {
             if group.owner == self.my_username {
@@ -407,6 +419,10 @@ impl AppState {
         false
     }
 
+    /// Delete a group (owner only).
+    /// 
+    /// # Status
+    /// Prepared for future UI: group settings/admin panel with delete confirmation.
     pub fn delete_group(&mut self, group_name: &str) -> bool {
         if let Some(pos) = self.groups.iter().position(|g| g.name == group_name && g.owner == self.my_username) {
             self.groups.remove(pos);
@@ -416,6 +432,10 @@ impl AppState {
         false
     }
 
+    /// Retrieve group by name for read-only access.
+    /// 
+    /// # Status
+    /// Prepared for future features: group info display, permissions checks.
     pub fn get_group(&self, group_name: &str) -> Option<&Group> {
         self.groups.iter().find(|g| g.name == group_name)
     }
