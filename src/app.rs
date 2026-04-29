@@ -151,10 +151,20 @@ impl AppState {
 
     fn save_groups(&self) {
         if let Some(parent) = self.groups_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+            if let Err(e) = std::fs::create_dir_all(parent) {
+                eprintln!("[app] Erreur création répertoire groupes: {}", e);
+                return;
+            }
         }
-        if let Ok(json) = serde_json::to_string_pretty(&self.groups) {
-            let _ = std::fs::write(&self.groups_path, json);
+        
+        // Sauvegarder avec backup atomique
+        match serde_json::to_string_pretty(&self.groups) {
+            Ok(json) => {
+                if let Err(e) = std::fs::write(&self.groups_path, &json) {
+                    eprintln!("[app] Erreur écriture groups.json: {}", e);
+                }
+            }
+            Err(e) => eprintln!("[app] Erreur sérialisation groupes: {}", e),
         }
     }
 
@@ -316,9 +326,32 @@ impl AppState {
 
     // ──── Gestion des groupes ────
 
+    /// Valide un nom de groupe (1-50 chars, alphanum + _-)
+    fn validate_group_name(name: &str) -> bool {
+        if name.is_empty() || name.len() > 50 {
+            return false;
+        }
+        name.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-')
+    }
+
     pub fn create_group(&mut self, name: String, members: Vec<String>) -> Option<Group> {
-        // Vérifier que le groupe n'existe pas déjà
-        if self.groups.iter().any(|g| g.name == name) {
+        let name = name.trim().to_string();
+        
+        // Validation robuste du nom
+        if !Self::validate_group_name(&name) {
+            return None;
+        }
+        
+        // Vérifier que le groupe n'existe pas déjà (case-insensitive)
+        if self.groups.iter().any(|g| g.name.eq_ignore_ascii_case(&name)) {
+            return None;
+        }
+        
+        // Vérifier que les membres existent
+        let invalid_members: Vec<_> = members.iter()
+            .filter(|m| !self.peers.iter().any(|p| p.username == **m) && **m != self.my_username)
+            .collect();
+        if !invalid_members.is_empty() {
             return None;
         }
 
@@ -397,5 +430,123 @@ impl AppState {
         self.groups
             .iter()
             .any(|g| g.name == group_name && g.members.contains(&self.my_username))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_group_name_valid() {
+        assert!(AppState::validate_group_name("my-group"));
+        assert!(AppState::validate_group_name("group_123"));
+        assert!(AppState::validate_group_name("DevTeam"));
+    }
+
+    #[test]
+    fn test_validate_group_name_invalid() {
+        assert!(!AppState::validate_group_name(""));           // Empty
+        assert!(!AppState::validate_group_name("x".repeat(51).as_str())); // Too long
+        assert!(!AppState::validate_group_name("group@name")); // Invalid char
+        assert!(!AppState::validate_group_name("group name")); // Space
+        assert!(!AppState::validate_group_name("group!"));     // Special char
+    }
+
+    #[test]
+    fn test_create_group_success() {
+        let mut state = AppState::new("alice".to_string());
+        state.peers.push(Peer {
+            username: "bob".to_string(),
+            addr: "127.0.0.1:9000".parse().unwrap(),
+            last_seen: 0,
+            online: true,
+        });
+
+        let group = state.create_group("DevTeam".to_string(), vec!["bob".to_string()]);
+        assert!(group.is_some());
+        assert_eq!(state.groups.len(), 1);
+        assert_eq!(state.groups[0].members.len(), 2); // alice + bob
+    }
+
+    #[test]
+    fn test_create_group_invalid_name() {
+        let mut state = AppState::new("alice".to_string());
+        
+        let group = state.create_group("".to_string(), vec![]);
+        assert!(group.is_none());
+        assert_eq!(state.groups.len(), 0);
+    }
+
+    #[test]
+    fn test_create_group_duplicate() {
+        let mut state = AppState::new("alice".to_string());
+        
+        state.create_group("DevTeam".to_string(), vec![]);
+        let second = state.create_group("DevTeam".to_string(), vec![]);
+        
+        assert!(second.is_none());
+        assert_eq!(state.groups.len(), 1);
+    }
+
+    #[test]
+    fn test_create_group_invalid_member() {
+        let mut state = AppState::new("alice".to_string());
+        
+        // Try to add non-existent peer
+        let group = state.create_group("Team".to_string(), vec!["unknown".to_string()]);
+        assert!(group.is_none());
+    }
+
+    #[test]
+    fn test_is_group_owner() {
+        let mut state = AppState::new("alice".to_string());
+        state.create_group("MyGroup".to_string(), vec![]);
+        
+        assert!(state.is_group_owner("MyGroup"));
+        assert!(!state.is_group_owner("NonExistent"));
+    }
+
+    #[test]
+    fn test_is_in_group() {
+        let mut state = AppState::new("alice".to_string());
+        state.create_group("MyGroup".to_string(), vec![]);
+        
+        assert!(state.is_in_group("MyGroup"));
+        assert!(!state.is_in_group("NonExistent"));
+    }
+
+    #[test]
+    fn test_add_member_to_group() {
+        let mut state = AppState::new("alice".to_string());
+        state.peers.push(Peer {
+            username: "bob".to_string(),
+            addr: "127.0.0.1:9000".parse().unwrap(),
+            last_seen: 0,
+            online: true,
+        });
+        
+        state.create_group("Team".to_string(), vec![]);
+        let added = state.add_member_to_group("Team", "bob".to_string());
+        
+        assert!(added);
+        assert_eq!(state.groups[0].members.len(), 2);
+    }
+
+    #[test]
+    fn test_remove_member_from_group() {
+        let mut state = AppState::new("alice".to_string());
+        state.peers.push(Peer {
+            username: "bob".to_string(),
+            addr: "127.0.0.1:9000".parse().unwrap(),
+            last_seen: 0,
+            online: true,
+        });
+        
+        state.create_group("Team".to_string(), vec!["bob".to_string()]);
+        let removed = state.remove_member_from_group("Team", "bob");
+        
+        assert!(removed);
+        assert_eq!(state.groups[0].members.len(), 1); // Only alice remains
     }
 }
