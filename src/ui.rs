@@ -390,6 +390,14 @@ impl eframe::App for AbcomApp {
                 let mut s = self.state.lock().unwrap();
                 let _disconnected = s.cleanup_inactive_peers(10);
                 // Les pairs sont marqués offline automatiquement, la UI se mettra à jour
+
+                // Re-détecter le subnet actif à chaque cycle (changement de réseau)
+                let new_subnet = crate::app::AppState::detect_subnet();
+                if new_subnet != s.current_subnet {
+                    s.current_subnet = new_subnet.clone();
+                    // Suivre automatiquement le nouveau réseau dans le filtre
+                    self.selected_network_filter = new_subnet;
+                }
             }
         }
 
