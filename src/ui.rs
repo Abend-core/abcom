@@ -126,6 +126,7 @@ struct AbcomApp {
     emoji_category: usize,
     emoji_map: std::collections::HashMap<String, usize>,
     last_cleanup_time: std::time::Instant,
+    last_network_check: std::time::Instant,
     // Gestion des groupes
     show_group_modal: bool,
     group_name_input: String,
@@ -271,6 +272,7 @@ impl AbcomApp {
             emoji_category: 0,
             emoji_map: std::collections::HashMap::new(),
             last_cleanup_time: std::time::Instant::now(),
+            last_network_check: std::time::Instant::now() - Duration::from_secs(15),
             show_group_modal: false,
             group_name_input: String::new(),
             group_members_selected: std::collections::HashSet::new(),
@@ -390,17 +392,27 @@ impl eframe::App for AbcomApp {
                 let mut s = self.state.lock().unwrap();
                 let _disconnected = s.cleanup_inactive_peers(10);
                 // Les pairs sont marqués offline automatiquement, la UI se mettra à jour
-
-                // Re-détecter le subnet actif à chaque cycle (changement de réseau)
-                let new_subnet = crate::app::AppState::detect_subnet();
-                if new_subnet != s.current_subnet {
+            }
+            // Re-détecter le réseau actif toutes les 15s (SSID + subnet)
+            // Exécuté ici car peut invoquer des commandes système (iwgetid, nmcli)
+            if self.last_network_check.elapsed().as_secs() >= 15 {
+                self.last_network_check = std::time::Instant::now();
+                let (new_id, new_subnet) = crate::app::AppState::detect_network_id();
+                let (old_id, old_subnet) = {
+                    let s = self.state.lock().unwrap();
+                    (s.current_network_id.clone(), s.current_subnet.clone())
+                };
+                if new_id != old_id || new_subnet != old_subnet {
+                    let mut s = self.state.lock().unwrap();
+                    s.current_network_id = new_id.clone();
                     s.current_subnet = new_subnet.clone();
-                    // Enregistrer le nouveau réseau même s'il n'a pas encore de pairs
-                    if let Some(ref subnet) = new_subnet {
-                        s.ensure_network_known(subnet);
+                    if let Some(ref id) = new_id {
+                        let sn = new_subnet.as_deref();
+                        s.ensure_network_known(id, sn);
                     }
-                    // Suivre automatiquement le nouveau réseau dans le filtre
-                    self.selected_network_filter = new_subnet;
+                    drop(s);
+                    // Basculer le filtre sur le nouveau réseau automatiquement
+                    self.selected_network_filter = new_id;
                 }
             }
         }
@@ -432,21 +444,21 @@ impl eframe::App for AbcomApp {
                 ui.add_space(6.0);
 
                 // Initialiser le filtre réseau sur le réseau actuel si pas encore fait
-                let (current_subnet, known_networks, peers_all, selected_conv, unread_counts_all, peer_records) = {
+                let (current_network_id, known_networks, peers_all, selected_conv, unread_counts_all, peer_records) = {
                     let s = self.state.lock().unwrap();
                     let peers = s.peers.clone();
                     let unread_counts = peers.iter().map(|p| s.unread_count(&p.username)).collect::<Vec<_>>();
-                    (s.current_subnet.clone(), s.known_networks.clone(), peers, s.selected_conversation.clone(), unread_counts, s.peer_records.clone())
+                    (s.current_network_id.clone(), s.known_networks.clone(), peers, s.selected_conversation.clone(), unread_counts, s.peer_records.clone())
                 };
                 if self.selected_network_filter.is_none() {
-                    self.selected_network_filter = current_subnet.clone();
+                    self.selected_network_filter = current_network_id.clone();
                 }
 
                 // ── Sélecteur de réseau ──
                 ui.horizontal(|ui| {
                     ui.label("🌐");
                     let current_label = self.selected_network_filter.as_ref()
-                        .and_then(|s| known_networks.iter().find(|n| &n.subnet == s))
+                        .and_then(|s| known_networks.iter().find(|n| &n.id == s))
                         .map(|n| n.display_name())
                         .unwrap_or_else(|| "Tous".to_string());
                     egui::ComboBox::from_id_salt("network_filter")
@@ -458,24 +470,24 @@ impl eframe::App for AbcomApp {
                                 self.selected_network_filter = None;
                             }
                             for net in &known_networks {
-                                let is_selected = self.selected_network_filter.as_ref() == Some(&net.subnet);
-                                let is_current = current_subnet.as_ref() == Some(&net.subnet);
+                                let is_selected = self.selected_network_filter.as_ref() == Some(&net.id);
+                                let is_current = current_network_id.as_ref() == Some(&net.id);
                                 let label = if is_current {
                                     format!("📡 {} (actuel)", net.display_name())
                                 } else {
                                     format!("🔌 {}", net.display_name())
                                 };
                                 if ui.selectable_label(is_selected, label).clicked() {
-                                    self.selected_network_filter = Some(net.subnet.clone());
+                                    self.selected_network_filter = Some(net.id.clone());
                                 }
                             }
                         });
                 });
 
                 // Filtrer les pairs selon le réseau sélectionné
-                let (peers, unread_counts): (Vec<_>, Vec<_>) = if let Some(ref subnet) = self.selected_network_filter {
+                let (peers, unread_counts): (Vec<_>, Vec<_>) = if let Some(ref network_id) = self.selected_network_filter {
                     let seen: Vec<&str> = known_networks.iter()
-                        .find(|n| &n.subnet == subnet)
+                        .find(|n| &n.id == network_id)
                         .map(|n| n.seen_peers.iter().map(|s| s.as_str()).collect())
                         .unwrap_or_default();
                     peers_all.iter().zip(unread_counts_all.iter())
@@ -1157,9 +1169,9 @@ impl eframe::App for AbcomApp {
 
 impl AbcomApp {
     fn show_networks_view(&mut self, ui: &mut egui::Ui) {
-        let (known_networks, peer_records, current_subnet) = {
+        let (known_networks, peer_records, current_network_id) = {
             let s = self.state.lock().unwrap();
-            (s.known_networks.clone(), s.peer_records.clone(), s.current_subnet.clone())
+            (s.known_networks.clone(), s.peer_records.clone(), s.current_network_id.clone())
         };
 
         ui.add_space(8.0);
@@ -1184,8 +1196,8 @@ impl AbcomApp {
             .show_inside(ui, |ui| {
                 ui.add_space(4.0);
                 for net in &known_networks {
-                    let is_selected = self.networks_view_selected.as_ref() == Some(&net.subnet);
-                    let is_current = current_subnet.as_ref() == Some(&net.subnet);
+                    let is_selected = self.networks_view_selected.as_ref() == Some(&net.id);
+                    let is_current = current_network_id.as_ref() == Some(&net.id);
 
                     let desired = egui::vec2(ui.available_width(), 72.0);
                     let (rect, resp) = ui.allocate_exact_size(desired, egui::Sense::click());
@@ -1200,7 +1212,11 @@ impl AbcomApp {
 
                     let icon = if is_current { "📡" } else { "🔌" };
                     let title = net.display_name();
-                    let subtitle = format!("{} pair(s)", net.seen_peers.len());
+                    let subtitle = if !net.subnet.is_empty() {
+                        format!("{} pair(s) • {}.x", net.seen_peers.len(), net.subnet)
+                    } else {
+                        format!("{} pair(s)", net.seen_peers.len())
+                    };
                     let text_color = ui.visuals().text_color();
                     let font = egui::TextStyle::Button.resolve(ui.style());
                     let small_font = egui::TextStyle::Small.resolve(ui.style());
@@ -1214,7 +1230,7 @@ impl AbcomApp {
                             "actuel", badge_font, egui::Color32::from_rgb(50, 200, 80));
                     }
                     if resp.clicked() {
-                        self.networks_view_selected = Some(net.subnet.clone());
+                        self.networks_view_selected = Some(net.id.clone());
                         self.editing_network_alias = None;
                     }
                     ui.add_space(4.0);
@@ -1223,14 +1239,14 @@ impl AbcomApp {
 
         // Zone droite : détail du réseau sélectionné
         egui::CentralPanel::default().show_inside(ui, |ui| {
-            let Some(ref subnet) = self.networks_view_selected.clone() else {
+            let Some(ref network_id) = self.networks_view_selected.clone() else {
                 ui.add_space(40.0);
                 ui.vertical_centered(|ui| {
                     ui.label(egui::RichText::new("← Sélectionnez un réseau").weak());
                 });
                 return;
             };
-            let Some(net) = known_networks.iter().find(|n| &n.subnet == subnet).cloned() else {
+            let Some(net) = known_networks.iter().find(|n| &n.id == network_id).cloned() else {
                 return;
             };
 
@@ -1238,14 +1254,16 @@ impl AbcomApp {
             // Titre + édition alias
             ui.horizontal(|ui| {
                 ui.heading(format!("📡 {}", net.display_name()));
-                ui.label(egui::RichText::new(format!("  {}.x", net.subnet)).weak().small());
-                if let Some((ref edit_subnet, ref mut buf)) = self.editing_network_alias {
-                    if edit_subnet == subnet {
+                if !net.subnet.is_empty() {
+                    ui.label(egui::RichText::new(format!("  {}.x", net.subnet)).weak().small());
+                }
+                if let Some((ref edit_id, ref mut buf)) = self.editing_network_alias {
+                    if edit_id == network_id {
                         let resp = ui.text_edit_singleline(buf);
                         if resp.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                             let new_alias = buf.trim().to_string();
                             let mut s = self.state.lock().unwrap();
-                            if let Some(n) = s.known_networks.iter_mut().find(|n| &n.subnet == subnet) {
+                            if let Some(n) = s.known_networks.iter_mut().find(|n| &n.id == network_id) {
                                 n.alias = if new_alias.is_empty() { None } else { Some(new_alias) };
                             }
                             s.save_networks();
@@ -1255,12 +1273,12 @@ impl AbcomApp {
                 } else {
                     if ui.small_button("✏ Renommer").clicked() {
                         let current = net.alias.clone().unwrap_or_default();
-                        self.editing_network_alias = Some((subnet.clone(), current));
+                        self.editing_network_alias = Some((network_id.clone(), current));
                     }
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button(egui::RichText::new("🗑 Oublier ce réseau").color(egui::Color32::from_rgb(220, 60, 60))).clicked() {
-                        self.state.lock().unwrap().forget_network(subnet);
+                        self.state.lock().unwrap().forget_network(network_id);
                         self.networks_view_selected = None;
                     }
                 });
@@ -1341,7 +1359,7 @@ impl AbcomApp {
                                         s.peer_records.push(crate::message::PeerRecord {
                                             username: username.clone(),
                                             alias: if new_alias.is_empty() { None } else { Some(new_alias) },
-                                            last_subnet: Some(subnet.clone()),
+                                            last_subnet: Some(network_id.clone()),
                                         });
                                     }
                                     s.save_peer_records();
