@@ -20,15 +20,17 @@ build:
 release:
 	$(CARGO) build --release
 
-## Lance directement sur Windows (cross-compilation depuis WSL)
-WIN_TARGET := x86_64-pc-windows-gnu
-WIN_INSTALL_DIR := /mnt/c/Users/$(USER)/AppData/Local/abcom
+## Lance l'application localement
 run:
-	$(CARGO) build --release --target $(WIN_TARGET)
-	@mkdir -p $(WIN_INSTALL_DIR)
-	@mkdir -p $(WIN_INSTALL_DIR)/assets
-	@cp -f target/$(WIN_TARGET)/release/abcom.exe $(WIN_INSTALL_DIR)/abcom_new.exe 2>/dev/null || true
-	@cp -f assets/app_icon.jpg $(WIN_INSTALL_DIR)/assets/ 2>/dev/null || true
+	$(CARGO) run --release
+
+## Lance l'application sur Windows depuis WSL
+run-windows:
+	$(CARGO) build --release --target x86_64-pc-windows-gnu
+	@mkdir -p /mnt/c/Users/$(USER)/AppData/Local/abcom
+	@mkdir -p /mnt/c/Users/$(USER)/AppData/Local/abcom/assets
+	@cp -f target/x86_64-pc-windows-gnu/release/abcom.exe /mnt/c/Users/$(USER)/AppData/Local/abcom/abcom_new.exe 2>/dev/null || true
+	@cp -f assets/app_icon.jpg /mnt/c/Users/$(USER)/AppData/Local/abcom/assets/ 2>/dev/null || true
 	@/mnt/c/Windows/System32/cmd.exe /c start "" "C:\Users\$(USER)\AppData\Local\abcom\abcom_new.exe" $(USER)
 
 ## Installe le binaire + active le service systemd + raccourci menu
