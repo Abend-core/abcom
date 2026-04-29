@@ -615,21 +615,37 @@ impl eframe::App for AbcomApp {
                         })
                         .inner;
 
-                    // Détecter la frappe et envoyer l'indicateur uniquement au pair de la conversation active (max 1 fois/1.5s)
+                    // Détecter la frappe et envoyer l'indicateur (max 1 fois/1.5s)
+                    // - Conversation directe → uniquement ce pair
+                    // - Broadcast global (None) → tous les pairs en ligne
                     if resp.changed() && self.last_typing_sent.elapsed().as_millis() > 1500 {
                         self.last_typing_sent = std::time::Instant::now();
-                        let (my_name, target_addr) = {
+                        let (my_name, target_addrs) = {
                             let s = self.state.lock().unwrap();
                             let name = s.my_username.clone();
-                            // Envoyer uniquement au pair sélectionné (conversation directe)
-                            // En global (None), personne n'a besoin de l'indicateur
-                            let addr = s.selected_peer_addr();
-                            (name, addr)
+                            let addrs = match &s.selected_conversation {
+                                None => {
+                                    // Global : tous les pairs en ligne
+                                    s.peers.iter()
+                                        .filter(|p| p.online)
+                                        .map(|p| p.addr)
+                                        .collect::<Vec<_>>()
+                                }
+                                Some(conv) => {
+                                    // Direct : uniquement le pair de la conversation
+                                    s.peers.iter()
+                                        .find(|p| p.online && &p.username == conv)
+                                        .map(|p| p.addr)
+                                        .into_iter()
+                                        .collect::<Vec<_>>()
+                                }
+                            };
+                            (name, addrs)
                         };
-                        if let Some(addr) = target_addr {
+                        for addr in target_addrs {
                             let _ = self.typing_tx.try_send(SendTypingRequest {
                                 to_addr: addr,
-                                from: my_name,
+                                from: my_name.clone(),
                             });
                         }
                     }
