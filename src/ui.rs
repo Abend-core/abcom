@@ -41,27 +41,6 @@ fn app_icon_data() -> Option<egui::IconData> {
     }
 }
 
-fn emoji_font_path() -> std::path::PathBuf {
-    dirs::data_local_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("~/.local/share"))
-        .join("abcom/NotoEmoji-Regular.ttf")
-}
-
-fn configure_fonts(cc: &eframe::CreationContext<'_>) {
-    let path = emoji_font_path();
-    if let Ok(bytes) = std::fs::read(&path) {
-        let mut fonts = egui::FontDefinitions::default();
-        fonts.font_data.insert(
-            "noto_emoji".to_owned(),
-            egui::FontData::from_owned(bytes).into(),
-        );
-        for family in fonts.families.values_mut() {
-            family.push("noto_emoji".to_owned());
-        }
-        cc.egui_ctx.set_fonts(fonts);
-    }
-}
-
 pub fn run(
     state: Arc<Mutex<AppState>>,
     event_rx: mpsc::Receiver<AppEvent>,
@@ -86,8 +65,7 @@ pub fn run(
     eframe::run_native(
         "Abcom",
         options,
-        Box::new(|cc| {
-            configure_fonts(cc);
+        Box::new(|_cc| {
             Ok(Box::new(AbcomApp::new(state.clone(), event_rx, send_tx.clone(), send_group_tx.clone(), typing_tx.clone())))
         }),
     )
@@ -107,6 +85,7 @@ struct AbcomApp {
     send_tx: mpsc::Sender<SendRequest>,
     send_group_tx: mpsc::Sender<SendGroupRequest>,
     input: String,
+    input_cursor_char: usize,
     show_emoji_picker: bool,
     show_participants: bool,
     enable_sound_notifications: bool,
@@ -157,11 +136,12 @@ fn render_inline(
     text: &str,
     emoji_map: &std::collections::HashMap<String, usize>,
     textures: &[(String, egui::TextureHandle)],
+    emoji_size: f32,
 ) {
     let chars: Vec<char> = text.chars().collect();
     let mut i = 0;
     let mut acc = String::new();
-    let size = egui::vec2(16.0, 16.0);
+    let size = egui::vec2(emoji_size, emoji_size);
 
     while i < chars.len() {
         let mut matched = false;
@@ -195,6 +175,327 @@ fn render_inline(
     if !acc.is_empty() {
         ui.label(&acc);
     }
+}
+
+fn char_to_byte_idx(text: &str, char_idx: usize) -> usize {
+    text.char_indices()
+        .nth(char_idx)
+        .map(|(i, _)| i)
+        .unwrap_or_else(|| text.len())
+}
+
+fn insert_text_at_cursor(input: &mut String, cursor_char: &mut usize, text: &str) {
+    let byte_idx = char_to_byte_idx(input, *cursor_char);
+    input.insert_str(byte_idx, text);
+    *cursor_char += text.chars().count();
+}
+
+fn remove_prev_char(input: &mut String, cursor_char: &mut usize) -> bool {
+    if *cursor_char == 0 {
+        return false;
+    }
+    let start = char_to_byte_idx(input, *cursor_char - 1);
+    let end = char_to_byte_idx(input, *cursor_char);
+    input.replace_range(start..end, "");
+    *cursor_char -= 1;
+    true
+}
+
+fn remove_next_char(input: &mut String, cursor_char: &mut usize) -> bool {
+    let total = input.chars().count();
+    if *cursor_char >= total {
+        return false;
+    }
+    let start = char_to_byte_idx(input, *cursor_char);
+    let end = char_to_byte_idx(input, *cursor_char + 1);
+    input.replace_range(start..end, "");
+    true
+}
+
+fn insert_emoji_at_cursor(input: &mut String, cursor_char: &mut usize, emoji: &str) {
+    let chars: Vec<char> = input.chars().collect();
+    let prev = if *cursor_char > 0 {
+        chars.get(*cursor_char - 1).copied()
+    } else {
+        None
+    };
+    let next = chars.get(*cursor_char).copied();
+
+    let mut to_insert = String::new();
+    if let Some(ch) = prev {
+        if !ch.is_whitespace() {
+            to_insert.push(' ');
+        }
+    }
+    to_insert.push_str(emoji);
+    if next.map(|ch| !ch.is_whitespace()).unwrap_or(true) {
+        to_insert.push(' ');
+    }
+
+    insert_text_at_cursor(input, cursor_char, &to_insert);
+}
+
+fn measure_text_width(ui: &egui::Ui, text: &str) -> f32 {
+    if text.is_empty() {
+        return 0.0;
+    }
+    let font_id = egui::TextStyle::Body.resolve(ui.style());
+    ui.painter()
+        .layout_no_wrap(text.to_owned(), font_id, ui.visuals().text_color())
+        .size()
+        .x
+}
+
+fn composer_caret_positions(
+    ui: &egui::Ui,
+    text: &str,
+    emoji_map: &std::collections::HashMap<String, usize>,
+    emoji_size: f32,
+) -> Vec<egui::Pos2> {
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    let line_height = 22.0;
+    let mut x = 0.0;
+    let mut y = 0.0;
+    let mut points = Vec::with_capacity(chars.len() + 1);
+    points.push(egui::pos2(0.0, 0.0));
+
+    while i < chars.len() {
+        if chars[i] == '\n' {
+            x = 0.0;
+            y += line_height;
+            i += 1;
+            points.push(egui::pos2(x, y));
+            continue;
+        }
+
+        let mut matched = false;
+        for len in [2usize, 1] {
+            if i + len <= chars.len() {
+                let s: String = chars[i..i + len].iter().collect();
+                if emoji_map.contains_key(&s) {
+                    x += emoji_size + 2.0;
+                    for _ in 0..len {
+                        points.push(egui::pos2(x, y));
+                    }
+                    i += len;
+                    matched = true;
+                    break;
+                }
+            }
+        }
+
+        if !matched {
+            let ch = chars[i].to_string();
+            x += measure_text_width(ui, &ch);
+            i += 1;
+            points.push(egui::pos2(x, y));
+        }
+    }
+
+    points
+}
+
+fn cursor_from_point(points: &[egui::Pos2], target: egui::Pos2) -> usize {
+    let mut best_idx = 0;
+    let mut best_dist = f32::MAX;
+
+    for (idx, p) in points.iter().enumerate() {
+        let dx = p.x - target.x;
+        let dy = p.y - target.y;
+        let d = dx * dx + dy * dy;
+        if d < best_dist {
+            best_dist = d;
+            best_idx = idx;
+        }
+    }
+
+    best_idx
+}
+
+fn custom_composer_input(
+    ui: &mut egui::Ui,
+    input: &mut String,
+    cursor_char: &mut usize,
+    emoji_map: &std::collections::HashMap<String, usize>,
+    emoji_textures: &[(String, egui::TextureHandle)],
+    width: f32,
+) -> (egui::Response, bool, bool) {
+    let line_count = input.chars().filter(|&c| c == '\n').count().saturating_add(1);
+    let visual_lines = line_count.clamp(1, 4) as f32;
+    let desired_size = egui::vec2(width.max(120.0), 16.0 + visual_lines * 22.0);
+    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+    let content_rect = rect.shrink2(egui::vec2(6.0, 6.0));
+    let caret_points = composer_caret_positions(ui, input, emoji_map, 18.0);
+
+    if response.clicked() {
+        response.request_focus();
+        if let Some(pos) = response.interact_pointer_pos() {
+            let local = egui::pos2(
+                (pos.x - content_rect.left()).max(0.0),
+                (pos.y - content_rect.top()).max(0.0),
+            );
+            *cursor_char = cursor_from_point(&caret_points, local);
+        } else {
+            *cursor_char = input.chars().count();
+        }
+    }
+
+    let has_focus = response.has_focus();
+    let mut changed = false;
+    let mut submit = false;
+    let total_chars = input.chars().count();
+    if *cursor_char > total_chars {
+        *cursor_char = total_chars;
+    }
+
+    if has_focus {
+        let events = ui.input(|i| i.events.clone());
+        for event in events {
+            match event {
+                egui::Event::Text(t) => {
+                    if !t.contains('\n') && !t.contains('\r') {
+                        insert_text_at_cursor(input, cursor_char, &t);
+                        changed = true;
+                    }
+                }
+                egui::Event::Paste(t) => {
+                    insert_text_at_cursor(input, cursor_char, &t.replace(['\r', '\n'], " "));
+                    changed = true;
+                }
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } => match key {
+                    egui::Key::Enter => {
+                        if modifiers.shift {
+                            insert_text_at_cursor(input, cursor_char, "\n");
+                            changed = true;
+                        } else {
+                            submit = true;
+                        }
+                    }
+                    egui::Key::Backspace => {
+                        changed |= remove_prev_char(input, cursor_char);
+                    }
+                    egui::Key::Delete => {
+                        changed |= remove_next_char(input, cursor_char);
+                    }
+                    egui::Key::ArrowLeft => {
+                        if *cursor_char > 0 {
+                            *cursor_char -= 1;
+                        }
+                    }
+                    egui::Key::ArrowRight => {
+                        let len = input.chars().count();
+                        if *cursor_char < len {
+                            *cursor_char += 1;
+                        }
+                    }
+                    egui::Key::Home => {
+                        *cursor_char = 0;
+                    }
+                    egui::Key::End => {
+                        *cursor_char = input.chars().count();
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+    }
+
+    ui.painter().rect(
+        rect,
+        egui::CornerRadius::same(6),
+        ui.visuals().extreme_bg_color,
+        egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+        egui::StrokeKind::Outside,
+    );
+
+    if input.is_empty() {
+        ui.painter().text(
+            content_rect.left_center(),
+            egui::Align2::LEFT_CENTER,
+            "Message",
+            egui::TextStyle::Body.resolve(ui.style()),
+            ui.visuals().weak_text_color(),
+        );
+    } else {
+        let painter = ui.painter().with_clip_rect(content_rect);
+        let chars: Vec<char> = input.chars().collect();
+        let mut i = 0;
+        let mut x = content_rect.left();
+        let mut y = content_rect.top() + 11.0;
+
+        while i < chars.len() {
+            if chars[i] == '\n' {
+                x = content_rect.left();
+                y += 22.0;
+                i += 1;
+                continue;
+            }
+
+            let mut matched = false;
+            for len in [2usize, 1] {
+                if i + len <= chars.len() {
+                    let s: String = chars[i..i + len].iter().collect();
+                    if let Some(&idx) = emoji_map.get(&s) {
+                        if let Some((_, tex)) = emoji_textures.get(idx) {
+                            let img_rect = egui::Rect::from_min_size(
+                                egui::pos2(x, y - 9.0),
+                                egui::vec2(18.0, 18.0),
+                            );
+                            painter.image(
+                                tex.id(),
+                                img_rect,
+                                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                                egui::Color32::WHITE,
+                            );
+                            x += 20.0;
+                        }
+                        i += len;
+                        matched = true;
+                        break;
+                    }
+                }
+            }
+
+            if !matched {
+                let ch = chars[i].to_string();
+                painter.text(
+                    egui::pos2(x, y),
+                    egui::Align2::LEFT_CENTER,
+                    &ch,
+                    egui::TextStyle::Body.resolve(ui.style()),
+                    ui.visuals().text_color(),
+                );
+                x += measure_text_width(ui, &ch);
+                i += 1;
+            }
+        }
+    }
+
+    if has_focus {
+        let blink_on = ((ui.input(|i| i.time) * 2.0) as i64) % 2 == 0;
+        if blink_on {
+            let caret = caret_points
+                .get(*cursor_char)
+                .copied()
+                .unwrap_or_else(|| *caret_points.last().unwrap_or(&egui::pos2(0.0, 0.0)));
+            let x = content_rect.left() + caret.x + 1.0;
+            let top = content_rect.top() + caret.y + 2.0;
+            let bottom = (top + 18.0).min(content_rect.bottom() - 2.0);
+            ui.painter().line_segment(
+                [egui::pos2(x, top), egui::pos2(x, bottom)],
+                egui::Stroke::new(1.6, ui.visuals().text_color()),
+            );
+        }
+    }
+
+    (response, submit, changed)
 }
 
 fn play_notification_sound() {
@@ -232,6 +533,7 @@ impl AbcomApp {
             send_tx,
             send_group_tx,
             input: String::new(),
+            input_cursor_char: 0,
             show_emoji_picker: false,
             show_participants: false,
             enable_sound_notifications: true,
@@ -571,7 +873,7 @@ impl eframe::App for AbcomApp {
                 });
         } else {
         egui::TopBottomPanel::bottom("input_panel")
-            .exact_height(68.0)  // Hauteur légère avec padding
+            .exact_height(68.0)
             .show(ctx, |ui| {
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
@@ -580,12 +882,21 @@ impl eframe::App for AbcomApp {
                     // ─── Bouton emoji intégré (avant le champ) ───
                     let emoji_btn_response = if !self.emoji_textures.is_empty() {
                         let (_ch, tex) = &self.emoji_textures[0];
-                        let img_btn = egui::ImageButton::new(
-                            egui::Image::new(tex).fit_to_exact_size(egui::vec2(18.0, 18.0)),
-                        )
-                        .frame(false)  // Pas de frame pour style Discord
-                        .selected(self.show_emoji_picker);
-                        ui.add(img_btn)
+                        let (btn_rect, btn_resp) = ui.allocate_exact_size(
+                            egui::vec2(24.0, 24.0),
+                            egui::Sense::click(),
+                        );
+                        if self.show_emoji_picker {
+                            ui.painter().rect_filled(btn_rect, 6.0, ui.visuals().selection.bg_fill);
+                        }
+                        let img_rect = btn_rect.shrink(3.0);
+                        ui.painter().image(
+                            tex.id(),
+                            img_rect,
+                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                            egui::Color32::WHITE,
+                        );
+                        btn_resp
                     } else {
                         ui.button("😊")
                     };
@@ -602,21 +913,17 @@ impl eframe::App for AbcomApp {
                     };
 
                     let available_w = ui.available_width() - 8.0;
-                    let resp = egui::ScrollArea::vertical()
-                        .max_height(32.0)
-                        .show(ui, |ui| {
-                            ui.add(
-                                egui::TextEdit::multiline(&mut self.input)
-                                    .desired_width(available_w - 12.0)
-                                    .desired_rows(1)
-                                    .hint_text("Message")
-                                    .frame(false),  // Pas de frame pour style Discord
-                            )
-                        })
-                        .inner;
+                    let (resp, pressed_enter, changed) = custom_composer_input(
+                        ui,
+                        &mut self.input,
+                        &mut self.input_cursor_char,
+                        &self.emoji_map,
+                        &self.emoji_textures,
+                        available_w - 12.0,
+                    );
 
                     // Détecter la frappe et envoyer l'indicateur uniquement au pair de la conversation active (max 1 fois/1.5s)
-                    if resp.changed() && self.last_typing_sent.elapsed().as_millis() > 1500 {
+                    if changed && self.last_typing_sent.elapsed().as_millis() > 1500 {
                         self.last_typing_sent = std::time::Instant::now();
                         let (my_name, target_addr) = {
                             let s = self.state.lock().unwrap();
@@ -635,10 +942,6 @@ impl eframe::App for AbcomApp {
                     }
 
                     ui.add_space(4.0);
-
-                    let pressed_enter = ui.input(|i| {
-                        i.key_pressed(egui::Key::Enter) && !i.modifiers.shift
-                    });
 
                     if pressed_enter && !self.input.trim().is_empty() {
                         if self.input.ends_with('\n') {
@@ -665,6 +968,7 @@ impl eframe::App for AbcomApp {
                             self.state.lock().unwrap().selected_conversation = Some(peer_name.clone());
                         }
                         self.input.clear();
+                        self.input_cursor_char = 0;
 
                         if let Some(addr) = selected_addr {
                             let _ = self.send_tx.try_send(SendRequest { to_addr: addr, message: msg });
@@ -681,6 +985,7 @@ impl eframe::App for AbcomApp {
                         self.show_emoji_picker = false;
                     }
                 });
+
             });
         } // fin else selected_peer_online
 
@@ -751,7 +1056,11 @@ impl eframe::App for AbcomApp {
                                             .fit_to_exact_size(egui::vec2(34.0, 34.0));
                                         let btn = egui::ImageButton::new(img).frame(false);
                                         if ui.add(btn).on_hover_text(ch.as_str()).clicked() {
-                                            self.input.push_str(ch);
+                                            insert_emoji_at_cursor(
+                                                &mut self.input,
+                                                &mut self.input_cursor_char,
+                                                ch,
+                                            );
                                             self.show_emoji_picker = false;
                                         }
                                         if (idx + 1) % 8 == 0 {
@@ -993,6 +1302,7 @@ impl eframe::App for AbcomApp {
                                     &msg.content,
                                     &self.emoji_map,
                                     &self.emoji_textures,
+                                    16.0,
                                 );
                             });
                         });
