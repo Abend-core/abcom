@@ -615,22 +615,21 @@ impl eframe::App for AbcomApp {
                         })
                         .inner;
 
-                    // Détecter la frappe et envoyer l'indicateur aux pairs (max 1 fois/1.5s)
+                    // Détecter la frappe et envoyer l'indicateur uniquement au pair de la conversation active (max 1 fois/1.5s)
                     if resp.changed() && self.last_typing_sent.elapsed().as_millis() > 1500 {
                         self.last_typing_sent = std::time::Instant::now();
-                        let (my_name, online_peers) = {
+                        let (my_name, target_addr) = {
                             let s = self.state.lock().unwrap();
                             let name = s.my_username.clone();
-                            let addrs: Vec<_> = s.peers.iter()
-                                .filter(|p| p.online)
-                                .map(|p| p.addr)
-                                .collect();
-                            (name, addrs)
+                            // Envoyer uniquement au pair sélectionné (conversation directe)
+                            // En global (None), personne n'a besoin de l'indicateur
+                            let addr = s.selected_peer_addr();
+                            (name, addr)
                         };
-                        for addr in online_peers {
+                        if let Some(addr) = target_addr {
                             let _ = self.typing_tx.try_send(SendTypingRequest {
                                 to_addr: addr,
-                                from: my_name.clone(),
+                                from: my_name,
                             });
                         }
                     }
