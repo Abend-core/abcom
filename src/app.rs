@@ -3,7 +3,7 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::message::{ChatMessage, Group};
+use crate::message::{ChatMessage, Group, KnownNetwork, PeerRecord};
 use crate::network::TCP_PORT;
 
 #[derive(Clone, Debug)]
@@ -22,12 +22,20 @@ pub struct AppState {
     pub peers: Vec<Peer>,
     pub messages: Vec<ChatMessage>,
     pub groups: Vec<Group>,
-    pub selected_conversation: Option<String>,  // None = "Global", Some("Alice") = direct with Alice, Some("#GroupName") = group
-    pub typing_users: HashMap<String, SystemTime>,  // qui tape, jusqu'à quand
+    pub selected_conversation: Option<String>,
+    pub typing_users: HashMap<String, SystemTime>,
     pub read_counts: HashMap<String, usize>,
+    /// Réseaux connus avec leurs pairs associés
+    pub known_networks: Vec<KnownNetwork>,
+    /// Alias et méta-données par pair
+    pub peer_records: Vec<PeerRecord>,
+    /// Subnet actif détecté au démarrage (ex: "192.168.1")
+    pub current_subnet: Option<String>,
     history_path: PathBuf,
     read_counts_path: PathBuf,
     groups_path: PathBuf,
+    networks_path: PathBuf,
+    peer_records_path: PathBuf,
 }
 
 impl AppState {
@@ -45,17 +53,33 @@ impl AppState {
             .join("abcom")
             .join("groups.json");
 
+        let networks_path = dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("abcom")
+            .join("networks.json");
+        let peer_records_path = dirs::data_dir()
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("abcom")
+            .join("peer_records.json");
+
+        let current_subnet = Self::detect_subnet();
+
         let mut state = Self {
             my_username: username,
             peers: Vec::new(),
             messages: Vec::new(),
             groups: Vec::new(),
-            selected_conversation: None,  // Starts with "Global"
+            selected_conversation: None,
             typing_users: HashMap::new(),
             read_counts: HashMap::new(),
+            known_networks: Vec::new(),
+            peer_records: Vec::new(),
+            current_subnet,
             history_path,
             read_counts_path,
             groups_path,
+            networks_path,
+            peer_records_path,
         };
 
         // Charge les messages historiques
@@ -64,9 +88,24 @@ impl AppState {
         state.load_read_counts();
         // Charge les groupes
         state.load_groups();
+        // Charge les réseaux connus
+        state.load_networks();
+        // Charge les enregistrements de pairs
+        state.load_peer_records();
         // Reconstruit les pairs connus depuis l'historique (hors ligne par défaut)
         state.restore_peers_from_history();
         state
+    }
+
+    /// Détecte le subnet /24 de l'interface principale (ex: "192.168.1")
+    pub fn detect_subnet() -> Option<String> {
+        if let Ok(ip) = local_ip_address::local_ip() {
+            if let std::net::IpAddr::V4(v4) = ip {
+                let octs = v4.octets();
+                return Some(format!("{}.{}.{}", octs[0], octs[1], octs[2]));
+            }
+        }
+        None
     }
 
     /// Extrait les noms d'utilisateurs des messages privés et les ajoute comme pairs hors ligne.
@@ -188,6 +227,105 @@ impl AppState {
         }
     }
 
+    fn load_networks(&mut self) {
+        if self.networks_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&self.networks_path) {
+                if let Ok(nets) = serde_json::from_str::<Vec<KnownNetwork>>(&content) {
+                    self.known_networks = nets;
+                }
+            }
+        }
+    }
+
+    pub fn save_networks(&self) {
+        if let Some(parent) = self.networks_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(json) = serde_json::to_string_pretty(&self.known_networks) {
+            let _ = std::fs::write(&self.networks_path, json);
+        }
+    }
+
+    fn load_peer_records(&mut self) {
+        if self.peer_records_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&self.peer_records_path) {
+                if let Ok(records) = serde_json::from_str::<Vec<PeerRecord>>(&content) {
+                    self.peer_records = records;
+                }
+            }
+        }
+    }
+
+    pub fn save_peer_records(&self) {
+        if let Some(parent) = self.peer_records_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(json) = serde_json::to_string_pretty(&self.peer_records) {
+            let _ = std::fs::write(&self.peer_records_path, json);
+        }
+    }
+
+    /// Enregistre un pair sur le réseau actuel et crée/met à jour KnownNetwork
+    pub fn record_peer_on_network(&mut self, username: &str, peer_subnet: &str) {
+        // Mettre à jour ou créer le réseau
+        if let Some(net) = self.known_networks.iter_mut().find(|n| n.subnet == peer_subnet) {
+            if !net.seen_peers.contains(&username.to_string()) {
+                net.seen_peers.push(username.to_string());
+            }
+        } else {
+            self.known_networks.push(KnownNetwork {
+                subnet: peer_subnet.to_string(),
+                alias: None,
+                seen_peers: vec![username.to_string()],
+            });
+        }
+
+        // Mettre à jour ou créer le PeerRecord
+        if let Some(rec) = self.peer_records.iter_mut().find(|r| r.username == username) {
+            rec.last_subnet = Some(peer_subnet.to_string());
+        } else {
+            self.peer_records.push(PeerRecord {
+                username: username.to_string(),
+                alias: None,
+                last_subnet: Some(peer_subnet.to_string()),
+            });
+        }
+
+        self.save_networks();
+        self.save_peer_records();
+    }
+
+    /// Retourne l'alias d'un pair s'il en a un
+    pub fn peer_display_name(&self, username: &str) -> String {
+        self.peer_records
+            .iter()
+            .find(|r| r.username == username)
+            .and_then(|r| r.alias.clone())
+            .unwrap_or_else(|| username.to_string())
+    }
+
+    /// Supprime un réseau et tous ses pairs du registre
+    pub fn forget_network(&mut self, subnet: &str) {
+        if let Some(net) = self.known_networks.iter().find(|n| n.subnet == subnet).cloned() {
+            for peer in &net.seen_peers {
+                self.peer_records.retain(|r| &r.username != peer);
+            }
+        }
+        self.known_networks.retain(|n| n.subnet != subnet);
+        self.save_networks();
+        self.save_peer_records();
+    }
+
+    /// Pairs filtrés par subnet (None = tous)
+    pub fn peers_for_subnet<'a>(&'a self, subnet: &str) -> Vec<&'a Peer> {
+        let seen: Vec<&str> = self.known_networks
+            .iter()
+            .find(|n| n.subnet == subnet)
+            .map(|n| n.seen_peers.iter().map(|s| s.as_str()).collect())
+            .unwrap_or_default();
+        self.peers.iter().filter(|p| seen.contains(&p.username.as_str())).collect()
+    }
+
     /// Ajoute ou met à jour un pair (adresse TCP déduite de l'IP + TCP_PORT)
     pub fn add_peer(&mut self, username: String, addr: SocketAddr) {
         let tcp_addr = SocketAddr::new(addr.ip(), TCP_PORT);
@@ -201,8 +339,21 @@ impl AppState {
                 peer.addr = tcp_addr;
                 peer.last_seen = now;
                 peer.online = true;
+                // Enregistrer sur le réseau
+                if let std::net::IpAddr::V4(v4) = addr.ip() {
+                    let o = v4.octets();
+                    let subnet = format!("{}.{}.{}", o[0], o[1], o[2]);
+                    let _ = peer;
+                    self.record_peer_on_network(&username, &subnet);
+                }
                 return;
             }
+        }
+        // Nouveau pair
+        if let std::net::IpAddr::V4(v4) = addr.ip() {
+            let o = v4.octets();
+            let subnet = format!("{}.{}.{}", o[0], o[1], o[2]);
+            self.record_peer_on_network(&username, &subnet);
         }
         self.peers.push(Peer { username, addr: tcp_addr, last_seen: now, online: true });
     }
