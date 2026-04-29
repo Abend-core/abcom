@@ -585,4 +585,60 @@ mod tests {
         assert!(removed);
         assert_eq!(state.groups[0].members.len(), 1); // Only alice remains
     }
+
+    #[test]
+    fn test_get_online_peers() {
+        let mut state = new_test_state("alice");
+        
+        // Add peers, some online, some offline
+        state.peers.push(Peer {
+            username: "bob".to_string(),
+            addr: "192.168.1.10:9000".parse().unwrap(),
+            last_seen: 0,
+            online: true,
+        });
+        state.peers.push(Peer {
+            username: "charlie".to_string(),
+            addr: "192.168.1.11:9000".parse().unwrap(),
+            last_seen: 0,
+            online: false,
+        });
+        state.peers.push(Peer {
+            username: "diana".to_string(),
+            addr: "192.168.1.12:9000".parse().unwrap(),
+            last_seen: 0,
+            online: true,
+        });
+        
+        let online_addrs = state.get_online_peers();
+        assert_eq!(online_addrs.len(), 2);
+        assert!(online_addrs.contains(&"192.168.1.10:9000".parse().unwrap()));
+        assert!(online_addrs.contains(&"192.168.1.12:9000".parse().unwrap()));
+    }
+
+    #[test]
+    fn test_group_sync_simulation() {
+        // Simulate two instances: alice creates a group, which should be receivable by bob
+        let mut alice = new_test_state("alice");
+        let mut bob = new_test_state("bob");
+        
+        // Alice creates a group
+        let group_opt = alice.create_group("DevTeam".to_string(), vec![]);
+        assert!(group_opt.is_some());
+        assert_eq!(alice.groups.len(), 1);
+        assert_eq!(bob.groups.len(), 0);
+        
+        // Simulate Bob receiving the group via network (manually, since this is unit test)
+        if let Some(group) = group_opt {
+            bob.groups.push(group);
+            bob.save_groups();
+        }
+        
+        // Now both should have the same group
+        assert_eq!(alice.groups.len(), 1);
+        assert_eq!(bob.groups.len(), 1);
+        assert_eq!(alice.groups[0].name, bob.groups[0].name);
+        assert_eq!(alice.groups[0].owner, "alice");
+        assert_eq!(bob.groups[0].owner, "alice");
+    }
 }
