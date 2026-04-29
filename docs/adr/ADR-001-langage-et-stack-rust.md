@@ -1,27 +1,21 @@
-> [🏠 Accueil](../../README.md) > [📘 ADR](ADR-001-langage-et-stack-rust.md)
+# ADR-001 — Langage et stack Rust
 
-# ADR-001 — Choix du langage Rust et de la stack
+**Statut** : Accepté (rétro-actif)
 
-## Statut
-Accepté (rétro-actif)
-
-## 🌱 Contexte
-Abcom est une application cliente de messagerie LAN avec des besoins de performance, d’interface native et de concurrence réseau. Le projet doit rester léger et exécutable localement sans serveur central.
+## 🌱 Pourquoi ce choix de langue et de runtime
+Le projet Abcom est un client de messagerie LAN qui doit être léger, natif et capable de gérer de la concurrence réseau de manière efficace. Rust offre une bonne sécurité mémoire, un runtime asynchrone mature avec `tokio`, et une cible desktop simple à empaqueter.
 
 ## 🔧 Décision retenue
-Le projet utilise Rust comme langage principal, avec la stack suivante :
-- `tokio` pour le runtime asynchrone,
-- `serde` / `serde_json` pour la sérialisation JSON,
-- `eframe` et `egui` pour l’interface native,
-- `chrono` pour les horodatages,
-- `anyhow` pour la gestion d’erreurs.
+- Langage : Rust édition 2021.
+- Runtime async : `tokio` 1.
+- UI native : `eframe` / `egui`.
+- Sérialisation : `serde` + `serde_json`.
 
 ## ⚙️ Conséquences techniques
-- Positives : performance, sécurité mémoire, binaire natif léger.
-- Négatives : courbe d’adoption pour des contributeurs non-Rust, compilation plus longue.
-- Neutres : dépendance à l’écosystème Rust et aux versions de `Cargo`.
+- L’application est compilée en binaire natif unique, sans dépendances d’exécution externes.
+- Le code réseau bénéficie de `async`/`await` et de tâches Tokio séparées pour discovery, serveur TCP et envois.
+- La GUI reste embarquée dans le même binaire que la logique réseau, ce qui simplifie le packaging mais impose une monolithe applicatif.
 
-## Alternatives écartées
-- Electron / web : trop lourds pour une application LAN simple.
-- Python / Node.js : moins adaptés aux binaires statiques et à la concurrence native.
-- Qt / GTK : complexité excessive pour un outil de chat léger.
+### Alternatives écartées
+- Utiliser un framework web pour l’interface : cela aurait ajouté une dépendance navigateur/serveur local et complexifié l’architecture.
+- Adopter un autre runtime async, comme `async-std` : `tokio` a été retenu pour sa maturité et son large écosystème.

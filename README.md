@@ -1,76 +1,48 @@
 # Abcom
 
-> 📅 **Généré le** : 2026-04-28
+> 📅 **Généré le** : 2026-04-29
 > 🔖 **Stack analysée** : Rust 2021, tokio 1, serde 1, serde_json 1, eframe 0.31, egui 0.31, chrono 0.4, anyhow 1
-> 🔄 **À régénérer si** : refonte de l’architecture, ajout d’un service ou d’un composant, migration vers un backend central
 
 ## 🎯 Pitch projet
-Abcom est une application de messagerie instantanée conçue pour un réseau local (LAN). Le client fonctionne en mode peer-to-peer, découvre automatiquement les pairs via UDP broadcast et échange les messages au format JSON par TCP.
+Abcom est une application de messagerie instantanée pour réseau local (LAN). Elle découvre automatiquement les pairs sur le réseau, échange des messages JSON en TCP et présente une interface native `egui` sur le bureau.
 
-> Ancienne documentation archivée dans les fichiers `.old.md` pour assurer traçabilité.
-
-## 🏗️ Architecture globale
-Le projet est un monolithe Rust à exécution locale. L’application combine un runtime Tokio, un serveur TCP, un émetteur UDP de découverte, et une interface graphique native `egui`.
+## 🏗️ Vue d'ensemble
+Abcom fonctionne sans serveur central ; chaque instance agit à la fois comme client et récepteur. La découverte des pairs se fait par UDP broadcast, puis les messages sont transmis en direct via TCP.
 
 ```mermaid
 C4Context
-    title Abcom — Vue système
-    Person(user, "Utilisateur LAN", "Utilisateur d’une machine sur le LAN")
-    System(abcom, "Abcom", "Application de chat LAN en Rust")
-    System_Ext(network, "Réseau local", "Méthode de transport et de découverte")
+    title Abcom — Vue globale du système
+    Person(user, "Utilisateur", "Personne utilisant Abcom sur un poste du LAN")
+    System(abcom, "Abcom", "Application desktop Rust pour chat LAN")
+    System_Ext(network, "Réseau local", "Infrastructure IP du LAN")
     Rel(user, abcom, "utilise")
-    Rel(abcom, network, "découvre et échange des messages via")
+    Rel(abcom, network, "découvre des pairs et échange des messages")
+    Rel(abcom, network, "n’utilise pas", "Internet")
 ```
 
 ## 🚀 Quick start
+- `cargo run --release -- <pseudo>` : démarrage de développement sur une machine Windows ou Linux.
+- `make run` : exécute la version locale en conteneur de développement.
+- `bash scripts/build-and-distribute.sh` : prépare une archive de distribution.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\install-windows.ps1 -Username MonPseudo` : installe Abcom sur Windows.
 
-### Développement
-```bash
-cargo run --release -- <username>
-```
+## 📚 Documentation
+- [Architecture du système](docs/architecture-systeme.md)
+- [Utilisation rapide](docs/utilisation-rapide.md)
+- [Déploiement et installation](docs/deploiement-installation.md)
+- [Maintenance et qualité](docs/maintenance-et-qualite.md)
+- [Terminologie](docs/terminologie.md)
+- [ADR — langage et stack Rust](docs/adr/ADR-001-langage-et-stack-rust.md)
+- [ADR — architecture LAN peer-to-peer](docs/adr/ADR-002-architecture-lan-peer-to-peer.md)
+- [Migration de la documentation](docs/MIGRATIONNOTES.md)
 
-### Installation locale
-```bash
-make install
-```
+## 🧭 Navigation
+- `src/main.rs` : démarrage, runtime Tokio, UI.
+- `src/discovery.rs` : découverte UDP des pairs sur le LAN.
+- `src/network.rs` : serveur TCP d’entrée et envoi de messages sortants.
+- `src/ui.rs` : interface graphique `egui`.
+- `src/app.rs` : état applicatif, historique et conversations.
+- `src/message.rs` : structures de messages et événements.
 
-### Déploiement utilisateur
-```bash
-bash scripts/abcom-install.sh ./target/release/abcom
-systemctl --user enable --now abcom.service
-```
-
-### Mode distribution Docker
-```bash
-cd scripts/docker
-docker compose up --build
-```
-
-## 📚 Sommaire exhaustif
-
-- **Documentation globale**
-  - [Architecture globale](docs/01-architecture-globale.md)
-  - [Developer Experience](docs/02-developer-experience.md)
-  - [CICD et déploiement](docs/03-cicd-et-deploiement.md)
-  - [Sécurité globale](docs/04-securite-globale.md)
-  - [Glossaire](docs/05-glossaire.md)
-  - [Installation Windows](docs/INSTALL_WINDOWS.md)
-  - [Notes de migration](docs/_MIGRATION_NOTES.md)
-- **Décisions (ADR)**
-  - [Choix du langage Rust et de la stack](docs/adr/ADR-001-langage-et-stack-rust.md)
-  - [Architecture peer-to-peer sur LAN](docs/adr/ADR-002-architecture-lan-peer-to-peer.md)
-- **Composant Abcom**
-  - [Présentation du composant](docs/abcom/README.md)
-  - [Architecture et structure](docs/abcom/01-architecture-et-structure.md)
-  - [Mécanismes et données](docs/abcom/02-mecanismes-et-donnees.md)
-  - [Performances et optimisations](docs/abcom/03-performances-et-optimisations.md)
-  - [Fiabilité et tests](docs/abcom/04-fiabilite-et-tests.md)
-
-## 🧭 Glossaire express
-
-- [LAN](docs/05-glossaire.md#lan)
-- [UDP broadcast](docs/05-glossaire.md#udp-broadcast)
-- [TCP](docs/05-glossaire.md#tcp)
-- [Tokio](docs/05-glossaire.md#tokio)
-- [egui / eframe](docs/05-glossaire.md#egui--eframe)
-- [systemd user](docs/05-glossaire.md#systemd-user)
+## 🔧 Fichiers archivés
+- `docs/INSTALL_WINDOWS.old.md` : ancienne documentation Windows archivée.

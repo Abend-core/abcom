@@ -1,24 +1,22 @@
-> [🏠 Accueil](../../README.md) > [📘 ADR](ADR-002-architecture-lan-peer-to-peer.md)
+# ADR-002 — Architecture LAN peer-to-peer
 
-# ADR-002 — Architecture peer-to-peer sur LAN
-
-## Statut
-Accepté (rétro-actif)
+**Statut** : Accepté (rétro-actif)
 
 ## 🌱 Contexte
-Abcom doit fonctionner sans serveur central sur un réseau local. La communication doit rester simple et permettre la découverte automatique des machines.
+Abcom est conçu pour fonctionner dans un réseau local sans service central. La question était de savoir s’il fallait une architecture client-serveur ou peer-to-peer.
 
 ## 🔧 Décision retenue
-Le projet adopte un modèle peer-to-peer léger :
-- découverte de pairs par UDP broadcast sur `9001/udp`,
-- échange de messages directs en TCP sur `9000/tcp`.
+- Architecture : peer-to-peer sur LAN.
+- Découverte : UDP broadcast sur le port `9001`.
+- Transport des messages : TCP direct sur le port `9000`.
+- Aucune communication avec Internet n’est nécessaire.
 
 ## ⚙️ Conséquences techniques
-- Positives : simplicité d’implémentation, fonctionnement direct sur le LAN.
-- Négatives : dépendance à un réseau non segmenté et absence de sécurité native.
-- Neutres : extensibilité possible vers une couche d’authentification ultérieure.
+- Chaque instance se comporte comme récepteur TCP et émetteur UDP.
+- Le système dépend du broadcast réseau ; certains segments ou VLAN peuvent ne pas être compatibles.
+- Aucun service central n’est requis, ce qui simplifie le déploiement mais rend le routage inter-sous-réseaux impossible.
 
-## Alternatives écartées
-- serveur central de découverte : inutile pour un LAN simple,
-- multicast IP : moins robuste que l’UDP broadcast sur certaines configurations,
-- WebSocket / HTTP : complexité inutile pour un client LAN natif.
+### Contraintes futures
+- Ne pas ajouter de mécanisme qui force un point central sans documentation d’architecture.
+- Toute nouvelle fonctionnalité de découverte doit rester compatible avec l’existant UDP broadcast.
+- Si des gateways ou des sessions multi-réseaux sont nécessaires, elles doivent être introduites comme une évolution explicite et documentée dans une ADR séparée.
