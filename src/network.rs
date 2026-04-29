@@ -2,7 +2,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{Receiver, Sender};
 
-use crate::message::{AppEvent, ChatMessage, SendRequest};
+use crate::message::{AppEvent, ChatMessage, GroupEvent, SendRequest, SendGroupRequest};
 
 pub const TCP_PORT: u16 = 9000;
 
@@ -30,8 +30,17 @@ pub async fn run_server(tx: Sender<AppEvent>) {
 async fn handle_incoming(mut stream: TcpStream, tx: Sender<AppEvent>) {
     let mut buf = Vec::new();
     if stream.read_to_end(&mut buf).await.is_ok() && !buf.is_empty() {
+        // Try to parse as ChatMessage first
         if let Ok(msg) = serde_json::from_slice::<ChatMessage>(&buf) {
             let _ = tx.send(AppEvent::MessageReceived(msg)).await;
+        }
+        // If that fails, try GroupEvent
+        else if let Ok(event) = serde_json::from_slice::<GroupEvent>(&buf) {
+            let _ = tx.send(AppEvent::GroupEventReceived(event)).await;
+        }
+        // If both fail, log error but don't crash
+        else {
+            eprintln!("[network] Failed to parse incoming message");
         }
     }
 }
@@ -51,6 +60,26 @@ pub async fn run_sender(mut rx: Receiver<SendRequest>) {
                 }
                 Err(e) => {
                     eprintln!("[network] Connexion échouée vers {}: {}", req.to_addr, e);
+                }
+            }
+        });
+    }
+}
+
+/// Expéditeur TCP pour les événements de groupe
+pub async fn run_sender_group(mut rx: Receiver<SendGroupRequest>) {
+    while let Some(req) = rx.recv().await {
+        tokio::spawn(async move {
+            match TcpStream::connect(req.to_addr).await {
+                Ok(mut stream) => {
+                    if let Ok(data) = serde_json::to_vec(&req.event) {
+                        let _ = stream.write_all(&data).await;
+                        let _ = stream.flush().await;
+                        let _ = stream.shutdown().await;
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[network] Erreur envoi GroupEvent vers {}: {}", req.to_addr, e);
                 }
             }
         });

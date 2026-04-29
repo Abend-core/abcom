@@ -5,7 +5,7 @@ use eframe::egui;
 use tokio::sync::mpsc;
 
 use crate::app::AppState;
-use crate::message::{AppEvent, ChatMessage, SendRequest};
+use crate::message::{AppEvent, ChatMessage, SendRequest, SendGroupRequest};
 
 fn app_icon_data() -> Option<egui::IconData> {
     let data = include_bytes!("../assets/app_icon.jpg");
@@ -66,6 +66,7 @@ pub fn run(
     state: Arc<Mutex<AppState>>,
     event_rx: mpsc::Receiver<AppEvent>,
     send_tx: mpsc::Sender<SendRequest>,
+    send_group_tx: mpsc::Sender<SendGroupRequest>,
 ) -> anyhow::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Abcom")
@@ -86,7 +87,7 @@ pub fn run(
         options,
         Box::new(|cc| {
             configure_fonts(cc);
-            Ok(Box::new(AbcomApp::new(state, event_rx, send_tx)))
+            Ok(Box::new(AbcomApp::new(state.clone(), event_rx, send_tx.clone(), send_group_tx.clone())))
         }),
     )
     .map_err(|e| {
@@ -103,6 +104,7 @@ struct AbcomApp {
     state: Arc<Mutex<AppState>>,
     event_rx: mpsc::Receiver<AppEvent>,
     send_tx: mpsc::Sender<SendRequest>,
+    send_group_tx: mpsc::Sender<SendGroupRequest>,
     input: String,
     show_emoji_picker: bool,
     show_participants: bool,
@@ -223,11 +225,13 @@ impl AbcomApp {
         state: Arc<Mutex<AppState>>,
         event_rx: mpsc::Receiver<AppEvent>,
         send_tx: mpsc::Sender<SendRequest>,
+        send_group_tx: mpsc::Sender<SendGroupRequest>,
     ) -> Self {
         Self {
             state,
             event_rx,
             send_tx,
+            send_group_tx,
             input: String::new(),
             show_emoji_picker: false,
             show_participants: false,
@@ -294,10 +298,44 @@ impl eframe::App for AbcomApp {
                     AppEvent::UserStoppedTyping(_username) => {
                         s.clear_typing_if_old();
                     }
-                    AppEvent::GroupEventReceived(_evt) => {
-                        // TODO: Traiter l'événement de synchronisation du groupe
-                        // Pour maintenant, on recharge les groupes
-                        s.load_groups();
+                    AppEvent::GroupEventReceived(evt) => {
+                        // Traiter les événements de synchronisation de groupe
+                        use crate::message::GroupAction;
+                        
+                        match evt.action {
+                            GroupAction::Create { group } => {
+                                // Ajouter le groupe s'il n'existe pas déjà
+                                if !s.groups.iter().any(|g| g.name == group.name) {
+                                    s.groups.push(group);
+                                    s.save_groups();
+                                    eprintln!("[ui] Groupe reçu et ajouté: {}", s.groups.last().map(|g| &g.name).unwrap_or(&"".to_string()));
+                                }
+                            }
+                            GroupAction::AddMember { group_name, username } => {
+                                if let Some(group) = s.groups.iter_mut().find(|g| g.name == group_name) {
+                                    if !group.members.contains(&username) {
+                                        group.members.push(username);
+                                        s.save_groups();
+                                    }
+                                }
+                            }
+                            GroupAction::RemoveMember { group_name, username } => {
+                                if let Some(group) = s.groups.iter_mut().find(|g| g.name == group_name) {
+                                    group.members.retain(|m| m != &username);
+                                    s.save_groups();
+                                }
+                            }
+                            GroupAction::Rename { group_name, new_name } => {
+                                if let Some(group) = s.groups.iter_mut().find(|g| g.name == group_name) {
+                                    group.name = new_name;
+                                    s.save_groups();
+                                }
+                            }
+                            GroupAction::Delete { group_name } => {
+                                s.groups.retain(|g| g.name != group_name);
+                                s.save_groups();
+                            }
+                        }
                     }
                 }
             }
@@ -763,7 +801,18 @@ impl eframe::App for AbcomApp {
                             let group_name = trimmed.to_string();
                             let members: Vec<String> = self.group_members_selected.iter().cloned().collect();
                             
-                            if let Some(_group) = self.state.lock().unwrap().create_group(group_name, members) {
+                            if let Some(group) = self.state.lock().unwrap().create_group(group_name, members) {
+                                // Broadcaster le groupe à tous les pairs en ligne
+                                let create_event = crate::message::GroupEvent {
+                                    action: crate::message::GroupAction::Create { group: group.clone() },
+                                };
+                                
+                                let online_peers = self.state.lock().unwrap().get_online_peers();
+                                for addr in online_peers {
+                                    let req = SendGroupRequest { to_addr: addr, event: create_event.clone() };
+                                    let _ = self.send_group_tx.try_send(req);
+                                }
+                                
                                 self.show_group_modal = false;
                                 self.group_name_input.clear();
                                 self.group_members_selected.clear();
