@@ -72,6 +72,13 @@ pub struct SendGroupRequest {
     pub event: GroupEvent,
 }
 
+/// Demande d'envoi d'un indicateur de frappe à une adresse TCP
+#[derive(Clone, Debug)]
+pub struct SendTypingRequest {
+    pub to_addr: SocketAddr,
+    pub from: String,
+}
+
 /// Message réseau unifié (ChatMessage ou GroupEvent)
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(untagged)]
