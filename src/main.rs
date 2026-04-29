@@ -18,7 +18,9 @@ fn main() -> anyhow::Result<()> {
     let (event_tx, event_rx) = mpsc::channel::<message::AppEvent>(256);
     let (send_tx, send_rx) = mpsc::channel::<message::SendRequest>(256);
     let (send_group_tx, send_group_rx) = mpsc::channel::<message::SendGroupRequest>(256);
-    let (send_typing_tx, send_typing_rx) = mpsc::channel::<message::SendTypingRequest>(256);
+    let (send_typing_tx, send_typing_rx) = mpsc::channel::<message::TypingRequest>(256);
+    let (send_read_receipt_tx, send_read_receipt_rx) = mpsc::channel::<message::ReadReceiptRequest>(256);
+    let (send_ack_tx, send_ack_rx) = mpsc::channel::<message::MessageAckRequest>(256);
 
     // Runtime tokio multi-thread — tourne en arrière-plan pendant qu'egui
     // occupe le thread principal.
@@ -31,8 +33,10 @@ fn main() -> anyhow::Result<()> {
     rt.spawn(network::run_sender(send_rx));
     rt.spawn(network::run_sender_group(send_group_rx));
     rt.spawn(network::run_sender_typing(send_typing_rx));
+    rt.spawn(network::run_sender_read_receipts(send_read_receipt_rx));
+    rt.spawn(network::run_sender_ack(send_ack_rx));
 
-    ui::run(state, event_rx, send_tx, send_group_tx, send_typing_tx)?;
+    ui::run(state, event_rx, send_tx, send_group_tx, send_typing_tx, send_read_receipt_tx, send_ack_tx)?;
 
     Ok(())
 }

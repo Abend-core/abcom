@@ -2,7 +2,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::{Receiver, Sender};
 
-use crate::message::{AppEvent, ChatMessage, GroupEvent, SendRequest, SendGroupRequest, SendTypingRequest, TypingIndicator};
+use crate::message::{AppEvent, ChatMessage, GroupEvent, SendRequest, SendGroupRequest, TypingRequest, TypingIndicator, ReadReceipt, ReadReceiptRequest, MessageAck, MessageAckRequest};
 
 pub const TCP_PORT: u16 = 9000;
 
@@ -38,11 +38,19 @@ async fn handle_incoming(mut stream: TcpStream, tx: Sender<AppEvent>) {
         else if let Ok(event) = serde_json::from_slice::<GroupEvent>(&buf) {
             let _ = tx.send(AppEvent::GroupEventReceived(event)).await;
         }
-        // Sinon essayer TypingIndicator
-        else if let Ok(typing) = serde_json::from_slice::<TypingIndicator>(&buf) {
-            let _ = tx.send(AppEvent::UserTyping(typing.from)).await;
+        // If that fails, try TypingIndicator
+        else if let Ok(indicator) = serde_json::from_slice::<TypingIndicator>(&buf) {
+            let _ = tx.send(AppEvent::UserTyping(indicator.from.clone())).await;
         }
-        // Si tout échoue, ignorer silencieusement
+        // If that fails, try ReadReceipt
+        else if let Ok(receipt) = serde_json::from_slice::<ReadReceipt>(&buf) {
+            let _ = tx.send(AppEvent::ReadReceiptReceived(receipt)).await;
+        }
+        // If that fails, try MessageAck
+        else if let Ok(ack) = serde_json::from_slice::<MessageAck>(&buf) {
+            let _ = tx.send(AppEvent::MessageAckReceived(ack)).await;
+        }
+        // If all fail, log error but don't crash
         else {
             eprintln!("[network] Failed to parse incoming message");
         }
@@ -100,6 +108,49 @@ pub async fn run_sender_group(mut rx: Receiver<SendGroupRequest>) {
                 }
                 Err(e) => {
                     eprintln!("[network] Erreur envoi GroupEvent vers {}: {}", req.to_addr, e);
+                }
+            }
+        });
+    }
+}
+
+/// Expéditeur TCP pour les indicateurs de typage
+pub async fn run_sender_typing(mut rx: Receiver<TypingRequest>) {
+    while let Some(req) = rx.recv().await {
+        tokio::spawn(async move {
+            if let Ok(mut stream) = TcpStream::connect(req.to_addr).await {
+                if let Ok(data) = serde_json::to_vec(&req.indicator) {
+                    let _ = stream.write_all(&data).await;
+                    let _ = stream.flush().await;
+                    let _ = stream.shutdown().await;
+                }
+            }
+        });
+    }
+}
+
+pub async fn run_sender_read_receipts(mut rx: Receiver<ReadReceiptRequest>) {
+    while let Some(req) = rx.recv().await {
+        tokio::spawn(async move {
+            if let Ok(mut stream) = TcpStream::connect(req.to_addr).await {
+                if let Ok(data) = serde_json::to_vec(&req.receipt) {
+                    let _ = stream.write_all(&data).await;
+                    let _ = stream.flush().await;
+                    let _ = stream.shutdown().await;
+                }
+            }
+        });
+    }
+}
+
+pub async fn run_sender_ack(mut rx: Receiver<MessageAckRequest>) {
+    while let Some(req) = rx.recv().await {
+        tokio::spawn(async move {
+            if let Ok(mut stream) = TcpStream::connect(req.to_addr).await {
+                if let Ok(data) = serde_json::to_vec(&req.ack) {
+                    let _ = stream.write_all(&data).await;
+                    let _ = stream.flush().await;
+                    let _ = stream.shutdown().await;
                 }
             }
         });

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -17,6 +17,14 @@ pub struct Peer {
     pub online: bool,
 }
 
+#[derive(Clone, Debug)]
+pub struct PendingMessage {
+    pub message_hash: u64,
+    pub to_addr: SocketAddr,
+    pub last_retry: SystemTime,
+    pub retry_count: u32,
+}
+
 pub struct AppState {
     pub my_username: String,
     pub peers: Vec<Peer>,
@@ -25,6 +33,8 @@ pub struct AppState {
     pub selected_conversation: Option<String>,
     pub typing_users: HashMap<String, SystemTime>,
     pub read_counts: HashMap<String, usize>,
+    pub read_receipts: HashMap<u64, HashSet<String>>,  // message_hash -> set of usernames who read it
+    pub pending_messages: HashMap<u64, PendingMessage>,  // message_hash -> pending message info
     /// Réseaux connus avec leurs pairs associés
     pub known_networks: Vec<KnownNetwork>,
     /// Alias et méta-données par pair
@@ -75,6 +85,8 @@ impl AppState {
             selected_conversation: None,
             typing_users: HashMap::new(),
             read_counts: HashMap::new(),
+            read_receipts: HashMap::new(),
+            pending_messages: HashMap::new(),
             known_networks: Vec::new(),
             peer_records: Vec::new(),
             current_subnet,
@@ -278,37 +290,37 @@ impl AppState {
         }
     }
 
-    fn save_messages(&self) {
-        if let Some(parent) = self.history_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
+    fn persist_json_atomic(&self, path: &std::path::Path, json: &str) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
         }
+        let tmp_path = path.with_extension("json.tmp");
+        std::fs::write(&tmp_path, json)?;
+        std::fs::rename(&tmp_path, path)?;
+        Ok(())
+    }
+
+    fn save_messages(&self) {
         if let Ok(json) = serde_json::to_string_pretty(&self.messages) {
-            let _ = std::fs::write(&self.history_path, json);
+            if let Err(e) = self.persist_json_atomic(&self.history_path, &json) {
+                eprintln!("[app] Erreur écriture messages.json atomique: {}", e);
+            }
         }
     }
 
     fn save_read_counts(&self) {
-        if let Some(parent) = self.read_counts_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
         if let Ok(json) = serde_json::to_string_pretty(&self.read_counts) {
-            let _ = std::fs::write(&self.read_counts_path, json);
+            if let Err(e) = self.persist_json_atomic(&self.read_counts_path, &json) {
+                eprintln!("[app] Erreur écriture read_counts.json atomique: {}", e);
+            }
         }
     }
 
     pub fn save_groups(&self) {
-        if let Some(parent) = self.groups_path.parent() {
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                eprintln!("[app] Erreur création répertoire groupes: {}", e);
-                return;
-            }
-        }
-        
-        // Sauvegarder avec backup atomique
         match serde_json::to_string_pretty(&self.groups) {
             Ok(json) => {
-                if let Err(e) = std::fs::write(&self.groups_path, &json) {
-                    eprintln!("[app] Erreur écriture groups.json: {}", e);
+                if let Err(e) = self.persist_json_atomic(&self.groups_path, &json) {
+                    eprintln!("[app] Erreur écriture groups.json atomique: {}", e);
                 }
             }
             Err(e) => eprintln!("[app] Erreur sérialisation groupes: {}", e),
@@ -550,6 +562,91 @@ impl AppState {
 
     pub fn typing_users_list(&self) -> Vec<String> {
         self.typing_users.keys().cloned().collect()
+    }
+
+    /// Calculate hash of a message for read receipt tracking
+    pub fn message_hash(msg: &ChatMessage) -> u64 {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        
+        let content = format!("{}:{}", msg.from, msg.content);
+        let mut hasher = DefaultHasher::new();
+        content.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    /// Mark a message as read by a specific user
+    pub fn mark_message_read(&mut self, message_hash: u64, username: String) {
+        self.read_receipts
+            .entry(message_hash)
+            .or_insert_with(HashSet::new)
+            .insert(username);
+    }
+
+    /// Check if a message was read by a specific user
+    pub fn is_message_read_by(&self, message_hash: u64, username: &str) -> bool {
+        self.read_receipts
+            .get(&message_hash)
+            .map(|readers| readers.contains(username))
+            .unwrap_or(false)
+    }
+
+    /// Get count of users who read a message
+    pub fn get_read_count(&self, message_hash: u64) -> usize {
+        self.read_receipts
+            .get(&message_hash)
+            .map(|readers| readers.len())
+            .unwrap_or(0)
+    }
+
+    /// Mark a message as sent (pending ACK)
+    pub fn mark_message_sent(&mut self, message_hash: u64, to_addr: SocketAddr) {
+        self.pending_messages.insert(
+            message_hash,
+            PendingMessage {
+                message_hash,
+                to_addr,
+                last_retry: SystemTime::now(),
+                retry_count: 0,
+            },
+        );
+    }
+
+    /// Mark a message as acknowledged
+    pub fn mark_message_acked(&mut self, message_hash: u64) {
+        self.pending_messages.remove(&message_hash);
+    }
+
+    /// Get messages that need retry (based on retry count and time elapsed)
+    pub fn get_retry_messages(&mut self) -> Vec<(u64, SocketAddr)> {
+        let now = SystemTime::now();
+        let mut to_retry = Vec::new();
+
+        for (hash, pending) in &self.pending_messages {
+            // Retry logic: exponential backoff starting at 2 seconds
+            let retry_delay_secs = 2u64.saturating_pow(pending.retry_count.min(5));  // cap at 32 seconds
+            
+            if let Ok(elapsed) = now.duration_since(pending.last_retry) {
+                if elapsed.as_secs() >= retry_delay_secs {
+                    to_retry.push((*hash, pending.to_addr));
+                }
+            }
+        }
+
+        // Update retry counts for messages that will be retried
+        for (hash, _) in &to_retry {
+            if let Some(pending) = self.pending_messages.get_mut(hash) {
+                pending.retry_count += 1;
+                pending.last_retry = now;
+            }
+        }
+
+        to_retry
+    }
+
+    /// Check if a message is pending (waiting for ACK)
+    pub fn is_message_pending(&self, message_hash: u64) -> bool {
+        self.pending_messages.contains_key(&message_hash)
     }
 
     /// Nettoie les pairs inactifs (qui n'a pas répondu depuis timeout_secs).

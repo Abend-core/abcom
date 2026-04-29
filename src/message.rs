@@ -93,6 +93,8 @@ pub enum AppEvent {
     UserTyping(String),  // nom d'utilisateur qui tape
     UserStoppedTyping(String),
     GroupEventReceived(GroupEvent),
+    ReadReceiptReceived(ReadReceipt),
+    MessageAckReceived(MessageAck),
 }
 
 /// Demande d'envoi d'un message à une adresse TCP
@@ -109,11 +111,43 @@ pub struct SendGroupRequest {
     pub event: GroupEvent,
 }
 
-/// Demande d'envoi d'un indicateur de frappe à une adresse TCP
+/// Request for typing indicator (sent when user is typing)
 #[derive(Clone, Debug)]
-pub struct SendTypingRequest {
+pub struct TypingRequest {
     pub to_addr: SocketAddr,
+    pub indicator: TypingIndicator,
+}
+
+/// Read receipt: confirmation that a message was read
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct ReadReceipt {
     pub from: String,
+    pub to: String,
+    pub message_hash: u64,  // Hash of message for identification
+    pub timestamp: String,
+}
+
+/// Request for sending read receipt to a peer
+#[derive(Clone, Debug)]
+pub struct ReadReceiptRequest {
+    pub to_addr: SocketAddr,
+    pub receipt: ReadReceipt,
+}
+
+/// Message acknowledgment: confirmation that a message was received
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MessageAck {
+    pub from: String,
+    pub to: String,
+    pub message_hash: u64,
+    pub timestamp: String,
+}
+
+/// Request for sending message ACK to a peer
+#[derive(Clone, Debug)]
+pub struct MessageAckRequest {
+    pub to_addr: SocketAddr,
+    pub ack: MessageAck,
 }
 
 /// Message réseau unifié (ChatMessage ou GroupEvent)
