@@ -86,6 +86,7 @@ struct AbcomApp {
     send_group_tx: mpsc::Sender<SendGroupRequest>,
     input: String,
     input_cursor_char: usize,
+    input_has_focus: bool,
     show_emoji_picker: bool,
     show_participants: bool,
     enable_sound_notifications: bool,
@@ -213,26 +214,7 @@ fn remove_next_char(input: &mut String, cursor_char: &mut usize) -> bool {
 }
 
 fn insert_emoji_at_cursor(input: &mut String, cursor_char: &mut usize, emoji: &str) {
-    let chars: Vec<char> = input.chars().collect();
-    let prev = if *cursor_char > 0 {
-        chars.get(*cursor_char - 1).copied()
-    } else {
-        None
-    };
-    let next = chars.get(*cursor_char).copied();
-
-    let mut to_insert = String::new();
-    if let Some(ch) = prev {
-        if !ch.is_whitespace() {
-            to_insert.push(' ');
-        }
-    }
-    to_insert.push_str(emoji);
-    if next.map(|ch| !ch.is_whitespace()).unwrap_or(true) {
-        to_insert.push(' ');
-    }
-
-    insert_text_at_cursor(input, cursor_char, &to_insert);
+    insert_text_at_cursor(input, cursor_char, emoji);
 }
 
 fn measure_text_width(ui: &egui::Ui, text: &str) -> f32 {
@@ -317,6 +299,7 @@ fn custom_composer_input(
     ui: &mut egui::Ui,
     input: &mut String,
     cursor_char: &mut usize,
+    input_has_focus: &mut bool,
     emoji_map: &std::collections::HashMap<String, usize>,
     emoji_textures: &[(String, egui::TextureHandle)],
     width: f32,
@@ -329,6 +312,7 @@ fn custom_composer_input(
     let caret_points = composer_caret_positions(ui, input, emoji_map, 18.0);
 
     if response.clicked() {
+        *input_has_focus = true;
         response.request_focus();
         if let Some(pos) = response.interact_pointer_pos() {
             let local = egui::pos2(
@@ -341,7 +325,11 @@ fn custom_composer_input(
         }
     }
 
-    let has_focus = response.has_focus();
+    if ui.input(|i| i.pointer.any_pressed()) && !response.contains_pointer() {
+        *input_has_focus = false;
+    }
+
+    let has_focus = *input_has_focus || response.has_focus();
     let mut changed = false;
     let mut submit = false;
     let total_chars = input.chars().count();
@@ -534,6 +522,7 @@ impl AbcomApp {
             send_group_tx,
             input: String::new(),
             input_cursor_char: 0,
+            input_has_focus: false,
             show_emoji_picker: false,
             show_participants: false,
             enable_sound_notifications: true,
@@ -917,6 +906,7 @@ impl eframe::App for AbcomApp {
                         ui,
                         &mut self.input,
                         &mut self.input_cursor_char,
+                        &mut self.input_has_focus,
                         &self.emoji_map,
                         &self.emoji_textures,
                         available_w - 12.0,
@@ -969,6 +959,7 @@ impl eframe::App for AbcomApp {
                         }
                         self.input.clear();
                         self.input_cursor_char = 0;
+                        self.input_has_focus = true;
 
                         if let Some(addr) = selected_addr {
                             let _ = self.send_tx.try_send(SendRequest { to_addr: addr, message: msg });
