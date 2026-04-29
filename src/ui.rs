@@ -395,6 +395,10 @@ impl eframe::App for AbcomApp {
                 let new_subnet = crate::app::AppState::detect_subnet();
                 if new_subnet != s.current_subnet {
                     s.current_subnet = new_subnet.clone();
+                    // Enregistrer le nouveau réseau même s'il n'a pas encore de pairs
+                    if let Some(ref subnet) = new_subnet {
+                        s.ensure_network_known(subnet);
+                    }
                     // Suivre automatiquement le nouveau réseau dans le filtre
                     self.selected_network_filter = new_subnet;
                 }
