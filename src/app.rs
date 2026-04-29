@@ -29,8 +29,10 @@ pub struct AppState {
     pub known_networks: Vec<KnownNetwork>,
     /// Alias et méta-données par pair
     pub peer_records: Vec<PeerRecord>,
-    /// Subnet actif détecté au démarrage (ex: "192.168.1")
+    /// Subnet IP actif (ex: "192.168.1")
     pub current_subnet: Option<String>,
+    /// Identifiant réseau actif: SSID si disponible, sinon subnet (ex: "iPhone de Rudy")
+    pub current_network_id: Option<String>,
     history_path: PathBuf,
     read_counts_path: PathBuf,
     groups_path: PathBuf,
@@ -63,6 +65,7 @@ impl AppState {
             .join("peer_records.json");
 
         let current_subnet = Self::detect_subnet();
+        let current_network_id = Self::detect_ssid().or_else(|| current_subnet.clone());
 
         let mut state = Self {
             my_username: username,
@@ -75,6 +78,7 @@ impl AppState {
             known_networks: Vec::new(),
             peer_records: Vec::new(),
             current_subnet,
+            current_network_id,
             history_path,
             read_counts_path,
             groups_path,
@@ -93,8 +97,9 @@ impl AppState {
         // Charge les enregistrements de pairs
         state.load_peer_records();
         // Assurer que le réseau actuel est enregistré (même sans pairs)
-        if let Some(ref subnet) = state.current_subnet.clone() {
-            state.ensure_network_known(subnet);
+        if let Some(ref id) = state.current_network_id.clone() {
+            let sn = state.current_subnet.clone();
+            state.ensure_network_known(id, sn.as_deref());
         }
         // Reconstruit les pairs connus depuis l'historique (hors ligne par défaut)
         state.restore_peers_from_history();
@@ -128,11 +133,62 @@ impl AppState {
         None
     }
 
+    /// Détecte le SSID WiFi actuel (Linux: iwgetid/nmcli, Windows: netsh)
+    pub fn detect_ssid() -> Option<String> {
+        #[cfg(target_os = "linux")]
+        {
+            // Essayer iwgetid (wireless-tools)
+            if let Ok(out) = std::process::Command::new("iwgetid").arg("-r").output() {
+                let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if !s.is_empty() { return Some(s); }
+            }
+            // Essayer nmcli (NetworkManager)
+            if let Ok(out) = std::process::Command::new("nmcli")
+                .args(["-t", "-f", "active,ssid", "dev", "wifi"])
+                .output()
+            {
+                for line in String::from_utf8_lossy(&out.stdout).lines() {
+                    if line.starts_with("yes:") {
+                        let ssid = line[4..].to_string();
+                        if !ssid.is_empty() { return Some(ssid); }
+                    }
+                }
+            }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(out) = std::process::Command::new("netsh")
+                .args(["wlan", "show", "interfaces"])
+                .output()
+            {
+                for line in String::from_utf8_lossy(&out.stdout).lines() {
+                    let line = line.trim();
+                    if line.starts_with("SSID") && !line.contains("BSSID") {
+                        if let Some(ssid) = line.splitn(2, ':').nth(1) {
+                            let ssid = ssid.trim().to_string();
+                            if !ssid.is_empty() { return Some(ssid); }
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Retourne (network_id, subnet): network_id = SSID si disponible, sinon subnet
+    pub fn detect_network_id() -> (Option<String>, Option<String>) {
+        let subnet = Self::detect_subnet();
+        let ssid = Self::detect_ssid();
+        let id = ssid.or_else(|| subnet.clone());
+        (id, subnet)
+    }
+
     /// Assure que le réseau est dans known_networks, même sans pairs (ex: réseau actuel sans voisins)
-    pub fn ensure_network_known(&mut self, subnet: &str) {
-        if !self.known_networks.iter().any(|n| n.subnet == subnet) {
+    pub fn ensure_network_known(&mut self, id: &str, subnet: Option<&str>) {
+        if !self.known_networks.iter().any(|n| n.id == id) {
             self.known_networks.push(KnownNetwork {
-                subnet: subnet.to_string(),
+                id: id.to_string(),
+                subnet: subnet.unwrap_or("").to_string(),
                 alias: None,
                 seen_peers: Vec::new(),
             });
@@ -262,7 +318,13 @@ impl AppState {
     fn load_networks(&mut self) {
         if self.networks_path.exists() {
             if let Ok(content) = std::fs::read_to_string(&self.networks_path) {
-                if let Ok(nets) = serde_json::from_str::<Vec<KnownNetwork>>(&content) {
+                if let Ok(mut nets) = serde_json::from_str::<Vec<KnownNetwork>>(&content) {
+                    // Migration: anciens enregistrements avaient `subnet` comme clé mais pas de champ `id`
+                    for net in &mut nets {
+                        if net.id.is_empty() && !net.subnet.is_empty() {
+                            net.id = net.subnet.clone();
+                        }
+                    }
                     self.known_networks = nets;
                 }
             }
@@ -297,16 +359,17 @@ impl AppState {
         }
     }
 
-    /// Enregistre un pair sur le réseau actuel et crée/met à jour KnownNetwork
-    pub fn record_peer_on_network(&mut self, username: &str, peer_subnet: &str) {
-        // Mettre à jour ou créer le réseau
-        if let Some(net) = self.known_networks.iter_mut().find(|n| n.subnet == peer_subnet) {
+    /// Enregistre un pair sur le réseau actuel (par network_id = SSID ou subnet)
+    pub fn record_peer_on_network(&mut self, username: &str, network_id: &str) {
+        // Mettre à jour ou créer le réseau (clé = id)
+        if let Some(net) = self.known_networks.iter_mut().find(|n| n.id == network_id) {
             if !net.seen_peers.contains(&username.to_string()) {
                 net.seen_peers.push(username.to_string());
             }
         } else {
             self.known_networks.push(KnownNetwork {
-                subnet: peer_subnet.to_string(),
+                id: network_id.to_string(),
+                subnet: self.current_subnet.clone().unwrap_or_default(),
                 alias: None,
                 seen_peers: vec![username.to_string()],
             });
@@ -314,12 +377,12 @@ impl AppState {
 
         // Mettre à jour ou créer le PeerRecord
         if let Some(rec) = self.peer_records.iter_mut().find(|r| r.username == username) {
-            rec.last_subnet = Some(peer_subnet.to_string());
+            rec.last_subnet = Some(network_id.to_string());
         } else {
             self.peer_records.push(PeerRecord {
                 username: username.to_string(),
                 alias: None,
-                last_subnet: Some(peer_subnet.to_string()),
+                last_subnet: Some(network_id.to_string()),
             });
         }
 
@@ -337,22 +400,22 @@ impl AppState {
     }
 
     /// Supprime un réseau et tous ses pairs du registre
-    pub fn forget_network(&mut self, subnet: &str) {
-        if let Some(net) = self.known_networks.iter().find(|n| n.subnet == subnet).cloned() {
+    pub fn forget_network(&mut self, network_id: &str) {
+        if let Some(net) = self.known_networks.iter().find(|n| n.id == network_id).cloned() {
             for peer in &net.seen_peers {
                 self.peer_records.retain(|r| &r.username != peer);
             }
         }
-        self.known_networks.retain(|n| n.subnet != subnet);
+        self.known_networks.retain(|n| n.id != network_id);
         self.save_networks();
         self.save_peer_records();
     }
 
-    /// Pairs filtrés par subnet (None = tous)
-    pub fn peers_for_subnet<'a>(&'a self, subnet: &str) -> Vec<&'a Peer> {
+    /// Pairs filtrés par network_id (SSID ou subnet)
+    pub fn peers_for_network<'a>(&'a self, network_id: &str) -> Vec<&'a Peer> {
         let seen: Vec<&str> = self.known_networks
             .iter()
-            .find(|n| n.subnet == subnet)
+            .find(|n| n.id == network_id)
             .map(|n| n.seen_peers.iter().map(|s| s.as_str()).collect())
             .unwrap_or_default();
         self.peers.iter().filter(|p| seen.contains(&p.username.as_str())).collect()
@@ -366,26 +429,22 @@ impl AppState {
             .unwrap_or_default()
             .as_secs();
         
+        let network_id = self.current_network_id.clone();
         for peer in &mut self.peers {
             if peer.username == username {
                 peer.addr = tcp_addr;
                 peer.last_seen = now;
                 peer.online = true;
-                // Enregistrer sur le réseau
-                if let std::net::IpAddr::V4(v4) = addr.ip() {
-                    let o = v4.octets();
-                    let subnet = format!("{}.{}.{}", o[0], o[1], o[2]);
-                    let _ = peer;
-                    self.record_peer_on_network(&username, &subnet);
+                let _ = peer; // libérer l'emprunt mutable sur self.peers
+                if let Some(ref id) = network_id {
+                    self.record_peer_on_network(&username, id);
                 }
                 return;
             }
         }
         // Nouveau pair
-        if let std::net::IpAddr::V4(v4) = addr.ip() {
-            let o = v4.octets();
-            let subnet = format!("{}.{}.{}", o[0], o[1], o[2]);
-            self.record_peer_on_network(&username, &subnet);
+        if let Some(ref id) = network_id {
+            self.record_peer_on_network(&username, id);
         }
         self.peers.push(Peer { username, addr: tcp_addr, last_seen: now, online: true });
     }
