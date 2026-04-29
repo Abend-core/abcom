@@ -202,8 +202,14 @@ fn play_notification_sound() {
         use rodio::source::Source;
         use std::time::Duration;
 
-        let Ok((_stream, stream_handle)) = rodio::OutputStream::try_default() else { return };
-        let Ok(sink) = rodio::Sink::try_new(&stream_handle) else { return };
+        let (stream, stream_handle) = match rodio::OutputStream::try_default() {
+            Ok(s) => s,
+            Err(e) => { eprintln!("[son] Erreur ouverture sortie audio: {}", e); return; }
+        };
+        let sink = match rodio::Sink::try_new(&stream_handle) {
+            Ok(s) => s,
+            Err(e) => { eprintln!("[son] Erreur création sink: {}", e); return; }
+        };
 
         let tone1 = rodio::source::SineWave::new(880.0)
             .take_duration(Duration::from_millis(80))
@@ -215,6 +221,7 @@ fn play_notification_sound() {
         sink.append(tone1);
         sink.append(tone2);
         sink.sleep_until_end();
+        drop(stream);
     });
 }
 
@@ -282,8 +289,8 @@ impl eframe::App for AbcomApp {
                             self.notification_time = std::time::Instant::now();
                             // Flash barre des tâches si fenêtre pas au premier plan
                             self.has_unread = true;
-                            // Son uniquement si la fenêtre n'est pas au premier plan
-                            if self.enable_sound_notifications && !self.window_focused {
+                            // Son à chaque message reçu (fenêtre focalisée ou non)
+                            if self.enable_sound_notifications {
                                 play_notification_sound();
                             }
                         }
