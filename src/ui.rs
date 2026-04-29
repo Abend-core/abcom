@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use eframe::egui;
@@ -6,6 +7,8 @@ use tokio::sync::mpsc;
 
 use crate::app::AppState;
 use crate::message::{AppEvent, ChatMessage, SendRequest, SendGroupRequest, SendTypingRequest};
+use crate::transfer::model::{TransferDirection, TransferRecord, TransferStatus};
+use crate::transfer::service::TransferCommand;
 
 fn app_icon_data() -> Option<egui::IconData> {
     let data = include_bytes!("../assets/app_icon.jpg");
@@ -47,6 +50,7 @@ pub fn run(
     send_tx: mpsc::Sender<SendRequest>,
     send_group_tx: mpsc::Sender<SendGroupRequest>,
     typing_tx: mpsc::Sender<SendTypingRequest>,
+    transfer_cmd_tx: mpsc::Sender<TransferCommand>,
 ) -> anyhow::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Abcom")
@@ -66,7 +70,14 @@ pub fn run(
         "Abcom",
         options,
         Box::new(|_cc| {
-            Ok(Box::new(AbcomApp::new(state.clone(), event_rx, send_tx.clone(), send_group_tx.clone(), typing_tx.clone())))
+            Ok(Box::new(AbcomApp::new(
+                state.clone(),
+                event_rx,
+                send_tx.clone(),
+                send_group_tx.clone(),
+                typing_tx.clone(),
+                transfer_cmd_tx.clone(),
+            )))
         }),
     )
     .map_err(|e| {
@@ -91,6 +102,7 @@ struct AbcomApp {
     event_rx: mpsc::Receiver<AppEvent>,
     send_tx: mpsc::Sender<SendRequest>,
     send_group_tx: mpsc::Sender<SendGroupRequest>,
+    transfer_cmd_tx: mpsc::Sender<TransferCommand>,
     input: String,
     input_cursor_char: usize,
     input_has_focus: bool,
@@ -131,6 +143,9 @@ struct AbcomApp {
     editing_network_alias: Option<(String, String)>, // (subnet, buffer)
     /// Édition alias pair
     editing_peer_alias: Option<(String, String)>, // (username, buffer)
+    share_selection: Vec<PathBuf>,
+    show_share_modal: bool,
+    share_error: Option<String>,
 }
 
 fn load_emoji_textures(ctx: &egui::Context) -> Vec<(String, egui::TextureHandle)> {
@@ -350,6 +365,82 @@ fn remove_next_char(input: &mut String, cursor_char: &mut usize) -> bool {
 
 fn insert_emoji_at_cursor(input: &mut String, cursor_char: &mut usize, emoji: &str) {
     insert_text_at_cursor(input, cursor_char, emoji);
+}
+
+fn format_transfer_bytes(bytes: u64) -> String {
+    const KB: f64 = 1024.0;
+    const MB: f64 = KB * 1024.0;
+    const GB: f64 = MB * 1024.0;
+
+    let value = bytes as f64;
+    if value >= GB {
+        format!("{:.1} Go", value / GB)
+    } else if value >= MB {
+        format!("{:.1} Mo", value / MB)
+    } else if value >= KB {
+        format!("{:.1} Ko", value / KB)
+    } else {
+        format!("{} o", bytes)
+    }
+}
+
+fn transfer_status_label(status: &TransferStatus) -> (&'static str, egui::Color32) {
+    match status {
+        TransferStatus::Preparing => ("Préparation", egui::Color32::from_rgb(110, 110, 110)),
+        TransferStatus::WaitingForPeer => ("En attente", egui::Color32::from_rgb(180, 140, 30)),
+        TransferStatus::Transferring => ("Transfert", egui::Color32::from_rgb(60, 120, 210)),
+        TransferStatus::Completed => ("Terminé", egui::Color32::from_rgb(40, 150, 85)),
+        TransferStatus::Failed => ("Échec", egui::Color32::from_rgb(210, 70, 70)),
+    }
+}
+
+fn push_unique_paths(target: &mut Vec<PathBuf>, paths: impl IntoIterator<Item = PathBuf>) {
+    for path in paths {
+        if !target.iter().any(|existing| existing == &path) {
+            target.push(path);
+        }
+    }
+}
+
+fn render_transfer_card(ui: &mut egui::Ui, transfer: &TransferRecord) {
+    let (status_text, status_color) = transfer_status_label(&transfer.status);
+    let direction_icon = match transfer.direction {
+        TransferDirection::Outgoing => "⬆",
+        TransferDirection::Incoming => "⬇",
+    };
+    let progress_text = format!(
+        "{} / {}",
+        format_transfer_bytes(transfer.transferred_bytes),
+        format_transfer_bytes(transfer.total_bytes),
+    );
+
+    egui::Frame::group(ui.style()).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            ui.label(direction_icon);
+            ui.label(egui::RichText::new(&transfer.label).strong());
+            ui.label(egui::RichText::new(format!("avec {}", transfer.peer_username)).weak());
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.colored_label(status_color, status_text);
+            });
+        });
+        ui.weak(format!("Salon : {}", transfer.conversation.display_label()));
+        ui.add(
+            egui::ProgressBar::new(transfer.progress_ratio())
+                .desired_width(f32::INFINITY)
+                .text(progress_text),
+        );
+        if let Some(current_path) = &transfer.current_path {
+            ui.label(egui::RichText::new(current_path).small());
+        }
+        if let Some(destination_root) = &transfer.destination_root {
+            if matches!(transfer.direction, TransferDirection::Incoming) {
+                ui.weak(format!("Destination : {}", destination_root.display()));
+            }
+        }
+        if let Some(error) = &transfer.error {
+            ui.colored_label(egui::Color32::from_rgb(210, 70, 70), error);
+        }
+    });
 }
 
 fn measure_text_width(ui: &egui::Ui, text: &str) -> f32 {
@@ -841,12 +932,14 @@ impl AbcomApp {
         send_tx: mpsc::Sender<SendRequest>,
         send_group_tx: mpsc::Sender<SendGroupRequest>,
         typing_tx: mpsc::Sender<SendTypingRequest>,
+        transfer_cmd_tx: mpsc::Sender<TransferCommand>,
     ) -> Self {
         Self {
             state,
             event_rx,
             send_tx,
             send_group_tx,
+            transfer_cmd_tx,
             input: String::new(),
             input_cursor_char: 0,
             input_has_focus: false,
@@ -878,6 +971,9 @@ impl AbcomApp {
             networks_view_selected: None,
             editing_network_alias: None,
             editing_peer_alias: None,
+            share_selection: Vec::new(),
+            show_share_modal: false,
+            share_error: None,
         }
     }
 }
@@ -919,10 +1015,10 @@ impl eframe::App for AbcomApp {
                             self.notification_time = std::time::Instant::now();
                             self.has_unread = true;
                             // Déterminer le salon source du message
-                            let source_conv: Option<String> = if msg.to_user.is_none() {
-                                None // message global
-                            } else {
-                                Some(msg.from.clone()) // message direct → salon = expéditeur
+                            let source_conv: Option<String> = match &msg.to_user {
+                                None => None,
+                                Some(target) if target.starts_with('#') => Some(target.clone()),
+                                Some(_) => Some(msg.from.clone()),
                             };
                             // Son si : on n'est pas dans ce salon ET ce salon n'est pas muet
                             let already_in_conv = s.selected_conversation == source_conv;
@@ -982,6 +1078,7 @@ impl eframe::App for AbcomApp {
                             }
                         }
                     }
+                    AppEvent::Transfer(evt) => s.apply_transfer_event(evt),
                 }
             }
             s.clear_typing_if_old();
@@ -1282,6 +1379,7 @@ impl eframe::App for AbcomApp {
             let s = self.state.lock().unwrap();
             match &s.selected_conversation {
                 None => true, // Global = toujours actif
+                Some(conversation) if conversation.starts_with('#') => true,
                 Some(username) => s.is_peer_online(username),
             }
         };
@@ -1311,13 +1409,13 @@ impl eframe::App for AbcomApp {
                 ui.horizontal(|ui| {
                     ui.add_space(8.0);
 
-                    // ─── Bouton emoji intégré (avant le champ) ───
-                    let emoji_btn_response = ui
+                    // ─── Colonne d'actions (emoji + partage) ───
+                    let (emoji_btn_response, share_btn_response) = ui
                         .allocate_ui_with_layout(
-                            egui::vec2(24.0, composer_height),
-                            egui::Layout::centered_and_justified(egui::Direction::TopDown),
+                            egui::vec2(28.0, composer_height),
+                            egui::Layout::top_down(egui::Align::Center),
                             |ui| {
-                                if !self.emoji_textures.is_empty() {
+                                let emoji_resp = if !self.emoji_textures.is_empty() {
                                     let (_ch, tex) = &self.emoji_textures[0];
                                     let (btn_rect, btn_resp) = ui.allocate_exact_size(
                                         egui::vec2(24.0, 24.0),
@@ -1336,7 +1434,14 @@ impl eframe::App for AbcomApp {
                                     btn_resp
                                 } else {
                                     ui.button("😊")
-                                }
+                                };
+
+                                ui.add_space(6.0);
+                                let share_resp = ui
+                                    .add_sized([24.0, 24.0], egui::Button::new("📎"))
+                                    .on_hover_text("Partager des fichiers ou des dossiers");
+
+                                (emoji_resp, share_resp)
                             },
                         )
                         .inner;
@@ -1344,13 +1449,40 @@ impl eframe::App for AbcomApp {
                         self.show_emoji_picker = !self.show_emoji_picker;
                         emoji_button_clicked = true;
                     }
+                    if share_btn_response.clicked() {
+                        self.show_share_modal = true;
+                        self.share_error = None;
+                    }
 
                     ui.add_space(4.0);
 
                     // ─── Zone de saisie (prend toute la place disponible) ───
-                    let (selected_addr, all_peers) = {
+                    let (selected_addr, all_peers, group_addrs) = {
                         let s = self.state.lock().unwrap();
-                        (s.selected_peer_addr(), s.peers.clone())
+                        let group_targets = match &s.selected_conversation {
+                            Some(conversation) if conversation.starts_with('#') => {
+                                let group_name = conversation.trim_start_matches('#');
+                                s.groups
+                                    .iter()
+                                    .find(|group| group.name == group_name)
+                                    .map(|group| {
+                                        group
+                                            .members
+                                            .iter()
+                                            .filter(|member| *member != &s.my_username)
+                                            .filter_map(|member| {
+                                                s.peers
+                                                    .iter()
+                                                    .find(|peer| peer.online && peer.username == *member)
+                                                    .map(|peer| peer.addr)
+                                            })
+                                            .collect::<Vec<_>>()
+                                    })
+                                    .unwrap_or_default()
+                            }
+                            _ => Vec::new(),
+                        };
+                        (s.selected_peer_addr(), s.peers.clone(), group_targets)
                     };
 
                     let available_w = ui.available_width() - 8.0;
@@ -1516,8 +1648,8 @@ impl eframe::App for AbcomApp {
                     }
 
                     // Détecter la frappe et envoyer l'indicateur (max 1 fois/1.5s).
-                    // Le champ est custom, donc on s'appuie sur `changed` plutôt que `resp.changed()`.
                     // - Conversation directe → uniquement ce pair
+                    // - Groupe → tous les membres en ligne
                     // - Broadcast global (None) → tous les pairs en ligne
                     if changed && self.last_typing_sent.elapsed().as_millis() > 1500 {
                         self.last_typing_sent = std::time::Instant::now();
@@ -1533,12 +1665,32 @@ impl eframe::App for AbcomApp {
                                         .collect::<Vec<_>>()
                                 }
                                 Some(conv) => {
-                                    // Direct : uniquement le pair de la conversation
-                                    s.peers.iter()
-                                        .find(|p| p.online && &p.username == conv)
-                                        .map(|p| p.addr)
-                                        .into_iter()
-                                        .collect::<Vec<_>>()
+                                    if conv.starts_with('#') {
+                                        let group_name = conv.trim_start_matches('#');
+                                        s.groups
+                                            .iter()
+                                            .find(|group| group.name == group_name)
+                                            .map(|group| {
+                                                group
+                                                    .members
+                                                    .iter()
+                                                    .filter(|member| *member != &s.my_username)
+                                                    .filter_map(|member| {
+                                                        s.peers
+                                                            .iter()
+                                                            .find(|peer| peer.online && peer.username == *member)
+                                                            .map(|peer| peer.addr)
+                                                    })
+                                                    .collect::<Vec<_>>()
+                                            })
+                                            .unwrap_or_default()
+                                    } else {
+                                        s.peers.iter()
+                                            .find(|p| p.online && &p.username == conv)
+                                            .map(|p| p.addr)
+                                            .into_iter()
+                                            .collect::<Vec<_>>()
+                                    }
                                 }
                             };
                             (name, addrs)
@@ -1582,8 +1734,22 @@ impl eframe::App for AbcomApp {
                         self.input_has_focus = true;
                         self.input_scroll_lines = 0.0;
 
-                        if let Some(addr) = selected_addr {
-                            let _ = self.send_tx.try_send(SendRequest { to_addr: addr, message: msg });
+                        if let Some(conversation) = &selected_peer_name {
+                            if conversation.starts_with('#') {
+                                if group_addrs.is_empty() {
+                                    self.last_notification = Some("Aucun membre du groupe n'est en ligne".to_string());
+                                    self.notification_time = std::time::Instant::now();
+                                } else {
+                                    for addr in &group_addrs {
+                                        let _ = self.send_tx.try_send(SendRequest {
+                                            to_addr: *addr,
+                                            message: msg.clone(),
+                                        });
+                                    }
+                                }
+                            } else if let Some(addr) = selected_addr {
+                                let _ = self.send_tx.try_send(SendRequest { to_addr: addr, message: msg });
+                            }
                         } else {
                             for peer in &all_peers {
                                 let _ = self.send_tx.try_send(SendRequest {
@@ -1600,6 +1766,122 @@ impl eframe::App for AbcomApp {
 
             });
         } // fin else selected_peer_online
+
+        if self.show_share_modal {
+            let selected_target = {
+                let s = self.state.lock().unwrap();
+                s.selected_conversation.clone()
+            };
+
+            let mut open = true;
+            egui::Window::new("Partager")
+                .fixed_size([520.0, 380.0])
+                .collapsible(false)
+                .open(&mut open)
+                .show(ctx, |ui| {
+                    ui.label(
+                        egui::RichText::new(match &selected_target {
+                            Some(target) => format!("Destination : {}", target),
+                            None => "Destination : choisissez un pair ou un groupe".to_string(),
+                        })
+                        .strong(),
+                    );
+                    ui.separator();
+
+                    ui.horizontal(|ui| {
+                        if ui.button("📄 Ajouter des fichiers").clicked() {
+                            if let Some(paths) = rfd::FileDialog::new().set_title("Choisir des fichiers").pick_files() {
+                                push_unique_paths(&mut self.share_selection, paths);
+                                self.share_error = None;
+                            }
+                        }
+
+                        if ui.button("📁 Ajouter un dossier").clicked() {
+                            if let Some(path) = rfd::FileDialog::new().set_title("Choisir un dossier").pick_folder() {
+                                push_unique_paths(&mut self.share_selection, [path]);
+                                self.share_error = None;
+                            }
+                        }
+
+                        if ui.button("🧹 Vider").clicked() {
+                            self.share_selection.clear();
+                            self.share_error = None;
+                        }
+                    });
+
+                    ui.add_space(8.0);
+                    ui.label(format!("{} élément(s) prêt(s)", self.share_selection.len()));
+                    ui.add_space(4.0);
+
+                    egui::ScrollArea::vertical().max_height(190.0).show(ui, |ui| {
+                        if self.share_selection.is_empty() {
+                            ui.weak("Ajoutez des fichiers ou un dossier à partager.");
+                        }
+
+                        let mut remove_index = None;
+                        for (index, path) in self.share_selection.iter().enumerate() {
+                            ui.horizontal(|ui| {
+                                let icon = if path.is_dir() { "📁" } else { "📄" };
+                                ui.label(icon);
+                                ui.label(path.display().to_string());
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if ui.small_button("✕").clicked() {
+                                        remove_index = Some(index);
+                                    }
+                                });
+                            });
+                        }
+
+                        if let Some(index) = remove_index {
+                            self.share_selection.remove(index);
+                        }
+                    });
+
+                    if let Some(error) = &self.share_error {
+                        ui.add_space(6.0);
+                        ui.colored_label(egui::Color32::from_rgb(210, 70, 70), error);
+                    }
+
+                    ui.separator();
+                    ui.horizontal(|ui| {
+                        if ui.button("Envoyer").clicked() {
+                            let plan = {
+                                let s = self.state.lock().unwrap();
+                                s.build_transfer_request(self.share_selection.clone())
+                            };
+
+                            match plan {
+                                Ok((request, skipped)) => {
+                                    if self.transfer_cmd_tx.try_send(TransferCommand::QueueTransfer(request)).is_ok() {
+                                        self.show_share_modal = false;
+                                        self.share_error = None;
+                                        self.share_selection.clear();
+                                        self.last_notification = Some(if skipped.is_empty() {
+                                            "Transfert lancé".to_string()
+                                        } else {
+                                            format!("Transfert lancé. Hors ligne : {}", skipped.join(", "))
+                                        });
+                                        self.notification_time = std::time::Instant::now();
+                                    } else {
+                                        self.share_error = Some("La file de transfert est occupée, réessayez.".to_string());
+                                    }
+                                }
+                                Err(error) => {
+                                    self.share_error = Some(error);
+                                }
+                            }
+                        }
+
+                        if ui.button("Fermer").clicked() {
+                            self.show_share_modal = false;
+                        }
+                    });
+                });
+
+            if !open {
+                self.show_share_modal = false;
+            }
+        }
 
         // ── Notification popup ─────────────────────────────────────────────
         if let Some(notif) = &self.last_notification {
@@ -1821,13 +2103,27 @@ impl eframe::App for AbcomApp {
                 return;
             }
 
-            let (selected_conv, my_name, conv_messages) = {
+            let (selected_conv, my_name, conv_messages, transfer_items) = {
                 let s = self.state.lock().unwrap();
                 let selected = s.selected_conversation.clone();
                 let my_username = s.my_username.clone();
                 let msgs = s.get_conversation_messages();
                 let conv_msgs: Vec<ChatMessage> = msgs.into_iter().cloned().collect();
-                (selected, my_username, conv_msgs)
+                let transfers = s
+                    .transfer_state
+                    .items
+                    .iter()
+                    .filter(|transfer| {
+                        !transfer.is_finished()
+                            || selected
+                                .as_ref()
+                                .map(|conversation| transfer.conversation.key() == *conversation)
+                                .unwrap_or(false)
+                    })
+                    .take(6)
+                    .cloned()
+                    .collect::<Vec<_>>();
+                (selected, my_username, conv_msgs, transfers)
             };
 
             let conversation_title = selected_conv.as_deref().unwrap_or("Tous");
@@ -1936,6 +2232,16 @@ impl eframe::App for AbcomApp {
                         }
                     });
                 self.show_participants = open;
+            }
+
+            if !transfer_items.is_empty() {
+                ui.label(egui::RichText::new("Transferts").strong());
+                ui.add_space(4.0);
+                for transfer in &transfer_items {
+                    render_transfer_card(ui, transfer);
+                    ui.add_space(4.0);
+                }
+                ui.separator();
             }
 
             // ── Messages filtrés ────────────────────────────────────────

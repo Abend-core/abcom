@@ -5,6 +5,13 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::message::{ChatMessage, Group, KnownNetwork, PeerRecord};
 use crate::network::TCP_PORT;
+use crate::transfer::model::{
+    OutgoingTransferRequest,
+    TransferConversation,
+    TransferEvent,
+    TransferRecipient,
+    TransferState,
+};
 
 #[derive(Clone, Debug)]
 pub struct Peer {
@@ -22,6 +29,7 @@ pub struct AppState {
     pub peers: Vec<Peer>,
     pub messages: Vec<ChatMessage>,
     pub groups: Vec<Group>,
+    pub transfer_state: TransferState,
     pub selected_conversation: Option<String>,
     pub typing_users: HashMap<String, SystemTime>,
     pub read_counts: HashMap<String, usize>,
@@ -72,6 +80,7 @@ impl AppState {
             peers: Vec::new(),
             messages: Vec::new(),
             groups: Vec::new(),
+            transfer_state: TransferState::default(),
             selected_conversation: None,
             typing_users: HashMap::new(),
             read_counts: HashMap::new(),
@@ -208,7 +217,7 @@ impl AppState {
             // Message envoyé en privé : le destinataire est un pair connu
             if msg.from == self.my_username {
                 if let Some(to) = &msg.to_user {
-                    if !known.contains(to) {
+                    if !to.starts_with('#') && !known.contains(to) {
                         known.push(to.clone());
                     }
                 }
@@ -480,6 +489,11 @@ impl AppState {
                 // Global: show all broadcast messages (to_user is None)
                 self.messages.iter().filter(|m| m.to_user.is_none()).collect()
             }
+            Some(group_name) if group_name.starts_with('#') => self
+                .messages
+                .iter()
+                .filter(|m| m.to_user == Some(group_name.clone()))
+                .collect(),
             Some(username) => {
                 // Direct: show messages from this user or to this user
                 self.messages
@@ -717,6 +731,89 @@ impl AppState {
         self.groups
             .iter()
             .any(|g| g.name == group_name && g.members.contains(&self.my_username))
+    }
+
+    pub fn apply_transfer_event(&mut self, event: TransferEvent) {
+        self.transfer_state.apply(event);
+    }
+
+    pub fn build_transfer_request(
+        &self,
+        selection: Vec<PathBuf>,
+    ) -> Result<(OutgoingTransferRequest, Vec<String>), String> {
+        if selection.is_empty() {
+            return Err("Aucun fichier ou dossier sélectionné".to_string());
+        }
+
+        let selected = self
+            .selected_conversation
+            .clone()
+            .ok_or_else(|| "Choisissez d'abord une conversation privée ou un groupe".to_string())?;
+
+        if selected.starts_with('#') {
+            let group_name = selected.trim_start_matches('#').to_string();
+            let group = self
+                .groups
+                .iter()
+                .find(|group| group.name == group_name)
+                .ok_or_else(|| format!("Groupe introuvable: {group_name}"))?;
+
+            let mut recipients = Vec::new();
+            let mut skipped = Vec::new();
+
+            for member in &group.members {
+                if member == &self.my_username {
+                    continue;
+                }
+
+                if let Some(peer) = self.peers.iter().find(|peer| peer.username == *member && peer.online) {
+                    recipients.push(TransferRecipient {
+                        username: peer.username.clone(),
+                        addr: peer.addr,
+                    });
+                } else {
+                    skipped.push(member.clone());
+                }
+            }
+
+            if recipients.is_empty() {
+                return Err(format!(
+                    "Aucun membre du groupe {} n'est actuellement en ligne",
+                    group_name
+                ));
+            }
+
+            return Ok((
+                OutgoingTransferRequest {
+                    from: self.my_username.clone(),
+                    conversation: TransferConversation::Group { group_name },
+                    recipients,
+                    selection,
+                },
+                skipped,
+            ));
+        }
+
+        let peer = self
+            .peers
+            .iter()
+            .find(|peer| peer.username == selected && peer.online)
+            .ok_or_else(|| format!("{} est hors ligne ou introuvable", selected))?;
+
+        Ok((
+            OutgoingTransferRequest {
+                from: self.my_username.clone(),
+                conversation: TransferConversation::Peer {
+                    username: peer.username.clone(),
+                },
+                recipients: vec![TransferRecipient {
+                    username: peer.username.clone(),
+                    addr: peer.addr,
+                }],
+                selection,
+            },
+            Vec::new(),
+        ))
     }
 }
 

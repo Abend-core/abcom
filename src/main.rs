@@ -6,6 +6,7 @@ mod discovery;
 mod emoji_registry;
 mod message;
 mod network;
+mod transfer;
 mod ui;
 
 fn main() -> anyhow::Result<()> {
@@ -19,6 +20,7 @@ fn main() -> anyhow::Result<()> {
     let (send_tx, send_rx) = mpsc::channel::<message::SendRequest>(256);
     let (send_group_tx, send_group_rx) = mpsc::channel::<message::SendGroupRequest>(256);
     let (send_typing_tx, send_typing_rx) = mpsc::channel::<message::SendTypingRequest>(256);
+    let (transfer_cmd_tx, transfer_cmd_rx) = mpsc::channel::<transfer::service::TransferCommand>(64);
 
     // Runtime tokio multi-thread — tourne en arrière-plan pendant qu'egui
     // occupe le thread principal.
@@ -31,8 +33,9 @@ fn main() -> anyhow::Result<()> {
     rt.spawn(network::run_sender(send_rx));
     rt.spawn(network::run_sender_group(send_group_rx));
     rt.spawn(network::run_sender_typing(send_typing_rx));
+    rt.spawn(transfer::service::run(transfer_cmd_rx, event_tx.clone()));
 
-    ui::run(state, event_rx, send_tx, send_group_tx, send_typing_tx)?;
+    ui::run(state, event_rx, send_tx, send_group_tx, send_typing_tx, transfer_cmd_tx)?;
 
     Ok(())
 }

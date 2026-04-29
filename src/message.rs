@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
+use crate::transfer::model::TransferEvent;
+
 /// Un message de chat sérialisé envoyé par TCP
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ChatMessage {
@@ -93,6 +95,7 @@ pub enum AppEvent {
     UserTyping(String),  // nom d'utilisateur qui tape
     UserStoppedTyping(String),
     GroupEventReceived(GroupEvent),
+    Transfer(TransferEvent),
 }
 
 /// Demande d'envoi d'un message à une adresse TCP
