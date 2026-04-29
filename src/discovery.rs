@@ -8,7 +8,7 @@ use crate::message::{AppEvent, DiscoveryPacket};
 
 pub const DISCOVERY_PORT: u16 = 9001;
 const BROADCAST_INTERVAL: u64 = 3;      // Envoyer un broadcast chaque 3 secondes
-const DISCOVERY_TIMEOUT: u64 = 10;      // Un peer est inactif après 10 secondes d'inactivité
+const DISCOVERY_TIMEOUT: u64 = 6;       // Un peer est inactif après 6 secondes d'inactivité (détection rapide changement réseau)
 const CLEANUP_INTERVAL: u64 = 2;        // Vérifier les timeouts chaque 2 secondes
 
 /// Tâche de découverte des pairs par UDP broadcast.

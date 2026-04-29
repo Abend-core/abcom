@@ -101,6 +101,26 @@ impl AppState {
         }
     }
 
+    /// Force la mise hors ligne de tous les pairs (utile après changement de réseau)
+    pub fn clear_all_peers_online_status(&mut self) {
+        for peer in &mut self.peers {
+            peer.online = false;
+            peer.last_seen = 0;
+        }
+        eprintln!("[app] Tous les pairs ont été mis hors ligne");
+    }
+
+    /// Supprime complètement un pair de la liste
+    pub fn forget_peer(&mut self, username: &str) -> bool {
+        let before_len = self.peers.len();
+        self.peers.retain(|p| p.username != username);
+        if self.peers.len() < before_len {
+            eprintln!("[app] Pair oublié: {}", username);
+            return true;
+        }
+        false
+    }
+
     fn load_messages(&mut self) {
         if self.history_path.exists() {
             if let Ok(content) = std::fs::read_to_string(&self.history_path) {
