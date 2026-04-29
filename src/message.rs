@@ -64,3 +64,18 @@ pub struct SendRequest {
     pub to_addr: SocketAddr,
     pub message: ChatMessage,
 }
+
+/// Demande d'envoi d'un événement de groupe à une adresse TCP
+#[derive(Clone, Debug)]
+pub struct SendGroupRequest {
+    pub to_addr: SocketAddr,
+    pub event: GroupEvent,
+}
+
+/// Message réseau unifié (ChatMessage ou GroupEvent)
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(untagged)]
+pub enum NetworkMessage {
+    Chat(ChatMessage),
+    Group(GroupEvent),
+}
