@@ -749,16 +749,25 @@ impl eframe::App for AbcomApp {
                     ui.add_space(12.0);
 
                     ui.horizontal(|ui| {
-                        let create_enabled = !self.group_name_input.trim().is_empty();
-                        if ui.add_enabled(create_enabled, egui::Button::new("✓ Créer")).clicked() {
-                            let group_name = self.group_name_input.trim().to_string();
+                        let trimmed = self.group_name_input.trim();
+                        let is_valid_name = !trimmed.is_empty() && trimmed.len() <= 50 && 
+                            trimmed.chars().all(|c| c.is_alphanumeric() || c == '_' || c == '-');
+                        
+                        if is_valid_name {
+                            ui.label(egui::RichText::new(format!("✓ {}", trimmed.len())).small().color(egui::Color32::GREEN));
+                        } else if !trimmed.is_empty() {
+                            ui.label(egui::RichText::new("✗ Nom invalide").small().color(egui::Color32::RED));
+                        }
+                        
+                        if ui.add_enabled(is_valid_name, egui::Button::new("✓ Créer")).clicked() {
+                            let group_name = trimmed.to_string();
                             let members: Vec<String> = self.group_members_selected.iter().cloned().collect();
                             
-                            self.state.lock().unwrap().create_group(group_name, members);
-                            
-                            self.show_group_modal = false;
-                            self.group_name_input.clear();
-                            self.group_members_selected.clear();
+                            if let Some(_group) = self.state.lock().unwrap().create_group(group_name, members) {
+                                self.show_group_modal = false;
+                                self.group_name_input.clear();
+                                self.group_members_selected.clear();
+                            }
                         }
 
                         if ui.button("✕ Annuler").clicked() {
