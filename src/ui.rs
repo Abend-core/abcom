@@ -87,6 +87,7 @@ struct AbcomApp {
     input: String,
     input_cursor_char: usize,
     input_has_focus: bool,
+    input_scroll_lines: f32,
     show_emoji_picker: bool,
     show_participants: bool,
     enable_sound_notifications: bool,
@@ -295,21 +296,71 @@ fn cursor_from_point(points: &[egui::Pos2], target: egui::Pos2) -> usize {
     best_idx
 }
 
+fn move_cursor_vertical(
+    points: &[egui::Pos2],
+    cursor_char: &mut usize,
+    delta_lines: i32,
+    line_height: f32,
+) {
+    if points.is_empty() {
+        return;
+    }
+
+    let current = points
+        .get(*cursor_char)
+        .copied()
+        .unwrap_or_else(|| *points.last().unwrap_or(&egui::pos2(0.0, 0.0)));
+    let current_line = (current.y / line_height).round() as i32;
+    let target_line = current_line + delta_lines;
+    if target_line < 0 {
+        return;
+    }
+
+    let mut best_idx: Option<usize> = None;
+    let mut best_dist = f32::MAX;
+    for (idx, p) in points.iter().enumerate() {
+        let line = (p.y / line_height).round() as i32;
+        if line == target_line {
+            let dist = (p.x - current.x).abs();
+            if dist < best_dist {
+                best_dist = dist;
+                best_idx = Some(idx);
+            }
+        }
+    }
+
+    if let Some(idx) = best_idx {
+        *cursor_char = idx;
+    }
+}
+
 fn custom_composer_input(
     ui: &mut egui::Ui,
     input: &mut String,
     cursor_char: &mut usize,
     input_has_focus: &mut bool,
+    scroll_lines: &mut f32,
     emoji_map: &std::collections::HashMap<String, usize>,
     emoji_textures: &[(String, egui::TextureHandle)],
     width: f32,
 ) -> (egui::Response, bool, bool) {
+    let line_height = 22.0;
     let line_count = input.chars().filter(|&c| c == '\n').count().saturating_add(1);
-    let visual_lines = line_count.clamp(1, 4) as f32;
-    let desired_size = egui::vec2(width.max(120.0), 16.0 + visual_lines * 22.0);
+    let visual_lines = line_count.clamp(1, 10) as f32;
+    let desired_size = egui::vec2(width.max(120.0), 16.0 + visual_lines * line_height);
     let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
-    let content_rect = rect.shrink2(egui::vec2(6.0, 6.0));
+    let needs_scrollbar = line_count > 10;
+    let content_rect = if needs_scrollbar {
+        egui::Rect::from_min_max(
+            rect.min + egui::vec2(6.0, 6.0),
+            rect.max - egui::vec2(14.0, 6.0),
+        )
+    } else {
+        rect.shrink2(egui::vec2(6.0, 6.0))
+    };
     let caret_points = composer_caret_positions(ui, input, emoji_map, 18.0);
+    let max_scroll = (line_count as f32 - visual_lines).max(0.0);
+    *scroll_lines = scroll_lines.clamp(0.0, max_scroll);
 
     if response.clicked() {
         *input_has_focus = true;
@@ -337,7 +388,25 @@ fn custom_composer_input(
         *cursor_char = total_chars;
     }
 
+    if let Some(caret) = caret_points.get(*cursor_char) {
+        let caret_line = (caret.y / line_height).floor();
+        if caret_line < *scroll_lines {
+            *scroll_lines = caret_line;
+        }
+        if caret_line >= *scroll_lines + visual_lines {
+            *scroll_lines = caret_line - visual_lines + 1.0;
+        }
+        *scroll_lines = scroll_lines.clamp(0.0, max_scroll);
+    }
+
     if has_focus {
+        if response.hovered() {
+            let wheel_y = ui.input(|i| i.raw_scroll_delta.y + i.smooth_scroll_delta.y);
+            if wheel_y.abs() > 0.0 && max_scroll > 0.0 {
+                *scroll_lines = (*scroll_lines - wheel_y / 32.0).clamp(0.0, max_scroll);
+            }
+        }
+
         let events = ui.input(|i| i.events.clone());
         for event in events {
             match event {
@@ -382,6 +451,14 @@ fn custom_composer_input(
                             *cursor_char += 1;
                         }
                     }
+                    egui::Key::ArrowUp => {
+                        let points = composer_caret_positions(ui, input, emoji_map, 18.0);
+                        move_cursor_vertical(&points, cursor_char, -1, line_height);
+                    }
+                    egui::Key::ArrowDown => {
+                        let points = composer_caret_positions(ui, input, emoji_map, 18.0);
+                        move_cursor_vertical(&points, cursor_char, 1, line_height);
+                    }
                     egui::Key::Home => {
                         *cursor_char = 0;
                     }
@@ -416,12 +493,13 @@ fn custom_composer_input(
         let chars: Vec<char> = input.chars().collect();
         let mut i = 0;
         let mut x = content_rect.left();
-        let mut y = content_rect.top() + 11.0;
+        let scroll_px = *scroll_lines * line_height;
+        let mut y = content_rect.top() + 11.0 - scroll_px;
 
         while i < chars.len() {
             if chars[i] == '\n' {
                 x = content_rect.left();
-                y += 22.0;
+                y += line_height;
                 i += 1;
                 continue;
             }
@@ -464,6 +542,38 @@ fn custom_composer_input(
                 i += 1;
             }
         }
+
+        if needs_scrollbar {
+            let track = egui::Rect::from_min_max(
+                egui::pos2(rect.right() - 8.0, content_rect.top()),
+                egui::pos2(rect.right() - 4.0, content_rect.bottom()),
+            );
+            ui.painter()
+                .rect_filled(track, 2.0, ui.visuals().widgets.noninteractive.bg_fill);
+
+            let thumb_h = (track.height() * (visual_lines / line_count as f32)).max(18.0);
+            let travel = (track.height() - thumb_h).max(0.0);
+            let t = if max_scroll <= 0.0 { 0.0 } else { *scroll_lines / max_scroll };
+            let thumb_top = track.top() + travel * t;
+            let thumb = egui::Rect::from_min_max(
+                egui::pos2(track.left(), thumb_top),
+                egui::pos2(track.right(), thumb_top + thumb_h),
+            );
+            ui.painter().rect_filled(
+                thumb,
+                2.0,
+                ui.visuals().widgets.active.bg_fill.gamma_multiply(0.9),
+            );
+
+            let scroll_id = response.id.with("scrollbar");
+            let scroll_resp = ui.interact(track, scroll_id, egui::Sense::click_and_drag());
+            if (scroll_resp.clicked() || scroll_resp.dragged()) && max_scroll > 0.0 {
+                if let Some(pos) = scroll_resp.interact_pointer_pos() {
+                    let rel = ((pos.y - track.top()) / track.height()).clamp(0.0, 1.0);
+                    *scroll_lines = rel * max_scroll;
+                }
+            }
+        }
     }
 
     if has_focus {
@@ -474,12 +584,14 @@ fn custom_composer_input(
                 .copied()
                 .unwrap_or_else(|| *caret_points.last().unwrap_or(&egui::pos2(0.0, 0.0)));
             let x = content_rect.left() + caret.x + 1.0;
-            let top = content_rect.top() + caret.y + 2.0;
+            let top = content_rect.top() + caret.y + 2.0 - (*scroll_lines * line_height);
             let bottom = (top + 18.0).min(content_rect.bottom() - 2.0);
-            ui.painter().line_segment(
-                [egui::pos2(x, top), egui::pos2(x, bottom)],
-                egui::Stroke::new(1.6, ui.visuals().text_color()),
-            );
+            if top < content_rect.bottom() && bottom > content_rect.top() {
+                ui.painter().line_segment(
+                    [egui::pos2(x, top.max(content_rect.top())), egui::pos2(x, bottom)],
+                    egui::Stroke::new(1.6, ui.visuals().text_color()),
+                );
+            }
         }
     }
 
@@ -523,6 +635,7 @@ impl AbcomApp {
             input: String::new(),
             input_cursor_char: 0,
             input_has_focus: false,
+            input_scroll_lines: 0.0,
             show_emoji_picker: false,
             show_participants: false,
             enable_sound_notifications: true,
@@ -861,34 +974,46 @@ impl eframe::App for AbcomApp {
                     });
                 });
         } else {
+        let composer_line_count = self.input.chars().filter(|&c| c == '\n').count().saturating_add(1);
+        let composer_visible_lines = composer_line_count.clamp(1, 10) as f32;
+        let composer_height = 16.0 + composer_visible_lines * 22.0;
+
         egui::TopBottomPanel::bottom("input_panel")
-            .exact_height(68.0)
+            .exact_height((composer_height + 20.0).max(68.0))
             .show(ctx, |ui| {
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     ui.add_space(8.0);
 
                     // ─── Bouton emoji intégré (avant le champ) ───
-                    let emoji_btn_response = if !self.emoji_textures.is_empty() {
-                        let (_ch, tex) = &self.emoji_textures[0];
-                        let (btn_rect, btn_resp) = ui.allocate_exact_size(
-                            egui::vec2(24.0, 24.0),
-                            egui::Sense::click(),
-                        );
-                        if self.show_emoji_picker {
-                            ui.painter().rect_filled(btn_rect, 6.0, ui.visuals().selection.bg_fill);
-                        }
-                        let img_rect = btn_rect.shrink(3.0);
-                        ui.painter().image(
-                            tex.id(),
-                            img_rect,
-                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                            egui::Color32::WHITE,
-                        );
-                        btn_resp
-                    } else {
-                        ui.button("😊")
-                    };
+                    let emoji_btn_response = ui
+                        .allocate_ui_with_layout(
+                            egui::vec2(24.0, composer_height),
+                            egui::Layout::centered_and_justified(egui::Direction::TopDown),
+                            |ui| {
+                                if !self.emoji_textures.is_empty() {
+                                    let (_ch, tex) = &self.emoji_textures[0];
+                                    let (btn_rect, btn_resp) = ui.allocate_exact_size(
+                                        egui::vec2(24.0, 24.0),
+                                        egui::Sense::click(),
+                                    );
+                                    if self.show_emoji_picker {
+                                        ui.painter().rect_filled(btn_rect, 6.0, ui.visuals().selection.bg_fill);
+                                    }
+                                    let img_rect = btn_rect.shrink(3.0);
+                                    ui.painter().image(
+                                        tex.id(),
+                                        img_rect,
+                                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                                        egui::Color32::WHITE,
+                                    );
+                                    btn_resp
+                                } else {
+                                    ui.button("😊")
+                                }
+                            },
+                        )
+                        .inner;
                     if emoji_btn_response.clicked() {
                         self.show_emoji_picker = !self.show_emoji_picker;
                     }
@@ -907,6 +1032,7 @@ impl eframe::App for AbcomApp {
                         &mut self.input,
                         &mut self.input_cursor_char,
                         &mut self.input_has_focus,
+                        &mut self.input_scroll_lines,
                         &self.emoji_map,
                         &self.emoji_textures,
                         available_w - 12.0,
@@ -960,6 +1086,7 @@ impl eframe::App for AbcomApp {
                         self.input.clear();
                         self.input_cursor_char = 0;
                         self.input_has_focus = true;
+                        self.input_scroll_lines = 0.0;
 
                         if let Some(addr) = selected_addr {
                             let _ = self.send_tx.try_send(SendRequest { to_addr: addr, message: msg });
