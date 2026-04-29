@@ -99,6 +99,8 @@ struct AbcomApp {
     emoji_textures_loaded: bool,
     emoji_category: usize,
     emoji_map: std::collections::HashMap<String, usize>,
+    emoji_alias_to_char: std::collections::HashMap<String, String>,
+    emoji_aliases: Vec<String>,
     last_cleanup_time: std::time::Instant,
     // Gestion des groupes
     show_group_modal: bool,
@@ -129,6 +131,116 @@ fn load_emoji_textures(ctx: &egui::Context) -> Vec<(String, egui::TextureHandle)
             })
         })
         .collect()
+}
+
+fn github_key_to_emoji(key: &str) -> Option<String> {
+    let mut out = String::new();
+    for part in key.split('-') {
+        let cp = u32::from_str_radix(part, 16).ok()?;
+        out.push(char::from_u32(cp)?);
+    }
+    Some(out)
+}
+
+fn build_emoji_shortcode_index(
+    available: &[String],
+) -> (std::collections::HashMap<String, String>, Vec<String>) {
+    let available_set: std::collections::HashSet<String> = available.iter().cloned().collect();
+    let Ok(raw): Result<std::collections::HashMap<String, serde_json::Value>, _> =
+        serde_json::from_str(include_str!("../assets/github.raw.json"))
+    else {
+        return (std::collections::HashMap::new(), Vec::new());
+    };
+
+    let mut alias_to_char = std::collections::HashMap::new();
+    for (key, value) in raw {
+        let Some(emoji) = github_key_to_emoji(&key) else {
+            continue;
+        };
+        if !available_set.contains(&emoji) {
+            continue;
+        }
+
+        match value {
+            serde_json::Value::String(alias) => {
+                let a = alias.to_lowercase();
+                alias_to_char.entry(a).or_insert_with(|| emoji.clone());
+            }
+            serde_json::Value::Array(arr) => {
+                for v in arr {
+                    if let Some(alias) = v.as_str() {
+                        let a = alias.to_lowercase();
+                        alias_to_char.entry(a).or_insert_with(|| emoji.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    let mut aliases: Vec<String> = alias_to_char.keys().cloned().collect();
+    aliases.sort();
+    (alias_to_char, aliases)
+}
+
+fn emoji_shortcode_trigger(input: &str, cursor_char: usize) -> Option<(usize, String)> {
+    let chars: Vec<char> = input.chars().collect();
+    if cursor_char > chars.len() {
+        return None;
+    }
+
+    let mut start = cursor_char;
+    while start > 0 {
+        let ch = chars[start - 1];
+        if ch.is_whitespace() {
+            break;
+        }
+        start -= 1;
+    }
+
+    if start >= chars.len() || chars[start] != ':' {
+        return None;
+    }
+    let query: String = chars[start + 1..cursor_char].iter().collect();
+    if !query
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '+')
+    {
+        return None;
+    }
+    Some((start, query.to_lowercase()))
+}
+
+fn shortcode_suggestions(
+    input: &str,
+    cursor_char: usize,
+    alias_to_char: &std::collections::HashMap<String, String>,
+    aliases: &[String],
+    limit: usize,
+) -> Vec<(String, String)> {
+    let Some((_start, query)) = emoji_shortcode_trigger(input, cursor_char) else {
+        return Vec::new();
+    };
+
+    aliases
+        .iter()
+        .filter(|a| a.starts_with(&query))
+        .take(limit)
+        .filter_map(|a| alias_to_char.get(a).map(|ch| (a.clone(), ch.clone())))
+        .collect()
+}
+
+fn replace_char_range(
+    input: &mut String,
+    cursor_char: &mut usize,
+    start_char: usize,
+    end_char: usize,
+    replacement: &str,
+) {
+    let start = char_to_byte_idx(input, start_char);
+    let end = char_to_byte_idx(input, end_char);
+    input.replace_range(start..end, replacement);
+    *cursor_char = start_char + replacement.chars().count();
 }
 
 
@@ -342,6 +454,8 @@ fn custom_composer_input(
     scroll_lines: &mut f32,
     emoji_map: &std::collections::HashMap<String, usize>,
     emoji_textures: &[(String, egui::TextureHandle)],
+    emoji_alias_to_char: &std::collections::HashMap<String, String>,
+    emoji_aliases: &[String],
     width: f32,
 ) -> (egui::Response, bool, bool) {
     let line_height = 22.0;
@@ -412,6 +526,18 @@ fn custom_composer_input(
             match event {
                 egui::Event::Text(t) => {
                     if !t.contains('\n') && !t.contains('\r') {
+                        if t == " " {
+                            if let Some((start, query)) = emoji_shortcode_trigger(input, *cursor_char) {
+                                if !query.is_empty() {
+                                    if let Some(ch) = emoji_alias_to_char.get(&query) {
+                                        replace_char_range(input, cursor_char, start, *cursor_char, ch);
+                                        insert_text_at_cursor(input, cursor_char, " ");
+                                        changed = true;
+                                        continue;
+                                    }
+                                }
+                            }
+                        }
                         insert_text_at_cursor(input, cursor_char, &t);
                         changed = true;
                     }
@@ -432,6 +558,21 @@ fn custom_composer_input(
                             changed = true;
                         } else {
                             submit = true;
+                        }
+                    }
+                    egui::Key::Tab => {
+                        let suggestions = shortcode_suggestions(
+                            input,
+                            *cursor_char,
+                            emoji_alias_to_char,
+                            emoji_aliases,
+                            1,
+                        );
+                        if let Some((_alias, ch)) = suggestions.first() {
+                            if let Some((start, _query)) = emoji_shortcode_trigger(input, *cursor_char) {
+                                replace_char_range(input, cursor_char, start, *cursor_char, ch);
+                                changed = true;
+                            }
                         }
                     }
                     egui::Key::Backspace => {
@@ -647,6 +788,8 @@ impl AbcomApp {
             emoji_textures_loaded: false,
             emoji_category: 0,
             emoji_map: std::collections::HashMap::new(),
+            emoji_alias_to_char: std::collections::HashMap::new(),
+            emoji_aliases: Vec::new(),
             last_cleanup_time: std::time::Instant::now(),
             show_group_modal: false,
             group_name_input: String::new(),
@@ -670,6 +813,14 @@ impl eframe::App for AbcomApp {
                 .enumerate()
                 .map(|(i, (ch, _))| (ch.clone(), i))
                 .collect();
+            let available: Vec<String> = self
+                .emoji_textures
+                .iter()
+                .map(|(ch, _)| ch.clone())
+                .collect();
+            let (alias_to_char, aliases) = build_emoji_shortcode_index(&available);
+            self.emoji_alias_to_char = alias_to_char;
+            self.emoji_aliases = aliases;
             self.emoji_textures_loaded = true;
         }
 
@@ -1035,8 +1186,39 @@ impl eframe::App for AbcomApp {
                         &mut self.input_scroll_lines,
                         &self.emoji_map,
                         &self.emoji_textures,
+                        &self.emoji_alias_to_char,
+                        &self.emoji_aliases,
                         available_w - 12.0,
                     );
+
+                    let shortcode_list = shortcode_suggestions(
+                        &self.input,
+                        self.input_cursor_char,
+                        &self.emoji_alias_to_char,
+                        &self.emoji_aliases,
+                        8,
+                    );
+                    if self.input_has_focus && !shortcode_list.is_empty() {
+                        let row_h = 24.0;
+                        let popup_h = (shortcode_list.len() as f32 * row_h + 8.0).min(220.0);
+                        let popup_pos = egui::pos2(resp.rect.left(), resp.rect.top() - popup_h - 6.0);
+                        egui::Area::new("emoji_shortcode_popup".into())
+                            .order(egui::Order::Foreground)
+                            .fixed_pos(popup_pos)
+                            .show(ctx, |ui| {
+                                egui::Frame::popup(ui.style()).show(ui, |ui| {
+                                    ui.set_min_width(resp.rect.width().max(260.0));
+                                    for (idx, (alias, ch)) in shortcode_list.iter().enumerate() {
+                                        let text = format!("{}  :{}", ch, alias);
+                                        if idx == 0 {
+                                            ui.label(egui::RichText::new(text).strong());
+                                        } else {
+                                            ui.label(text);
+                                        }
+                                    }
+                                });
+                            });
+                    }
 
                     // Détecter la frappe et envoyer l'indicateur uniquement au pair de la conversation active (max 1 fois/1.5s)
                     if changed && self.last_typing_sent.elapsed().as_millis() > 1500 {
