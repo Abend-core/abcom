@@ -149,7 +149,7 @@ impl AppState {
         }
     }
 
-    fn save_groups(&self) {
+    pub fn save_groups(&self) {
         if let Some(parent) = self.groups_path.parent() {
             if let Err(e) = std::fs::create_dir_all(parent) {
                 eprintln!("[app] Erreur création répertoire groupes: {}", e);
@@ -322,6 +322,11 @@ impl AppState {
 
     pub fn is_peer_online(&self, username: &str) -> bool {
         self.peers.iter().any(|p| p.username == username && p.online)
+    }
+
+    /// Retourne les adresses des pairs en ligne
+    pub fn get_online_peers(&self) -> Vec<SocketAddr> {
+        self.peers.iter().filter(|p| p.online).map(|p| p.addr).collect()
     }
 
     // ──── Gestion des groupes ────
