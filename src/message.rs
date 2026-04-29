@@ -41,10 +41,15 @@ pub struct TypingIndicator {
     pub from: String,
 }
 
-/// Réseau connu (identifié par son subnet /24)
+/// Réseau connu (identifié par SSID WiFi si disponible, sinon subnet)
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct KnownNetwork {
-    /// Subnet sous forme de préfixe ex: "192.168.1"
+    /// Identifiant unique: SSID WiFi si disponible, sinon subnet (ex: "iPhone de Hugo" ou "192.168.1")
+    /// Champ avec default="" pour compatibilité avec anciens networks.json (migration faite au chargement)
+    #[serde(default)]
+    pub id: String,
+    /// Subnet IP associé (ex: "192.168.1") — info secondaire, non utilisé comme clé primaire
+    #[serde(default)]
     pub subnet: String,
     /// Alias optionnel donné par l'utilisateur
     pub alias: Option<String>,
@@ -56,6 +61,8 @@ impl KnownNetwork {
     pub fn display_name(&self) -> String {
         if let Some(alias) = &self.alias {
             alias.clone()
+        } else if !self.id.is_empty() {
+            self.id.clone()
         } else {
             format!("{}.x", self.subnet)
         }
