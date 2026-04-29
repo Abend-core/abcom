@@ -287,10 +287,13 @@ impl eframe::App for AbcomApp {
                             // Notification visuelle dans l'app
                             self.last_notification = Some(format!("{}: {}", msg.from, msg.content));
                             self.notification_time = std::time::Instant::now();
-                            // Flash barre des tâches si fenêtre pas au premier plan
                             self.has_unread = true;
-                            // Son à chaque message reçu (fenêtre focalisée ou non)
-                            if self.enable_sound_notifications {
+                            // Son uniquement si on n'est pas déjà dans la conversation concernée
+                            let already_in_conv = match &s.selected_conversation {
+                                None => msg.to_user.is_none(), // on est en Global et c'est un message global
+                                Some(conv) => msg.from == *conv, // on est dans la conv de l'expéditeur
+                            };
+                            if self.enable_sound_notifications && !already_in_conv {
                                 play_notification_sound();
                             }
                         }
