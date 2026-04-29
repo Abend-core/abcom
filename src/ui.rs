@@ -126,6 +126,8 @@ struct AbcomApp {
     // Indicateur de frappe
     typing_tx: mpsc::Sender<SendTypingRequest>,
     last_typing_sent: std::time::Instant,
+    // Sons désactivés par salon (clé = nom du salon, None = Global)
+    muted_conversations: std::collections::HashSet<Option<String>>,
 }
 
 fn load_emoji_textures(ctx: &egui::Context) -> Vec<(String, egui::TextureHandle)> {
@@ -256,6 +258,7 @@ impl AbcomApp {
             group_members_selected: std::collections::HashSet::new(),
             typing_tx,
             last_typing_sent: std::time::Instant::now() - Duration::from_secs(10),
+            muted_conversations: std::collections::HashSet::new(),
         }
     }
 }
@@ -288,12 +291,16 @@ impl eframe::App for AbcomApp {
                             self.last_notification = Some(format!("{}: {}", msg.from, msg.content));
                             self.notification_time = std::time::Instant::now();
                             self.has_unread = true;
-                            // Son uniquement si on n'est pas déjà dans la conversation concernée
-                            let already_in_conv = match &s.selected_conversation {
-                                None => msg.to_user.is_none(), // on est en Global et c'est un message global
-                                Some(conv) => msg.from == *conv, // on est dans la conv de l'expéditeur
+                            // Déterminer le salon source du message
+                            let source_conv: Option<String> = if msg.to_user.is_none() {
+                                None // message global
+                            } else {
+                                Some(msg.from.clone()) // message direct → salon = expéditeur
                             };
-                            if self.enable_sound_notifications && !already_in_conv {
+                            // Son si : on n'est pas dans ce salon ET ce salon n'est pas muet
+                            let already_in_conv = s.selected_conversation == source_conv;
+                            let conv_muted = self.muted_conversations.contains(&source_conv);
+                            if self.enable_sound_notifications && !already_in_conv && !conv_muted {
                                 play_notification_sound();
                             }
                         }
@@ -901,14 +908,31 @@ impl eframe::App for AbcomApp {
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.menu_button("▾ Actions", |ui| {
-                        // Activer/désactiver notifications sonores
+                        // Activer/désactiver notifications sonores (global)
                         let sound_text = if self.enable_sound_notifications {
-                            "🔊 Désactiver les notifications sonores"
+                            "🔊 Désactiver tous les sons"
                         } else {
-                            "🔇 Activer les notifications sonores"
+                            "🔇 Activer tous les sons"
                         };
                         if ui.button(sound_text).clicked() {
                             self.enable_sound_notifications = !self.enable_sound_notifications;
+                            ui.close_menu();
+                        }
+
+                        // Muet pour ce salon uniquement
+                        let this_conv = selected_conv.clone();
+                        let is_muted = self.muted_conversations.contains(&this_conv);
+                        let mute_text = if is_muted {
+                            "🔔 Réactiver les sons de ce salon"
+                        } else {
+                            "🔕 Muet pour ce salon"
+                        };
+                        if ui.button(mute_text).clicked() {
+                            if is_muted {
+                                self.muted_conversations.remove(&this_conv);
+                            } else {
+                                self.muted_conversations.insert(this_conv);
+                            }
                             ui.close_menu();
                         }
 
