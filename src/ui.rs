@@ -342,12 +342,12 @@ impl eframe::App for AbcomApp {
             s.clear_typing_if_old();
         }
 
-        // Nettoyer les pairs inactifs toutes les 5 secondes (timeout: 15 secondes)
+        // Nettoyer les pairs inactifs toutes les 5 secondes (timeout: 10 secondes, synchronisé avec UDP discovery)
         if self.last_cleanup_time.elapsed().as_secs() >= 5 {
             self.last_cleanup_time = std::time::Instant::now();
             {
                 let mut s = self.state.lock().unwrap();
-                let _disconnected = s.cleanup_inactive_peers(15);
+                let _disconnected = s.cleanup_inactive_peers(10);
                 // Les pairs sont marqués offline automatiquement, la UI se mettra à jour
             }
         }
