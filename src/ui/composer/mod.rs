@@ -424,11 +424,14 @@ pub fn custom_composer_input(
         }
     }
 
+    let frame_fill = egui::Color32::TRANSPARENT;
+    let frame_stroke = egui::Stroke::NONE;
+
     ui.painter().rect(
         rect,
-        egui::CornerRadius::same(6),
-        ui.visuals().extreme_bg_color,
-        egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+        egui::CornerRadius::same(12),
+        frame_fill,
+        frame_stroke,
         egui::StrokeKind::Outside,
     );
 
@@ -436,9 +439,9 @@ pub fn custom_composer_input(
         ui.painter().text(
             content_rect.left_center(),
             egui::Align2::LEFT_CENTER,
-            "Message",
+            "Send a message...",
             egui::TextStyle::Body.resolve(ui.style()),
-            ui.visuals().weak_text_color(),
+            egui::Color32::from_rgb(185, 187, 192),
         );
     } else {
         let painter = ui.painter().with_clip_rect(content_rect);
@@ -501,7 +504,7 @@ pub fn custom_composer_input(
                     egui::Align2::LEFT_CENTER,
                     &glyph,
                     egui::TextStyle::Body.resolve(ui.style()),
-                    ui.visuals().text_color(),
+                    egui::Color32::from_rgb(244, 245, 247),
                 );
                 x += glyph_w;
                 i += 1;
@@ -561,7 +564,7 @@ pub fn custom_composer_input(
                         egui::pos2(x, top.max(content_rect.top())),
                         egui::pos2(x, bottom),
                     ],
-                    egui::Stroke::new(1.6, ui.visuals().text_color()),
+                    egui::Stroke::new(1.6, egui::Color32::from_rgb(250, 250, 252)),
                 );
             }
         }
