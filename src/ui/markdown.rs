@@ -188,6 +188,9 @@ fn push_pending_blank(blocks: &mut Vec<MarkdownBlock>) {
 fn fenced_code_language(line: &str) -> Option<Option<String>> {
     let rest = line.trim_start().strip_prefix("```")?;
     let language = rest.trim();
+    if language.contains('`') {
+        return None;
+    }
     if language.is_empty() {
         Some(None)
     } else {
@@ -234,15 +237,10 @@ fn parse_inline(input: &str) -> Vec<MarkdownSpan> {
             continue;
         }
 
-        if let Some(code) = rest.strip_prefix('`') {
-            if let Some(end) = code.find('`') {
-                spans.push(MarkdownSpan::Code(code[..end].to_string()));
-                rest = &code[end + 1..];
-                continue;
-            } else {
-                push_text(&mut spans, rest);
-                break;
-            }
+        if let Some((code, consumed)) = parse_code_span(rest) {
+            spans.push(MarkdownSpan::Code(code.to_string()));
+            rest = &rest[consumed..];
+            continue;
         }
 
         if let Some((marker, strong)) = strong_text(rest) {
@@ -286,6 +284,18 @@ fn parse_inline(input: &str) -> Vec<MarkdownSpan> {
     }
 
     spans
+}
+
+fn parse_code_span(input: &str) -> Option<(&str, usize)> {
+    let delimiter_len = input.chars().take_while(|&character| character == '`').count();
+    if delimiter_len == 0 {
+        return None;
+    }
+
+    let delimiter = "`".repeat(delimiter_len);
+    let rest = &input[delimiter_len..];
+    let end = rest.find(&delimiter)?;
+    Some((&rest[..end], delimiter_len + end + delimiter_len))
 }
 
 fn parse_link(input: &str) -> Option<(&str, &str, usize)> {
@@ -670,6 +680,16 @@ mod tests {
             parse_markdown("hello **pas ferme"),
             vec![MarkdownBlock::Paragraph(vec![MarkdownSpan::Text(
                 "hello **pas ferme".to_string()
+            )])]
+        );
+    }
+
+    #[test]
+    fn keeps_single_line_triple_backticks_as_inline_code() {
+        assert_eq!(
+            parse_markdown("``` test ```"),
+            vec![MarkdownBlock::Paragraph(vec![MarkdownSpan::Code(
+                " test ".to_string(),
             )])]
         );
     }
