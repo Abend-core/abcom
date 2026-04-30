@@ -36,6 +36,7 @@ impl AppState {
         }
     }
 
+    #[allow(dead_code)]
     pub fn get_conversations(&self) -> Vec<String> {
         let mut convos = vec!["📢 Global".to_string()];
         for peer in &self.peers {

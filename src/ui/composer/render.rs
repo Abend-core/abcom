@@ -1,6 +1,7 @@
 use eframe::egui;
 
 /// Rend un texte contenant des emojis sous forme de séquence Label + Image
+#[allow(dead_code)]
 pub fn render_inline(
     ui: &mut egui::Ui,
     text: &str,

@@ -116,15 +116,24 @@ impl AbcomApp {
                         }
 
                         if resp.clicked() {
-                            let mut s = self.state.lock().unwrap();
-                            if is_selected {
-                                s.selected_conversation = None;
+                            let (is_selected_now, peer_name, peer_addr_for_receipt) = {
+                                let s = self.state.lock().unwrap();
+                                let is_sel = s.selected_conversation.as_ref().map(|c| c == &peer.username).unwrap_or(false);
+                                let peer_name = peer.username.clone();
+                                let peer_addr = peer.addr;
+                                (is_sel, peer_name, peer_addr)
+                            };
+                            
+                            if is_selected_now {
+                                self.switch_conversation(None);
                             } else {
-                                s.selected_conversation = Some(peer.username.clone());
-                                s.mark_conversation_read(&peer.username);
+                                self.switch_conversation(Some(peer_name.clone()));
+                                let mut s = self.state.lock().unwrap();
+                                s.mark_conversation_read(&peer_name);
+                                self.active_view = AppView::Chat;
                                 let my_name = s.my_username.clone();
                                 let msgs_to_read: Vec<_> = s.messages.iter()
-                                    .filter(|m| m.from == peer.username && m.to_user == Some(s.my_username.clone()))
+                                    .filter(|m| m.from == peer_name && m.to_user == Some(s.my_username.clone()))
                                     .cloned().collect();
                                 drop(s);
                                 for msg in msgs_to_read {
@@ -135,7 +144,7 @@ impl AbcomApp {
                                         message_hash: msg_hash,
                                         timestamp: chrono::Local::now().format("%H:%M").to_string(),
                                     };
-                                    let req = ReadReceiptRequest { to_addr: peer.addr, receipt };
+                                    let req = ReadReceiptRequest { to_addr: peer_addr_for_receipt, receipt };
                                     let _ = self.send_read_receipt_tx.try_send(req);
                                 }
                             }
@@ -175,7 +184,9 @@ impl AbcomApp {
                         ui.painter().text(rect.left_center() + egui::vec2(10.0, 0.0), egui::Align2::LEFT_CENTER,
                             &format!("🔗 {}", group.name), font_id, ui.visuals().text_color());
                         if resp.clicked() {
-                            self.state.lock().unwrap().selected_conversation = Some(format!("#{}", group.name));
+                            let group_name = format!("#{}", group.name);
+                            self.switch_conversation(Some(group_name));
+                            self.active_view = AppView::Chat;
                         }
                         ui.add_space(4.0);
                     }
@@ -183,9 +194,21 @@ impl AbcomApp {
 
                 // Conversation globale
                 let is_global = selected_conv.is_none() && self.active_view == AppView::Chat;
-                if ui.add_sized([ui.available_width(), 56.0], egui::SelectableLabel::new(is_global, "📢 Tous")).clicked() {
-                    self.state.lock().unwrap().selected_conversation = None;
-                    self.active_view = AppView::Chat;
+                {
+                    let desired = egui::vec2(ui.available_width(), 56.0);
+                    let (rect, resp) = ui.allocate_exact_size(desired, egui::Sense::click());
+                    let visuals = ui.style().interact(&resp);
+                    let fill = if is_global { ui.visuals().selection.bg_fill } else { visuals.bg_fill };
+                    let stroke = if is_global { ui.visuals().selection.stroke } else { visuals.bg_stroke };
+                    ui.painter().rect_filled(rect, 8.0, fill);
+                    ui.painter().rect_stroke(rect, 8.0, stroke, egui::StrokeKind::Outside);
+                    let font_id = egui::TextStyle::Button.resolve(ui.style());
+                    ui.painter().text(rect.left_center() + egui::vec2(10.0, 0.0), egui::Align2::LEFT_CENTER,
+                        "📢 Tous", font_id, ui.visuals().text_color());
+                    if resp.clicked() {
+                        self.switch_conversation(None);
+                        self.active_view = AppView::Chat;
+                    }
                 }
 
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {

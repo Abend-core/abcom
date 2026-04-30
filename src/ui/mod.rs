@@ -61,12 +61,10 @@ pub(crate) struct AbcomApp {
     pub(crate) muted_conversations: std::collections::HashSet<Option<String>>,
     pub(crate) selected_network_filter: Option<String>,
     pub(crate) active_view: AppView,
-    pub(crate) networks_view_selected: Option<String>,
-    pub(crate) editing_network_alias: Option<(String, String)>,
-    pub(crate) editing_peer_alias: Option<(String, String)>,
     pub(crate) selected_network_view: Option<String>,
     pub(crate) network_alias_edits: std::collections::HashMap<String, String>,
     pub(crate) peer_alias_edits: std::collections::HashMap<String, String>,
+    pub(crate) drafts: std::collections::HashMap<Option<String>, String>,
 }
 
 impl AbcomApp {
@@ -115,13 +113,33 @@ impl AbcomApp {
             muted_conversations: std::collections::HashSet::new(),
             selected_network_filter: None,
             active_view: AppView::Chat,
-            networks_view_selected: None,
-            editing_network_alias: None,
-            editing_peer_alias: None,
             selected_network_view: None,
             network_alias_edits: std::collections::HashMap::new(),
             peer_alias_edits: std::collections::HashMap::new(),
+            drafts: std::collections::HashMap::new(),
         }
+    }
+
+    /// Sauvegarde le texte courant dans les drafts pour la conversation active
+    pub(crate) fn save_draft(&mut self) {
+        let selected_conv = self.state.lock().unwrap().selected_conversation.clone();
+        self.drafts.insert(selected_conv, self.input.clone());
+    }
+
+    /// Charge le texte pour une conversation donnée et met à jour l'input
+    pub(crate) fn load_draft(&mut self, conversation: Option<String>) {
+        let draft = self.drafts.get(&conversation).cloned().unwrap_or_default();
+        self.input = draft;
+        self.input_cursor_char = 0;
+        self.input_has_focus = false;
+        self.input_scroll_lines = 0.0;
+    }
+
+    /// Change vers une nouvelle conversation, sauvegardant le draft actuel et chargeant celui de la nouvelle
+    pub(crate) fn switch_conversation(&mut self, new_conversation: Option<String>) {
+        self.save_draft();
+        self.state.lock().unwrap().selected_conversation = new_conversation.clone();
+        self.load_draft(new_conversation);
     }
 }
 
