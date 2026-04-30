@@ -1,14 +1,13 @@
 use eframe::egui;
 
 use super::render::measure_text_width;
-use super::text_ops::char_to_byte_idx;
 
 /// Retourne les positions pixel (x, y) de chaque caractère dans le composeur.
 /// Retourne aussi la liste (line_start_char_idx, y_pixel) pour chaque ligne.
 pub fn composer_caret_positions(
     text: &str,
     emoji_map: &std::collections::HashMap<String, usize>,
-    emoji_textures: &[(String, egui::TextureHandle)],
+    _emoji_textures: &[(String, egui::TextureHandle)],
     ui: &egui::Ui,
     line_height: f32,
 ) -> (Vec<(usize, f32)>, Vec<(usize, f32)>) {
@@ -22,7 +21,6 @@ pub fn composer_caret_positions(
     let mut x = inner_rect.left();
     let mut y = inner_rect.top();
     let mut i = 0usize;
-    let mut line_start = 0usize;
     line_starts.push((0, y));
 
     while i < chars.len() {
@@ -47,8 +45,7 @@ pub fn composer_caret_positions(
                 x = inner_rect.left();
                 y += line_height;
                 i += 1;
-                line_start = i;
-                line_starts.push((line_start, y));
+                line_starts.push((i, y));
                 continue;
             }
             positions.push((i, x));
@@ -63,15 +60,16 @@ pub fn composer_caret_positions(
 }
 
 /// Calcule le curseur (char index) à partir d'un point pixel dans le composeur
+#[allow(dead_code)]
 pub fn cursor_from_point(
     pos: egui::Pos2,
     text: &str,
     emoji_map: &std::collections::HashMap<String, usize>,
-    emoji_textures: &[(String, egui::TextureHandle)],
+    _emoji_textures: &[(String, egui::TextureHandle)],
     ui: &egui::Ui,
-    line_height: f32,
+    _line_height: f32,
 ) -> usize {
-    let (line_starts, positions) = composer_caret_positions(text, emoji_map, emoji_textures, ui, line_height);
+    let (line_starts, positions) = composer_caret_positions(text, emoji_map, _emoji_textures, ui, _line_height);
 
     // Find line
     let line_idx = line_starts.iter().enumerate()
@@ -80,7 +78,7 @@ pub fn cursor_from_point(
         .map(|(i, _)| i)
         .unwrap_or(0);
 
-    let (line_start_char, line_y) = line_starts[line_idx];
+    let (line_start_char, _) = line_starts[line_idx];
     let line_end_char = line_starts.get(line_idx + 1).map(|(c, _)| *c).unwrap_or(positions.len());
 
     // Find closest in line
@@ -99,10 +97,10 @@ pub fn move_cursor_vertical(
     direction: i32,
     _origin_x: f32,
     _origin_y: f32,
-    line_height: f32,
-    emoji_map: &std::collections::HashMap<String, usize>,
-    emoji_textures: &[(String, egui::TextureHandle)],
-    ctx: &egui::Context,
+    _line_height: f32,
+    _emoji_map: &std::collections::HashMap<String, usize>,
+    _emoji_textures: &[(String, egui::TextureHandle)],
+    _ctx: &egui::Context,
 ) -> usize {
     // Simple approach: find current line, move up/down by one line
     let chars: Vec<char> = text.chars().collect();

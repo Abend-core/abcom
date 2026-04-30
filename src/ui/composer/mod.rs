@@ -3,15 +3,78 @@ pub mod render;
 pub mod shortcode;
 pub mod text_ops;
 
-pub use cursor::{composer_caret_positions, cursor_from_point, move_cursor_vertical};
-pub use render::{render_inline, measure_text_width};
-pub use shortcode::{emoji_shortcode_trigger, shortcode_suggestions};
+pub use cursor::{composer_caret_positions, move_cursor_vertical};
+pub use render::measure_text_width;
 pub use text_ops::{
     char_to_byte_idx, insert_emoji_at_cursor, insert_text_at_cursor,
     remove_next_char, remove_prev_char, replace_char_range,
 };
 
 use eframe::egui;
+
+/// Calcule le nombre réel de lignes avec wrapping automatique
+fn compute_wrapped_lines(
+    text: &str,
+    emoji_map: &std::collections::HashMap<String, usize>,
+    inner_width: f32,
+    ui_ctx: &egui::Context,
+    default_font: &egui::FontId,
+) -> f32 {
+    let line_height = 22.0;
+    let chars: Vec<char> = text.chars().collect();
+    let mut line_count = 1f32;
+    let mut x = 0.0;
+    
+    let mut i = 0usize;
+    while i < chars.len() {
+        let ch = chars[i];
+        let mut drawn = false;
+        
+        // Check emoji (2-char then 1-char)
+        for len in [2usize, 1usize] {
+            if i + len <= chars.len() {
+                let s: String = chars[i..i + len].iter().collect();
+                if let Some(_) = emoji_map.get(&s) {
+                    let width = line_height;
+                    if x + width > inner_width && x > 0.0 {
+                        line_count += 1.0;
+                        x = 0.0;
+                    }
+                    x += width;
+                    i += len;
+                    drawn = true;
+                    break;
+                }
+            }
+        }
+        
+        if !drawn {
+            if ch == '\u{fe0f}' || ch == '\u{200d}' {
+                i += 1;
+                continue;
+            }
+            if ch == '\n' {
+                line_count += 1.0;
+                x = 0.0;
+                i += 1;
+                continue;
+            }
+            
+            let glyph: String = std::iter::once(ch).collect();
+            let glyph_w = measure_text_width(&glyph, ui_ctx, default_font);
+            
+            // Wrapping automatique
+            if x + glyph_w > inner_width && x > 0.0 {
+                line_count += 1.0;
+                x = 0.0;
+            }
+            x += glyph_w;
+            i += 1;
+        }
+    }
+    
+    line_count
+}
 
 /// Widget de composition de message multi-ligne avec rendu inline emoji.
 /// Retourne (Response, pressed_enter: bool, changed: bool)
@@ -23,22 +86,44 @@ pub fn custom_composer_input(
     scroll_lines: &mut f32,
     emoji_map: &std::collections::HashMap<String, usize>,
     emoji_textures: &[(String, egui::TextureHandle)],
-    alias_to_char: &std::collections::HashMap<String, String>,
-    aliases: &[String],
+    _alias_to_char: &std::collections::HashMap<String, String>,
+    _aliases: &[String],
     shortcode_menu_open: bool,
     available_width: f32,
 ) -> (egui::Response, bool, bool) {
     let line_height = 22.0;
-    let lines = text.chars().filter(|&c| c == '\n').count() as f32 + 1.0;
-    let vis_lines = lines.clamp(1.0, 10.0);
+    let default_font = egui::TextStyle::Body.resolve(ui.style());
+    let inner_width = available_width - 16.0; // Marge 8px * 2
+    
+    // Calcul du nombre réel de lignes avec wrapping
+    let wrapped_lines = compute_wrapped_lines(text, emoji_map, inner_width, ui.ctx(), &default_font);
+    let vis_lines = wrapped_lines.clamp(1.0, 10.0);
     let height = vis_lines * line_height + 10.0;
 
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(available_width, height), egui::Sense::click_and_drag());
 
-    if resp.clicked() { *has_focus = true; }
+    if resp.clicked() {
+        *has_focus = true;
+        // Position le curseur au clic
+        if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
+            if rect.contains(pos) {
+                *cursor_char = cursor::cursor_from_point(pos, text, emoji_map, emoji_textures, &ui, line_height);
+            }
+        }
+    }
     if ui.input(|i| i.pointer.primary_pressed()) {
         if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
             if !rect.contains(pos) { *has_focus = false; }
+        }
+    }
+
+    // Gestion du scroll à la souris
+    if *has_focus {
+        let scroll_delta = ui.input(|i| i.raw_scroll_delta.y);
+        if scroll_delta != 0.0 {
+            let scroll_step = (scroll_delta / 15.0) as i32;
+            let max_scroll = (wrapped_lines - vis_lines).max(0.0);
+            *scroll_lines = (*scroll_lines - scroll_step as f32).clamp(0.0, max_scroll);
         }
     }
 
@@ -49,6 +134,23 @@ pub fn custom_composer_input(
 
     let mut pressed_enter = false;
     let mut changed = false;
+
+    // Auto-scroll cuando el cursor se mueve fuera de la vista
+    if *has_focus {
+        let mut cursor_line = 0f32;
+        let chars: Vec<char> = text.chars().collect();
+        for (i, &ch) in chars.iter().enumerate() {
+            if i >= *cursor_char { break; }
+            if ch == '\n' { cursor_line += 1.0; }
+        }
+        // Scroll para mantener el cursor visible
+        let max_scroll = (wrapped_lines - vis_lines).max(0.0);
+        if cursor_line < *scroll_lines {
+            *scroll_lines = cursor_line;
+        } else if cursor_line >= *scroll_lines + vis_lines {
+            *scroll_lines = (cursor_line - vis_lines + 1.0).min(max_scroll);
+        }
+    }
 
     // Handle text input
     if *has_focus {
@@ -124,7 +226,11 @@ pub fn custom_composer_input(
 
     // Render text + emoji + cursor
     let inner_rect = rect.shrink2(egui::vec2(8.0, 5.0));
-    let mut child = ui.child_ui(inner_rect, egui::Layout::left_to_right(egui::Align::Min), None);
+    let mut child = ui.new_child(
+        egui::UiBuilder::new()
+            .max_rect(inner_rect)
+            .layout(egui::Layout::left_to_right(egui::Align::Min)),
+    );
     child.set_clip_rect(inner_rect);
 
     // Render content (plain text with emoji)
@@ -146,6 +252,11 @@ pub fn custom_composer_input(
             if i + len <= chars.len() {
                 let s: String = chars[i..i + len].iter().collect();
                 if let Some(&tex_idx) = emoji_map.get(&s) {
+                    let width = line_height;
+                    if x + width > inner_rect.right() && x > inner_rect.left() {
+                        x = inner_rect.left();
+                        y += line_height;
+                    }
                     if i == *cursor_char && *has_focus {
                         cursor_pixel = Some(egui::pos2(x, y));
                     }
@@ -175,11 +286,18 @@ pub fn custom_composer_input(
                 i += 1;
                 continue;
             }
+            let glyph: String = std::iter::once(ch).collect();
+            let glyph_w = measure_text_width(&glyph, ui.ctx(), &default_font);
+            
+            // Wrapping automatique si débordement
+            if x + glyph_w > inner_rect.right() && x > inner_rect.left() {
+                x = inner_rect.left();
+                y += line_height;
+            }
+            
             if i == *cursor_char && *has_focus {
                 cursor_pixel = Some(egui::pos2(x, y));
             }
-            let glyph: String = std::iter::once(ch).collect();
-            let glyph_w = measure_text_width(&glyph, ui.ctx(), &default_font);
             let text_pos = egui::pos2(x, y);
             if inner_rect.y_range().contains(y) {
                 ui.painter().text(text_pos, egui::Align2::LEFT_TOP, &glyph, default_font.clone(), ui.visuals().text_color());
