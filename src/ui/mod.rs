@@ -10,6 +10,7 @@ use crate::message::{
 };
 
 mod chat_panel;
+mod header;
 pub mod composer;
 mod emoji_picker;
 mod events;
@@ -25,6 +26,19 @@ mod sound;
 pub(crate) enum AppView {
     Chat,
     Networks,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum UiLanguage {
+    French,
+    English,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ThemePreference {
+    System,
+    Light,
+    Dark,
 }
 
 /// État de l'application UI
@@ -68,6 +82,9 @@ pub(crate) struct AbcomApp {
     pub(crate) network_alias_edits: std::collections::HashMap<String, String>,
     pub(crate) peer_alias_edits: std::collections::HashMap<String, String>,
     pub(crate) drafts: std::collections::HashMap<Option<String>, String>,
+    pub(crate) ui_language: UiLanguage,
+    pub(crate) theme_preference: ThemePreference,
+    pub(crate) system_dark_mode: Option<bool>,
 }
 
 impl AbcomApp {
@@ -120,6 +137,16 @@ impl AbcomApp {
             network_alias_edits: std::collections::HashMap::new(),
             peer_alias_edits: std::collections::HashMap::new(),
             drafts: std::collections::HashMap::new(),
+            ui_language: UiLanguage::French,
+            theme_preference: ThemePreference::System,
+            system_dark_mode: None,
+        }
+    }
+
+    pub(crate) fn tr(&self, french: &'static str, english: &'static str) -> &'static str {
+        match self.ui_language {
+            UiLanguage::French => french,
+            UiLanguage::English => english,
         }
     }
 
@@ -148,6 +175,7 @@ impl AbcomApp {
 
 impl eframe::App for AbcomApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.apply_theme_preference(ctx);
         self.window_focused = ctx.input(|i| i.focused);
 
         self.lazy_load_emoji(ctx);
@@ -168,6 +196,7 @@ impl eframe::App for AbcomApp {
             }
         }
 
+        self.show_header_bar(ctx);
         self.show_sidebar_panel(ctx);
         self.show_typing_panel(ctx);
         let emoji_btn_clicked = self.show_input_bar(ctx);
