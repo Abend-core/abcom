@@ -9,6 +9,7 @@ use crate::app::AppState;
 use crate::message::{
     AppEvent, MessageAckRequest, ReadReceiptRequest, SendGroupRequest, SendRequest, TypingRequest,
 };
+use crate::transfer::{TransferProgress, TransferRequest};
 
 mod chat_panel;
 mod header;
@@ -57,6 +58,7 @@ pub(crate) struct AbcomApp {
     pub(crate) send_typing_tx: mpsc::Sender<TypingRequest>,
     pub(crate) send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
     pub(crate) send_ack_tx: mpsc::Sender<MessageAckRequest>,
+    pub(crate) send_transfer_tx: mpsc::Sender<TransferRequest>,
     pub(crate) input: String,
     pub(crate) input_cursor_char: usize,
     pub(crate) input_has_focus: bool,
@@ -91,6 +93,7 @@ pub(crate) struct AbcomApp {
     pub(crate) peer_alias_edits: std::collections::HashMap<String, String>,
     pub(crate) drafts: std::collections::HashMap<Option<String>, String>,
     pub(crate) pending_attachments: Vec<PathBuf>,
+    pub(crate) transfer_progress: std::collections::HashMap<String, TransferProgress>,
     pub(crate) ui_language: UiLanguage,
     pub(crate) theme_preference: ThemePreference,
     pub(crate) system_dark_mode: Option<bool>,
@@ -107,6 +110,7 @@ impl AbcomApp {
         send_typing_tx: mpsc::Sender<TypingRequest>,
         send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
         send_ack_tx: mpsc::Sender<MessageAckRequest>,
+        send_transfer_tx: mpsc::Sender<TransferRequest>,
     ) -> Self {
         Self {
             state,
@@ -116,6 +120,7 @@ impl AbcomApp {
             send_typing_tx,
             send_read_receipt_tx,
             send_ack_tx,
+            send_transfer_tx,
             input: String::new(),
             input_cursor_char: 0,
             input_has_focus: false,
@@ -150,6 +155,7 @@ impl AbcomApp {
             peer_alias_edits: std::collections::HashMap::new(),
             drafts: std::collections::HashMap::new(),
             pending_attachments: Vec::new(),
+            transfer_progress: std::collections::HashMap::new(),
             ui_language: UiLanguage::French,
             theme_preference: ThemePreference::System,
             system_dark_mode: None,
@@ -265,6 +271,7 @@ pub fn run(
     send_typing_tx: mpsc::Sender<TypingRequest>,
     send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
     send_ack_tx: mpsc::Sender<MessageAckRequest>,
+    send_transfer_tx: mpsc::Sender<TransferRequest>,
 ) -> anyhow::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Abcom")
@@ -292,6 +299,7 @@ pub fn run(
                 send_typing_tx,
                 send_read_receipt_tx,
                 send_ack_tx,
+                send_transfer_tx,
             )))
         }),
     )

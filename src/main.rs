@@ -6,6 +6,7 @@ mod discovery;
 mod emoji_registry;
 mod message;
 mod network;
+mod transfer;
 mod ui;
 
 fn main() -> anyhow::Result<()> {
@@ -21,6 +22,7 @@ fn main() -> anyhow::Result<()> {
     let (send_typing_tx, send_typing_rx) = mpsc::channel::<message::TypingRequest>(256);
     let (send_read_receipt_tx, send_read_receipt_rx) = mpsc::channel::<message::ReadReceiptRequest>(256);
     let (send_ack_tx, send_ack_rx) = mpsc::channel::<message::MessageAckRequest>(256);
+    let (send_transfer_tx, send_transfer_rx) = mpsc::channel::<transfer::TransferRequest>(64);
 
     // Runtime tokio multi-thread — tourne en arrière-plan pendant qu'egui
     // occupe le thread principal.
@@ -35,8 +37,18 @@ fn main() -> anyhow::Result<()> {
     rt.spawn(network::run_sender_typing(send_typing_rx));
     rt.spawn(network::run_sender_read_receipts(send_read_receipt_rx));
     rt.spawn(network::run_sender_ack(send_ack_rx));
+    rt.spawn(transfer::run_service(event_tx.clone(), send_transfer_rx));
 
-    ui::run(state, event_rx, send_tx, send_group_tx, send_typing_tx, send_read_receipt_tx, send_ack_tx)?;
+    ui::run(
+        state,
+        event_rx,
+        send_tx,
+        send_group_tx,
+        send_typing_tx,
+        send_read_receipt_tx,
+        send_ack_tx,
+        send_transfer_tx,
+    )?;
 
     Ok(())
 }
