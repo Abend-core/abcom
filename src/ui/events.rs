@@ -2,6 +2,7 @@ use eframe::egui;
 
 use crate::app::AppState;
 use crate::message::{AppEvent, GroupAction, MessageAck, MessageAckRequest};
+use crate::transfer::TransferStatus;
 
 use super::{sound::play_notification_sound, AbcomApp};
 
@@ -146,6 +147,42 @@ impl AbcomApp {
                 }
                 AppEvent::MessageAckReceived(ack) => {
                     s.mark_message_acked(ack.message_hash);
+                }
+                AppEvent::TransferUpdated(progress) => {
+                    let transfer_id = progress.transfer_id.clone();
+                    let status = progress.status.clone();
+                    let label = progress.label.clone();
+                    let peer = progress.peer.clone();
+                    let detail = progress.detail.clone();
+                    drop(s);
+
+                    self.transfer_progress.insert(transfer_id, progress);
+
+                    match status {
+                        TransferStatus::Completed => {
+                            self.last_notification = Some(format!(
+                                "Transfer complete: {} ({})",
+                                label, peer
+                            ));
+                            if !detail.is_empty() {
+                                self.last_notification = Some(format!(
+                                    "Transfer complete: {} ({}) -> {}",
+                                    label, peer, detail
+                                ));
+                            }
+                            self.notification_time = std::time::Instant::now();
+                        }
+                        TransferStatus::Failed => {
+                            self.last_notification = Some(format!(
+                                "Transfer failed: {} ({})",
+                                label, peer
+                            ));
+                            self.notification_time = std::time::Instant::now();
+                        }
+                        _ => {}
+                    }
+
+                    s = self.state.lock().unwrap();
                 }
             }
         }

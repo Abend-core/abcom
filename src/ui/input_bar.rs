@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use crate::app::AppState;
 use crate::message::{ChatMessage, SendRequest, TypingIndicator, TypingRequest};
+use crate::transfer::TransferRequest;
 
 use super::composer;
 use super::emoji_picker::emoji_shortcode_trigger;
@@ -159,43 +160,87 @@ fn send_current_message(
     selected_addr: Option<std::net::SocketAddr>,
     all_peers: &[crate::app::Peer],
 ) -> bool {
-    if app.input.trim().is_empty() {
+    let has_message = !app.input.trim().is_empty();
+    let has_attachments = !app.pending_attachments.is_empty();
+    if !has_message && !has_attachments {
         return false;
     }
 
-    if app.input.ends_with('\n') {
-        app.input.pop();
-    }
-
-    let content = app.input.trim().to_string();
-    let now = chrono::Local::now().format("%H:%M").to_string();
-    let (my_name, selected_peer_name) = {
+    let (my_name, selected_peer_name, transfer_targets) = {
         let s = app.state.lock().unwrap();
-        (s.my_username.clone(), s.selected_conversation.clone())
+        (
+            s.my_username.clone(),
+            s.selected_conversation.clone(),
+            s.selected_transfer_targets(),
+        )
     };
 
-    let msg = ChatMessage {
-        from: my_name,
-        content,
-        timestamp: now,
-        to_user: selected_peer_name.clone(),
-    };
+    if has_message {
+        if app.input.ends_with('\n') {
+            app.input.pop();
+        }
 
-    {
-        let msg_hash = AppState::message_hash(&msg);
-        let mut s = app.state.lock().unwrap();
-        s.add_message(msg.clone());
-        if let Some(peer_name) = &selected_peer_name {
-            if !peer_name.starts_with('#') {
-                let peer_addr = s
-                    .peers
-                    .iter()
-                    .find(|p| p.username == *peer_name)
-                    .map(|p| p.addr);
-                if let Some(addr) = peer_addr {
-                    s.mark_message_sent(msg_hash, addr);
+        let content = app.input.trim().to_string();
+        let now = chrono::Local::now().format("%H:%M").to_string();
+        let msg = ChatMessage {
+            from: my_name.clone(),
+            content,
+            timestamp: now,
+            to_user: selected_peer_name.clone(),
+        };
+
+        {
+            let msg_hash = AppState::message_hash(&msg);
+            let mut s = app.state.lock().unwrap();
+            s.add_message(msg.clone());
+            if let Some(peer_name) = &selected_peer_name {
+                if !peer_name.starts_with('#') {
+                    let peer_addr = s
+                        .peers
+                        .iter()
+                        .find(|p| p.username == *peer_name)
+                        .map(|p| p.addr);
+                    if let Some(addr) = peer_addr {
+                        s.mark_message_sent(msg_hash, addr);
+                    }
                 }
             }
+        }
+
+        if let Some(addr) = selected_addr {
+            let _ = app.send_tx.try_send(SendRequest {
+                to_addr: addr,
+                message: msg,
+            });
+        } else {
+            for peer in all_peers {
+                let _ = app.send_tx.try_send(SendRequest {
+                    to_addr: peer.addr,
+                    message: msg.clone(),
+                });
+            }
+        }
+    }
+
+    if has_attachments {
+        let paths = app.pending_attachments.clone();
+        for target in &transfer_targets {
+            let _ = app.send_transfer_tx.try_send(TransferRequest {
+                from: my_name.clone(),
+                recipient: target.username.clone(),
+                to_addr: target.addr,
+                paths: paths.clone(),
+            });
+        }
+        if transfer_targets.is_empty() {
+            app.last_notification = Some(
+                app.tr(
+                    "Aucun destinataire en ligne pour le transfert",
+                    "No online recipient available for transfer",
+                )
+                .to_string(),
+            );
+            app.notification_time = std::time::Instant::now();
         }
     }
 
@@ -203,20 +248,7 @@ fn send_current_message(
     app.input_cursor_char = 0;
     app.input_has_focus = true;
     app.input_scroll_lines = 0.0;
-
-    if let Some(addr) = selected_addr {
-        let _ = app.send_tx.try_send(SendRequest {
-            to_addr: addr,
-            message: msg,
-        });
-    } else {
-        for peer in all_peers {
-            let _ = app.send_tx.try_send(SendRequest {
-                to_addr: peer.addr,
-                message: msg.clone(),
-            });
-        }
-    }
+    app.pending_attachments.clear();
 
     true
 }
@@ -257,15 +289,16 @@ impl AbcomApp {
         }
 
         let mut emoji_button_clicked = false;
+        let mut picker_action = None;
+        let add_files_label = self.tr("Ajouter des fichiers", "Add files");
+        let add_folder_label = self.tr("Ajouter un dossier", "Add folder");
+        let files_added_label = self.tr("Fichiers ajoutés", "Files added");
+        let folder_added_label = self.tr("Dossier ajouté", "Folder added");
 
         egui::TopBottomPanel::bottom("input_panel")
             .resizable(false)
             .show(ctx, |ui| {
                 ui.add_space(3.0);
-                let add_files_label = self.tr("Ajouter des fichiers", "Add files");
-                let add_folder_label = self.tr("Ajouter un dossier", "Add folder");
-                let files_added_label = self.tr("Fichiers ajoutés", "Files added");
-                let folder_added_label = self.tr("Dossier ajouté", "Folder added");
                 let gif_soon_label = self.tr("GIF bientôt disponible", "GIF support coming soon");
                 egui::Frame::default()
                     .fill(egui::Color32::from_rgb(66, 66, 69))
@@ -437,32 +470,9 @@ impl AbcomApp {
                                         egui::vec2(216.0, 92.0),
                                     );
 
-                                    match popup_action {
-                                        Some(AttachmentMenuAction::AddFiles) => {
-                                            if let Some(paths) = rfd::FileDialog::new()
-                                                .set_title(add_files_label)
-                                                .pick_files()
-                                            {
-                                                push_unique_paths(&mut self.pending_attachments, paths);
-                                                self.last_notification =
-                                                    Some(files_added_label.to_string());
-                                                self.notification_time = std::time::Instant::now();
-                                            }
-                                            self.show_attachment_menu = false;
-                                        }
-                                        Some(AttachmentMenuAction::AddFolder) => {
-                                            if let Some(path) = rfd::FileDialog::new()
-                                                .set_title(add_folder_label)
-                                                .pick_folder()
-                                            {
-                                                push_unique_paths(&mut self.pending_attachments, [path]);
-                                                self.last_notification =
-                                                    Some(folder_added_label.to_string());
-                                                self.notification_time = std::time::Instant::now();
-                                            }
-                                            self.show_attachment_menu = false;
-                                        }
-                                        None => {}
+                                    if let Some(action) = popup_action {
+                                        picker_action = Some(action);
+                                        self.show_attachment_menu = false;
                                     }
 
                                     let clicked_outside = ctx.input(|i| i.pointer.any_pressed())
@@ -608,13 +618,39 @@ impl AbcomApp {
                     });
             });
 
+        match picker_action {
+            Some(AttachmentMenuAction::AddFiles) => {
+                if let Some(paths) = rfd::FileDialog::new()
+                    .set_title(add_files_label)
+                    .pick_files()
+                {
+                    push_unique_paths(&mut self.pending_attachments, paths);
+                    self.last_notification = Some(files_added_label.to_string());
+                    self.notification_time = std::time::Instant::now();
+                }
+            }
+            Some(AttachmentMenuAction::AddFolder) => {
+                if let Some(path) = rfd::FileDialog::new()
+                    .set_title(add_folder_label)
+                    .pick_folder()
+                {
+                    push_unique_paths(&mut self.pending_attachments, [path]);
+                    self.last_notification = Some(folder_added_label.to_string());
+                    self.notification_time = std::time::Instant::now();
+                }
+            }
+            None => {}
+        }
+
         emoji_button_clicked
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::should_send_message;
+    use std::path::PathBuf;
+
+    use super::{attachment_label, push_unique_paths, should_send_message};
 
     #[test]
     fn enter_from_composer_sends_when_shortcode_menu_is_closed() {
@@ -634,5 +670,38 @@ mod tests {
     #[test]
     fn empty_message_never_sends() {
         assert!(!should_send_message(true, true, false, "   "));
+    }
+
+    #[test]
+    fn push_unique_paths_ignores_duplicates() {
+        let mut paths = vec![PathBuf::from("/tmp/alpha.txt")];
+
+        push_unique_paths(
+            &mut paths,
+            [
+                PathBuf::from("/tmp/alpha.txt"),
+                PathBuf::from("/tmp/beta.txt"),
+                PathBuf::from("/tmp/beta.txt"),
+            ],
+        );
+
+        assert_eq!(
+            paths,
+            vec![PathBuf::from("/tmp/alpha.txt"), PathBuf::from("/tmp/beta.txt")]
+        );
+    }
+
+    #[test]
+    fn attachment_label_prefers_file_name() {
+        assert_eq!(
+            attachment_label(PathBuf::from("/tmp/subdir/report.pdf").as_path()),
+            "report.pdf"
+        );
+    }
+
+    #[test]
+    fn attachment_label_falls_back_to_full_path_when_needed() {
+        let path = PathBuf::from("/");
+        assert_eq!(attachment_label(path.as_path()), "/");
     }
 }
