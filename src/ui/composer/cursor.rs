@@ -30,6 +30,11 @@ pub fn composer_caret_positions(
             if i + len <= chars.len() {
                 let s: String = chars[i..i + len].iter().collect();
                 if emoji_map.contains_key(&s) {
+                    if x + line_height > inner_rect.right() && x > inner_rect.left() {
+                        x = inner_rect.left();
+                        y += line_height;
+                        line_starts.push((i, y));
+                    }
                     positions.push((i, x));
                     x += line_height;
                     i += len;
@@ -39,7 +44,10 @@ pub fn composer_caret_positions(
             }
         }
         if !drawn {
-            if ch == '\u{fe0f}' || ch == '\u{200d}' { i += 1; continue; }
+            if ch == '\u{fe0f}' || ch == '\u{200d}' {
+                i += 1;
+                continue;
+            }
             if ch == '\n' {
                 positions.push((i, x));
                 x = inner_rect.left();
@@ -48,9 +56,15 @@ pub fn composer_caret_positions(
                 line_starts.push((i, y));
                 continue;
             }
-            positions.push((i, x));
             let glyph: String = std::iter::once(ch).collect();
-            x += measure_text_width(&glyph, ui.ctx(), &font_id);
+            let glyph_w = measure_text_width(&glyph, ui.ctx(), &font_id);
+            if x + glyph_w > inner_rect.right() && x > inner_rect.left() {
+                x = inner_rect.left();
+                y += line_height;
+                line_starts.push((i, y));
+            }
+            positions.push((i, x));
+            x += glyph_w;
             i += 1;
         }
     }
@@ -69,25 +83,43 @@ pub fn cursor_from_point(
     ui: &egui::Ui,
     _line_height: f32,
 ) -> usize {
-    let (line_starts, positions) = composer_caret_positions(text, emoji_map, _emoji_textures, ui, _line_height);
+    let chars: Vec<char> = text.chars().collect();
+    let (line_starts, positions) =
+        composer_caret_positions(text, emoji_map, _emoji_textures, ui, _line_height);
 
-    // Find line
-    let line_idx = line_starts.iter().enumerate()
+    let line_idx = line_starts
+        .iter()
+        .enumerate()
         .rev()
         .find(|(_, (_, y))| pos.y >= *y)
         .map(|(i, _)| i)
         .unwrap_or(0);
 
     let (line_start_char, _) = line_starts[line_idx];
-    let line_end_char = line_starts.get(line_idx + 1).map(|(c, _)| *c).unwrap_or(positions.len());
+    let line_end_char = line_starts
+        .get(line_idx + 1)
+        .map(|(c, _)| *c)
+        .unwrap_or(chars.len());
 
-    // Find closest in line
-    positions[line_start_char..line_end_char.min(positions.len())]
+    let line_positions: Vec<(usize, f32)> = positions
         .iter()
-        .enumerate()
-        .min_by_key(|(_, (_, x))| ((*x - pos.x).abs() * 1000.0) as i64)
-        .map(|(i, _)| line_start_char + i)
-        .unwrap_or(text.chars().count())
+        .cloned()
+        .filter(|(idx, _)| *idx >= line_start_char && *idx < line_end_char)
+        .collect();
+
+    if line_positions.is_empty() {
+        return line_start_char.min(chars.len());
+    }
+
+    line_positions
+        .iter()
+        .min_by(|(_, x1), (_, x2)| {
+            let d1 = (*x1 - pos.x).abs();
+            let d2 = (*x2 - pos.x).abs();
+            d1.partial_cmp(&d2).unwrap()
+        })
+        .map(|(idx, _)| *idx)
+        .unwrap_or(chars.len())
 }
 
 /// Déplace le curseur verticalement (direction: -1 = haut, +1 = bas)
@@ -98,45 +130,72 @@ pub fn move_cursor_vertical(
     _origin_x: f32,
     _origin_y: f32,
     _line_height: f32,
-    _emoji_map: &std::collections::HashMap<String, usize>,
-    _emoji_textures: &[(String, egui::TextureHandle)],
-    _ctx: &egui::Context,
+    emoji_map: &std::collections::HashMap<String, usize>,
+    emoji_textures: &[(String, egui::TextureHandle)],
+    ui: &egui::Ui,
 ) -> usize {
-    // Simple approach: find current line, move up/down by one line
     let chars: Vec<char> = text.chars().collect();
-    let current_line_start = {
-        let mut i = cursor;
-        while i > 0 && chars[i - 1] != '\n' { i -= 1; }
-        i
-    };
-    let current_line_end = {
-        let mut i = cursor;
-        while i < chars.len() && chars[i] != '\n' { i += 1; }
-        i
-    };
-    let col_in_line = cursor - current_line_start;
+    let (line_starts, positions) =
+        composer_caret_positions(text, emoji_map, emoji_textures, ui, _line_height);
 
-    if direction < 0 {
-        // Move up: find prev line
-        if current_line_start == 0 { return 0; }
-        let prev_line_end = current_line_start - 1;
-        let prev_line_start = {
-            let mut i = prev_line_end;
-            while i > 0 && chars[i - 1] != '\n' { i -= 1; }
-            i
-        };
-        let prev_line_len = prev_line_end - prev_line_start;
-        prev_line_start + col_in_line.min(prev_line_len)
+    let line_idx = line_starts
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(_, (start, _))| *start <= cursor)
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+
+    let current_x = positions
+        .iter()
+        .find(|(idx, _)| *idx == cursor)
+        .map(|(_, x)| *x)
+        .or_else(|| {
+            positions
+                .iter()
+                .rev()
+                .find(|(idx, _)| *idx < cursor)
+                .map(|(_, x)| *x)
+        })
+        .unwrap_or(line_starts[line_idx].1);
+
+    let target_line = if direction < 0 {
+        if line_idx == 0 {
+            return cursor;
+        }
+        line_idx - 1
     } else {
-        // Move down: find next line
-        if current_line_end >= chars.len() { return chars.len(); }
-        let next_line_start = current_line_end + 1;
-        let next_line_end = {
-            let mut i = next_line_start;
-            while i < chars.len() && chars[i] != '\n' { i += 1; }
-            i
-        };
-        let next_line_len = next_line_end - next_line_start;
-        next_line_start + col_in_line.min(next_line_len)
+        if line_idx + 1 >= line_starts.len() {
+            return cursor;
+        }
+        line_idx + 1
+    };
+
+    let (target_start, _) = line_starts[target_line];
+    let target_end = line_starts
+        .get(target_line + 1)
+        .map(|(c, _)| *c)
+        .unwrap_or(chars.len());
+
+    let target_positions: Vec<(usize, f32)> = positions
+        .iter()
+        .cloned()
+        .filter(|(idx, _)| *idx >= target_start && *idx < target_end)
+        .collect();
+
+    if target_positions.is_empty() {
+        return target_start.min(chars.len());
     }
+
+    // Keep the same visual column: choose the first position at or after the target x.
+    for (idx, x) in &target_positions {
+        if *x >= current_x {
+            return *idx;
+        }
+    }
+
+    target_positions
+        .last()
+        .map(|(idx, _)| *idx)
+        .unwrap_or(target_start.min(chars.len()))
 }

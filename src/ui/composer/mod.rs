@@ -1,359 +1,656 @@
+#[allow(dead_code)]
 pub mod cursor;
 pub mod render;
 pub mod shortcode;
 pub mod text_ops;
 
-pub use cursor::{composer_caret_positions, move_cursor_vertical};
-pub use render::measure_text_width;
-pub use text_ops::{
-    char_to_byte_idx, insert_emoji_at_cursor, insert_text_at_cursor,
-    remove_next_char, remove_prev_char, replace_char_range,
-};
+pub use text_ops::{insert_emoji_at_cursor, replace_char_range};
 
 use eframe::egui;
 
-/// Calcule le nombre réel de lignes avec wrapping automatique
-fn compute_wrapped_lines(
+use self::text_ops::{insert_text_at_cursor, remove_next_char, remove_prev_char};
+
+pub fn sync_cursor(_ctx: &egui::Context, _char_pos: usize) {}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum EnterKeyAction {
+    InsertNewline,
+    AcceptShortcode,
+    Submit,
+}
+
+fn enter_key_action(shortcode_menu_open: bool, shift: bool) -> EnterKeyAction {
+    if shift {
+        EnterKeyAction::InsertNewline
+    } else if shortcode_menu_open {
+        EnterKeyAction::AcceptShortcode
+    } else {
+        EnterKeyAction::Submit
+    }
+}
+
+fn accept_selected_shortcode(
+    input: &mut String,
+    cursor_char: &mut usize,
+    emoji_alias_to_char: &std::collections::HashMap<String, String>,
+    emoji_aliases: &[String],
+    shortcode_selected: usize,
+) -> bool {
+    let Some((start, _query)) =
+        crate::ui::emoji_picker::emoji_shortcode_trigger(input, *cursor_char)
+    else {
+        return false;
+    };
+    let suggestions = crate::ui::emoji_picker::shortcode_suggestions(
+        input,
+        *cursor_char,
+        emoji_alias_to_char,
+        emoji_aliases,
+        shortcode_selected.saturating_add(1),
+    );
+    let Some((_alias, ch)) =
+        suggestions.get(shortcode_selected.min(suggestions.len().saturating_sub(1)))
+    else {
+        return false;
+    };
+
+    replace_char_range(input, cursor_char, start, *cursor_char, ch);
+    true
+}
+
+fn measure_text_width(ui: &egui::Ui, text: &str) -> f32 {
+    if text.is_empty() {
+        return 0.0;
+    }
+    let font_id = egui::TextStyle::Body.resolve(ui.style());
+    ui.painter()
+        .layout_no_wrap(text.to_owned(), font_id, ui.visuals().text_color())
+        .size()
+        .x
+}
+
+fn composer_caret_positions(
+    ui: &egui::Ui,
     text: &str,
     emoji_map: &std::collections::HashMap<String, usize>,
-    inner_width: f32,
-    ui_ctx: &egui::Context,
-    default_font: &egui::FontId,
-) -> f32 {
-    let line_height = 22.0;
+    emoji_size: f32,
+    max_width: f32,
+) -> Vec<egui::Pos2> {
     let chars: Vec<char> = text.chars().collect();
-    let mut line_count = 1f32;
+    let mut i = 0;
+    let line_height = 22.0;
     let mut x = 0.0;
-    
-    let mut i = 0usize;
+    let mut y = 0.0;
+    let mut points = Vec::with_capacity(chars.len() + 1);
+    points.push(egui::pos2(0.0, 0.0));
+
     while i < chars.len() {
-        let ch = chars[i];
-        let mut drawn = false;
-        
-        // Check emoji (2-char then 1-char)
+        if chars[i] == '\n' {
+            x = 0.0;
+            y += line_height;
+            i += 1;
+            points.push(egui::pos2(x, y));
+            continue;
+        }
+
+        let mut matched = false;
         for len in [2usize, 1usize] {
             if i + len <= chars.len() {
                 let s: String = chars[i..i + len].iter().collect();
-                if let Some(_) = emoji_map.get(&s) {
-                    let width = line_height;
-                    if x + width > inner_width && x > 0.0 {
-                        line_count += 1.0;
+                if emoji_map.contains_key(&s) {
+                    let advance = emoji_size + 2.0;
+                    if x + advance > max_width && x > 0.0 {
                         x = 0.0;
+                        y += line_height;
                     }
-                    x += width;
+                    x += advance;
+                    for _ in 0..len {
+                        points.push(egui::pos2(x, y));
+                    }
                     i += len;
-                    drawn = true;
+                    matched = true;
                     break;
                 }
             }
         }
-        
-        if !drawn {
-            if ch == '\u{fe0f}' || ch == '\u{200d}' {
-                i += 1;
-                continue;
-            }
-            if ch == '\n' {
-                line_count += 1.0;
+
+        if !matched {
+            let ch = chars[i].to_string();
+            let advance = measure_text_width(ui, &ch);
+            if x + advance > max_width && x > 0.0 {
                 x = 0.0;
-                i += 1;
-                continue;
+                y += line_height;
             }
-            
-            let glyph: String = std::iter::once(ch).collect();
-            let glyph_w = measure_text_width(&glyph, ui_ctx, default_font);
-            
-            // Wrapping automatique
-            if x + glyph_w > inner_width && x > 0.0 {
-                line_count += 1.0;
-                x = 0.0;
-            }
-            x += glyph_w;
+            x += advance;
             i += 1;
+            points.push(egui::pos2(x, y));
         }
     }
-    
-    line_count
+
+    points
 }
 
-/// Widget de composition de message multi-ligne avec rendu inline emoji.
-/// Retourne (Response, pressed_enter: bool, changed: bool)
+fn visual_line_count(caret_points: &[egui::Pos2], line_height: f32) -> usize {
+    caret_points
+        .last()
+        .map(|p| (p.y / line_height).floor() as usize + 1)
+        .unwrap_or(1)
+        .max(1)
+}
+
+fn cursor_from_point(points: &[egui::Pos2], target: egui::Pos2) -> usize {
+    let mut best_idx = 0;
+    let mut best_dist = f32::MAX;
+
+    for (idx, p) in points.iter().enumerate() {
+        let dx = p.x - target.x;
+        let dy = p.y - target.y;
+        let dist = dx * dx + dy * dy;
+        if dist < best_dist {
+            best_dist = dist;
+            best_idx = idx;
+        }
+    }
+
+    best_idx
+}
+
+fn move_cursor_vertical(
+    points: &[egui::Pos2],
+    cursor_char: &mut usize,
+    delta_lines: i32,
+    line_height: f32,
+) {
+    if points.is_empty() {
+        return;
+    }
+
+    let current = points
+        .get(*cursor_char)
+        .copied()
+        .unwrap_or_else(|| *points.last().unwrap_or(&egui::pos2(0.0, 0.0)));
+    let current_line = (current.y / line_height).round() as i32;
+    let target_line = current_line + delta_lines;
+    if target_line < 0 {
+        return;
+    }
+
+    let mut best_idx = None;
+    let mut best_dist = f32::MAX;
+    for (idx, p) in points.iter().enumerate() {
+        let line = (p.y / line_height).round() as i32;
+        if line == target_line {
+            let dist = (p.x - current.x).abs();
+            if dist < best_dist {
+                best_dist = dist;
+                best_idx = Some(idx);
+            }
+        }
+    }
+
+    if let Some(idx) = best_idx {
+        *cursor_char = idx;
+    }
+}
+
 pub fn custom_composer_input(
     ui: &mut egui::Ui,
-    text: &mut String,
+    input: &mut String,
     cursor_char: &mut usize,
-    has_focus: &mut bool,
+    input_has_focus: &mut bool,
     scroll_lines: &mut f32,
     emoji_map: &std::collections::HashMap<String, usize>,
     emoji_textures: &[(String, egui::TextureHandle)],
-    _alias_to_char: &std::collections::HashMap<String, String>,
-    _aliases: &[String],
+    emoji_alias_to_char: &std::collections::HashMap<String, String>,
+    emoji_aliases: &[String],
     shortcode_menu_open: bool,
-    available_width: f32,
+    shortcode_selected: usize,
+    width: f32,
 ) -> (egui::Response, bool, bool) {
     let line_height = 22.0;
-    let default_font = egui::TextStyle::Body.resolve(ui.style());
-    let inner_width = available_width - 16.0; // Marge 8px * 2
-    
-    // Calcul du nombre réel de lignes avec wrapping
-    let wrapped_lines = compute_wrapped_lines(text, emoji_map, inner_width, ui.ctx(), &default_font);
-    let vis_lines = wrapped_lines.clamp(1.0, 10.0);
-    let height = vis_lines * line_height + 10.0;
+    let base_content_width = (width.max(120.0) - 12.0).max(20.0);
+    let initial_caret_points =
+        composer_caret_positions(ui, input, emoji_map, 18.0, base_content_width);
+    let mut line_count = visual_line_count(&initial_caret_points, line_height);
+    let needs_scrollbar = line_count > 10;
+    let content_width = if needs_scrollbar {
+        (width.max(120.0) - 20.0).max(20.0)
+    } else {
+        base_content_width
+    };
+    if needs_scrollbar {
+        let scrollbar_caret_points =
+            composer_caret_positions(ui, input, emoji_map, 18.0, content_width);
+        line_count = visual_line_count(&scrollbar_caret_points, line_height);
+    }
+    let visual_lines = line_count.clamp(1, 10) as f32;
+    let desired_size = egui::vec2(width.max(120.0), 16.0 + visual_lines * line_height);
+    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+    let content_rect = if needs_scrollbar {
+        egui::Rect::from_min_max(
+            rect.min + egui::vec2(6.0, 6.0),
+            rect.max - egui::vec2(14.0, 6.0),
+        )
+    } else {
+        rect.shrink2(egui::vec2(6.0, 6.0))
+    };
+    let caret_points =
+        composer_caret_positions(ui, input, emoji_map, 18.0, content_rect.width().max(20.0));
+    let max_scroll = (line_count as f32 - visual_lines).max(0.0);
+    *scroll_lines = scroll_lines.clamp(0.0, max_scroll);
 
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(available_width, height), egui::Sense::click_and_drag());
+    if response.clicked() {
+        *input_has_focus = true;
+        response.request_focus();
+        if let Some(pos) = response.interact_pointer_pos() {
+            let local = egui::pos2(
+                (pos.x - content_rect.left()).max(0.0),
+                (pos.y - content_rect.top()).max(0.0),
+            );
+            *cursor_char = cursor_from_point(&caret_points, local);
+        } else {
+            *cursor_char = input.chars().count();
+        }
+    }
 
-    if resp.clicked() {
-        *has_focus = true;
-        // Position le curseur au clic
-        if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
-            if rect.contains(pos) {
-                *cursor_char = cursor::cursor_from_point(pos, text, emoji_map, emoji_textures, &ui, line_height);
+    let has_focus = *input_has_focus || response.has_focus();
+    let mut changed = false;
+    let mut submit = false;
+    let total_chars = input.chars().count();
+    if *cursor_char > total_chars {
+        *cursor_char = total_chars;
+    }
+
+    if let Some(caret) = caret_points.get(*cursor_char) {
+        let caret_line = (caret.y / line_height).floor();
+        if caret_line < *scroll_lines {
+            *scroll_lines = caret_line;
+        }
+        if caret_line >= *scroll_lines + visual_lines {
+            *scroll_lines = caret_line - visual_lines + 1.0;
+        }
+        *scroll_lines = scroll_lines.clamp(0.0, max_scroll);
+    }
+
+    if has_focus {
+        let caret = caret_points
+            .get(*cursor_char)
+            .copied()
+            .unwrap_or_else(|| *caret_points.last().unwrap_or(&egui::pos2(0.0, 0.0)));
+        let cursor_x = content_rect.left() + caret.x + 1.0;
+        let cursor_top = content_rect.top() + caret.y + 2.0 - (*scroll_lines * line_height);
+        let cursor_bottom = (cursor_top + 18.0).min(content_rect.bottom() - 2.0);
+        ui.ctx().output_mut(|o| {
+            o.mutable_text_under_cursor = true;
+            o.ime = Some(egui::output::IMEOutput {
+                rect,
+                cursor_rect: egui::Rect::from_min_max(
+                    egui::pos2(cursor_x, cursor_top.max(content_rect.top())),
+                    egui::pos2(
+                        cursor_x + 1.0,
+                        cursor_bottom.max(cursor_top.max(content_rect.top())),
+                    ),
+                ),
+            });
+        });
+
+        if response.hovered() {
+            let wheel_y = ui.input(|i| i.raw_scroll_delta.y + i.smooth_scroll_delta.y);
+            if wheel_y.abs() > 0.0 && max_scroll > 0.0 {
+                *scroll_lines = (*scroll_lines - wheel_y / 32.0).clamp(0.0, max_scroll);
             }
         }
-    }
-    if ui.input(|i| i.pointer.primary_pressed()) {
-        if let Some(pos) = ui.input(|i| i.pointer.interact_pos()) {
-            if !rect.contains(pos) { *has_focus = false; }
-        }
-    }
 
-    // Gestion du scroll à la souris
-    if *has_focus {
-        let scroll_delta = ui.input(|i| i.raw_scroll_delta.y);
-        if scroll_delta != 0.0 {
-            let scroll_step = (scroll_delta / 15.0) as i32;
-            let max_scroll = (wrapped_lines - vis_lines).max(0.0);
-            *scroll_lines = (*scroll_lines - scroll_step as f32).clamp(0.0, max_scroll);
-        }
-    }
-
-    let visuals = ui.style().interact(&resp);
-    let bg = if *has_focus { ui.visuals().extreme_bg_color } else { ui.visuals().faint_bg_color };
-    ui.painter().rect_filled(rect, 8.0, bg);
-    ui.painter().rect_stroke(rect, 8.0, if *has_focus { ui.visuals().selection.stroke } else { visuals.bg_stroke }, egui::StrokeKind::Outside);
-
-    let mut pressed_enter = false;
-    let mut changed = false;
-
-    // Auto-scroll cuando el cursor se mueve fuera de la vista
-    if *has_focus {
-        let mut cursor_line = 0f32;
-        let chars: Vec<char> = text.chars().collect();
-        for (i, &ch) in chars.iter().enumerate() {
-            if i >= *cursor_char { break; }
-            if ch == '\n' { cursor_line += 1.0; }
-        }
-        // Scroll para mantener el cursor visible
-        let max_scroll = (wrapped_lines - vis_lines).max(0.0);
-        if cursor_line < *scroll_lines {
-            *scroll_lines = cursor_line;
-        } else if cursor_line >= *scroll_lines + vis_lines {
-            *scroll_lines = (cursor_line - vis_lines + 1.0).min(max_scroll);
-        }
-    }
-
-    // Handle text input
-    if *has_focus {
-        let events: Vec<egui::Event> = ui.input(|i| i.events.clone());
-        for event in &events {
+        let events = ui.input(|i| i.events.clone());
+        for event in events {
             match event {
                 egui::Event::Text(t) => {
-                    if !t.is_empty() && !t.starts_with('\r') {
-                        insert_text_at_cursor(text, cursor_char, t);
+                    if !t.contains('\n') && !t.contains('\r') {
+                        insert_text_at_cursor(input, cursor_char, &t);
                         changed = true;
                     }
                 }
-                egui::Event::Key { key, pressed: true, modifiers, .. } => {
-                    if *key == egui::Key::Enter && !modifiers.shift {
-                        if shortcode_menu_open {
-                            // defer to shortcode menu
-                        } else {
-                            pressed_enter = true;
-                        }
-                    } else if *key == egui::Key::Enter && modifiers.shift {
-                        insert_text_at_cursor(text, cursor_char, "\n");
+                egui::Event::Ime(egui::ImeEvent::Commit(t)) => {
+                    if !t.contains('\n') && !t.contains('\r') && !t.is_empty() {
+                        insert_text_at_cursor(input, cursor_char, &t);
                         changed = true;
-                    } else if *key == egui::Key::Backspace {
-                        if modifiers.ctrl {
-                            // delete word
-                            let new_cursor = prev_word_start(text, *cursor_char);
-                            let bytes_start = char_to_byte_idx(text, new_cursor);
-                            let bytes_end = char_to_byte_idx(text, *cursor_char);
-                            text.replace_range(bytes_start..bytes_end, "");
-                            *cursor_char = new_cursor;
-                        } else {
-                            remove_prev_char(text, cursor_char);
-                        }
-                        changed = true;
-                    } else if *key == egui::Key::Delete {
-                        remove_next_char(text, cursor_char);
-                        changed = true;
-                    } else if *key == egui::Key::ArrowLeft {
-                        if *cursor_char > 0 {
-                            if modifiers.ctrl { *cursor_char = prev_word_start(text, *cursor_char); }
-                            else { *cursor_char -= 1; }
-                        }
-                    } else if *key == egui::Key::ArrowRight {
-                        let total = text.chars().count();
-                        if *cursor_char < total {
-                            if modifiers.ctrl { *cursor_char = next_word_end(text, *cursor_char); }
-                            else { *cursor_char += 1; }
-                        }
-                    } else if *key == egui::Key::Home {
-                        let line_start = prev_line_start(text, *cursor_char);
-                        *cursor_char = line_start;
-                    } else if *key == egui::Key::End {
-                        *cursor_char = next_line_end(text, *cursor_char);
-                    } else if *key == egui::Key::ArrowUp && !shortcode_menu_open {
-                        *cursor_char = move_cursor_vertical(text, *cursor_char, -1, rect.left(), rect.top(), line_height, emoji_map, emoji_textures, ui.ctx());
-                    } else if *key == egui::Key::ArrowDown && !shortcode_menu_open {
-                        *cursor_char = move_cursor_vertical(text, *cursor_char, 1, rect.left(), rect.top(), line_height, emoji_map, emoji_textures, ui.ctx());
                     }
                 }
-                egui::Event::Paste(s) => {
-                    insert_text_at_cursor(text, cursor_char, s);
+                egui::Event::Paste(t) => {
+                    insert_text_at_cursor(input, cursor_char, &t.replace(['\r', '\n'], " "));
                     changed = true;
                 }
-                egui::Event::Copy | egui::Event::Cut => {}
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } => match key {
+                    egui::Key::Enter => {
+                        match enter_key_action(shortcode_menu_open, modifiers.shift) {
+                            EnterKeyAction::InsertNewline => {
+                                insert_text_at_cursor(input, cursor_char, "\n");
+                                changed = true;
+                            }
+                            EnterKeyAction::AcceptShortcode => {
+                                changed |= accept_selected_shortcode(
+                                    input,
+                                    cursor_char,
+                                    emoji_alias_to_char,
+                                    emoji_aliases,
+                                    shortcode_selected,
+                                );
+                            }
+                            EnterKeyAction::Submit => {
+                                submit = true;
+                            }
+                        }
+                    }
+                    egui::Key::Tab => {
+                        let suggestions = crate::ui::emoji_picker::shortcode_suggestions(
+                            input,
+                            *cursor_char,
+                            emoji_alias_to_char,
+                            emoji_aliases,
+                            1,
+                        );
+                        if let Some((_alias, ch)) = suggestions.first() {
+                            if let Some((start, _query)) =
+                                crate::ui::emoji_picker::emoji_shortcode_trigger(
+                                    input,
+                                    *cursor_char,
+                                )
+                            {
+                                replace_char_range(input, cursor_char, start, *cursor_char, ch);
+                                changed = true;
+                            }
+                        }
+                    }
+                    egui::Key::Backspace => {
+                        let before = input.len();
+                        remove_prev_char(input, cursor_char);
+                        changed |= input.len() != before;
+                    }
+                    egui::Key::Delete => {
+                        let before = input.len();
+                        remove_next_char(input, cursor_char);
+                        changed |= input.len() != before;
+                    }
+                    egui::Key::ArrowLeft => {
+                        if *cursor_char > 0 {
+                            *cursor_char -= 1;
+                        }
+                    }
+                    egui::Key::ArrowRight => {
+                        let len = input.chars().count();
+                        if *cursor_char < len {
+                            *cursor_char += 1;
+                        }
+                    }
+                    egui::Key::ArrowUp => {
+                        if !shortcode_menu_open {
+                            let points = composer_caret_positions(
+                                ui,
+                                input,
+                                emoji_map,
+                                18.0,
+                                content_rect.width().max(20.0),
+                            );
+                            move_cursor_vertical(&points, cursor_char, -1, line_height);
+                        }
+                    }
+                    egui::Key::ArrowDown => {
+                        if !shortcode_menu_open {
+                            let points = composer_caret_positions(
+                                ui,
+                                input,
+                                emoji_map,
+                                18.0,
+                                content_rect.width().max(20.0),
+                            );
+                            move_cursor_vertical(&points, cursor_char, 1, line_height);
+                        }
+                    }
+                    egui::Key::Home => {
+                        *cursor_char = 0;
+                    }
+                    egui::Key::End => {
+                        *cursor_char = input.chars().count();
+                    }
+                    _ => {}
+                },
                 _ => {}
             }
         }
     }
 
-    // Clamp cursor
-    let total_chars = text.chars().count();
-    *cursor_char = (*cursor_char).min(total_chars);
-
-    // Render text + emoji + cursor
-    let inner_rect = rect.shrink2(egui::vec2(8.0, 5.0));
-    let mut child = ui.new_child(
-        egui::UiBuilder::new()
-            .max_rect(inner_rect)
-            .layout(egui::Layout::left_to_right(egui::Align::Min)),
+    ui.painter().rect(
+        rect,
+        egui::CornerRadius::same(6),
+        ui.visuals().extreme_bg_color,
+        egui::Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color),
+        egui::StrokeKind::Outside,
     );
-    child.set_clip_rect(inner_rect);
 
-    // Render content (plain text with emoji)
-    let (lines_vec, _) = composer_caret_positions(text, emoji_map, emoji_textures, &child, line_height);
+    if input.is_empty() {
+        ui.painter().text(
+            content_rect.left_center(),
+            egui::Align2::LEFT_CENTER,
+            "Message",
+            egui::TextStyle::Body.resolve(ui.style()),
+            ui.visuals().weak_text_color(),
+        );
+    } else {
+        let painter = ui.painter().with_clip_rect(content_rect);
+        let chars: Vec<char> = input.chars().collect();
+        let mut i = 0;
+        let mut x = content_rect.left();
+        let right = content_rect.right();
+        let scroll_px = *scroll_lines * line_height;
+        let mut y = content_rect.top() + 11.0 - scroll_px;
 
-    let y_start = inner_rect.top() - (*scroll_lines * line_height);
-    let mut x = inner_rect.left();
-    let mut y = y_start;
-    let default_font = egui::TextStyle::Body.resolve(child.style());
-    let mut cursor_pixel: Option<egui::Pos2> = None;
-
-    let chars: Vec<char> = text.chars().collect();
-    let mut i = 0usize;
-    while i < chars.len() {
-        let ch = chars[i];
-        // emoji detection (2-char then 1-char)
-        let mut drawn = false;
-        for len in [2usize, 1usize] {
-            if i + len <= chars.len() {
-                let s: String = chars[i..i + len].iter().collect();
-                if let Some(&tex_idx) = emoji_map.get(&s) {
-                    let width = line_height;
-                    if x + width > inner_rect.right() && x > inner_rect.left() {
-                        x = inner_rect.left();
-                        y += line_height;
-                    }
-                    if i == *cursor_char && *has_focus {
-                        cursor_pixel = Some(egui::pos2(x, y));
-                    }
-                    if let Some((_, tex)) = emoji_textures.get(tex_idx) {
-                        let img_rect = egui::Rect::from_min_size(egui::pos2(x, y), egui::vec2(line_height, line_height));
-                        if inner_rect.intersects(img_rect) {
-                            ui.painter().image(tex.id(), img_rect,
-                                egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                                egui::Color32::WHITE);
-                        }
-                    }
-                    x += line_height;
-                    i += len;
-                    drawn = true;
-                    break;
-                }
-            }
-        }
-        if !drawn {
-            if ch == '\u{fe0f}' || ch == '\u{200d}' { i += 1; continue; }
-            if ch == '\n' {
-                if i == *cursor_char && *has_focus {
-                    cursor_pixel = Some(egui::pos2(x, y));
-                }
-                x = inner_rect.left();
+        while i < chars.len() {
+            if chars[i] == '\n' {
+                x = content_rect.left();
                 y += line_height;
                 i += 1;
                 continue;
             }
-            let glyph: String = std::iter::once(ch).collect();
-            let glyph_w = measure_text_width(&glyph, ui.ctx(), &default_font);
-            
-            // Wrapping automatique si débordement
-            if x + glyph_w > inner_rect.right() && x > inner_rect.left() {
-                x = inner_rect.left();
-                y += line_height;
+
+            let mut matched = false;
+            for len in [2usize, 1usize] {
+                if i + len <= chars.len() {
+                    let s: String = chars[i..i + len].iter().collect();
+                    if let Some(&idx) = emoji_map.get(&s) {
+                        if let Some((_, tex)) = emoji_textures.get(idx) {
+                            if x + 20.0 > right && x > content_rect.left() {
+                                x = content_rect.left();
+                                y += line_height;
+                            }
+                            let img_rect = egui::Rect::from_min_size(
+                                egui::pos2(x, y - 9.0),
+                                egui::vec2(18.0, 18.0),
+                            );
+                            painter.image(
+                                tex.id(),
+                                img_rect,
+                                egui::Rect::from_min_max(
+                                    egui::pos2(0.0, 0.0),
+                                    egui::pos2(1.0, 1.0),
+                                ),
+                                egui::Color32::WHITE,
+                            );
+                            x += 20.0;
+                        }
+                        i += len;
+                        matched = true;
+                        break;
+                    }
+                }
             }
-            
-            if i == *cursor_char && *has_focus {
-                cursor_pixel = Some(egui::pos2(x, y));
+
+            if !matched {
+                let glyph = chars[i].to_string();
+                let glyph_w = measure_text_width(ui, &glyph);
+                if x + glyph_w > right && x > content_rect.left() {
+                    x = content_rect.left();
+                    y += line_height;
+                }
+                painter.text(
+                    egui::pos2(x, y),
+                    egui::Align2::LEFT_CENTER,
+                    &glyph,
+                    egui::TextStyle::Body.resolve(ui.style()),
+                    ui.visuals().text_color(),
+                );
+                x += glyph_w;
+                i += 1;
             }
-            let text_pos = egui::pos2(x, y);
-            if inner_rect.y_range().contains(y) {
-                ui.painter().text(text_pos, egui::Align2::LEFT_TOP, &glyph, default_font.clone(), ui.visuals().text_color());
+        }
+
+        if needs_scrollbar {
+            let track = egui::Rect::from_min_max(
+                egui::pos2(rect.right() - 8.0, content_rect.top()),
+                egui::pos2(rect.right() - 4.0, content_rect.bottom()),
+            );
+            ui.painter()
+                .rect_filled(track, 2.0, ui.visuals().widgets.noninteractive.bg_fill);
+
+            let thumb_h = (track.height() * (visual_lines / line_count as f32)).max(18.0);
+            let travel = (track.height() - thumb_h).max(0.0);
+            let t = if max_scroll <= 0.0 {
+                0.0
+            } else {
+                *scroll_lines / max_scroll
+            };
+            let thumb_top = track.top() + travel * t;
+            let thumb = egui::Rect::from_min_max(
+                egui::pos2(track.left(), thumb_top),
+                egui::pos2(track.right(), thumb_top + thumb_h),
+            );
+            ui.painter().rect_filled(
+                thumb,
+                2.0,
+                ui.visuals().widgets.active.bg_fill.gamma_multiply(0.9),
+            );
+
+            let scroll_id = response.id.with("scrollbar");
+            let scroll_resp = ui.interact(track, scroll_id, egui::Sense::click_and_drag());
+            if (scroll_resp.clicked() || scroll_resp.dragged()) && max_scroll > 0.0 {
+                if let Some(pos) = scroll_resp.interact_pointer_pos() {
+                    let rel = ((pos.y - track.top()) / track.height()).clamp(0.0, 1.0);
+                    *scroll_lines = rel * max_scroll;
+                }
             }
-            x += glyph_w;
-            i += 1;
         }
     }
-    if *cursor_char == chars.len() && *has_focus {
-        cursor_pixel = Some(egui::pos2(x, y));
-    }
 
-    // Draw caret
-    if *has_focus {
-        if let Some(pos) = cursor_pixel {
-            let blink = (ui.input(|i| i.time) * 2.0).floor() as i32 % 2 == 0;
-            if blink {
+    if has_focus {
+        let blink_on = ((ui.input(|i| i.time) * 2.0) as i64) % 2 == 0;
+        if blink_on {
+            let caret = caret_points
+                .get(*cursor_char)
+                .copied()
+                .unwrap_or_else(|| *caret_points.last().unwrap_or(&egui::pos2(0.0, 0.0)));
+            let x = content_rect.left() + caret.x + 1.0;
+            let top = content_rect.top() + caret.y + 2.0 - (*scroll_lines * line_height);
+            let bottom = (top + 18.0).min(content_rect.bottom() - 2.0);
+            if top < content_rect.bottom() && bottom > content_rect.top() {
                 ui.painter().line_segment(
-                    [pos, pos + egui::vec2(0.0, line_height - 2.0)],
-                    egui::Stroke::new(1.5, ui.visuals().text_color()),
+                    [
+                        egui::pos2(x, top.max(content_rect.top())),
+                        egui::pos2(x, bottom),
+                    ],
+                    egui::Stroke::new(1.6, ui.visuals().text_color()),
                 );
             }
         }
     }
 
-    let _ = lines_vec;
-    (resp, pressed_enter, changed)
+    (response, submit, changed)
 }
 
-fn prev_word_start(text: &str, cursor: usize) -> usize {
-    let chars: Vec<char> = text.chars().collect();
-    let mut i = cursor;
-    while i > 0 && chars[i - 1] == ' ' { i -= 1; }
-    while i > 0 && chars[i - 1] != ' ' { i -= 1; }
-    i
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
 
-fn next_word_end(text: &str, cursor: usize) -> usize {
-    let chars: Vec<char> = text.chars().collect();
-    let mut i = cursor;
-    while i < chars.len() && chars[i] != ' ' { i += 1; }
-    while i < chars.len() && chars[i] == ' ' { i += 1; }
-    i
-}
+    fn emoji_index() -> (HashMap<String, String>, Vec<String>) {
+        let mut alias_to_char = HashMap::new();
+        alias_to_char.insert("joy".to_string(), "😂".to_string());
+        alias_to_char.insert("joy_cat".to_string(), "😹".to_string());
+        alias_to_char.insert("smile".to_string(), "😊".to_string());
+        let aliases = vec![
+            "joy".to_string(),
+            "joy_cat".to_string(),
+            "smile".to_string(),
+        ];
+        (alias_to_char, aliases)
+    }
 
-fn prev_line_start(text: &str, cursor: usize) -> usize {
-    let chars: Vec<char> = text.chars().collect();
-    let mut i = cursor;
-    if i == 0 { return 0; }
-    while i > 0 && chars[i - 1] != '\n' { i -= 1; }
-    i
-}
+    #[test]
+    fn enter_with_shortcode_menu_accepts_selection_instead_of_submit() {
+        assert_eq!(
+            enter_key_action(true, false),
+            EnterKeyAction::AcceptShortcode
+        );
+    }
 
-fn next_line_end(text: &str, cursor: usize) -> usize {
-    let chars: Vec<char> = text.chars().collect();
-    let mut i = cursor;
-    while i < chars.len() && chars[i] != '\n' { i += 1; }
-    i
+    #[test]
+    fn enter_without_shortcode_menu_submits_message() {
+        assert_eq!(enter_key_action(false, false), EnterKeyAction::Submit);
+    }
+
+    #[test]
+    fn shift_enter_inserts_newline_even_when_shortcode_menu_is_open() {
+        assert_eq!(enter_key_action(true, true), EnterKeyAction::InsertNewline);
+    }
+
+    #[test]
+    fn accept_selected_shortcode_replaces_query_for_enter_without_adding_space() {
+        let (alias_to_char, aliases) = emoji_index();
+        let mut input = "hello :jo".to_string();
+        let mut cursor = input.chars().count();
+
+        let accepted =
+            accept_selected_shortcode(&mut input, &mut cursor, &alias_to_char, &aliases, 0);
+
+        assert!(accepted);
+        assert_eq!(input, "hello 😂");
+        assert_eq!(cursor, input.chars().count());
+    }
+
+    #[test]
+    fn regular_space_does_not_accept_shortcode() {
+        let (alias_to_char, aliases) = emoji_index();
+        let mut input = "hello :jo".to_string();
+        let mut cursor = input.chars().count();
+
+        insert_text_at_cursor(&mut input, &mut cursor, " ");
+
+        assert_eq!(input, "hello :jo ");
+        assert_eq!(cursor, input.chars().count());
+        let suggestions = crate::ui::emoji_picker::shortcode_suggestions(
+            &input,
+            cursor,
+            &alias_to_char,
+            &aliases,
+            10,
+        );
+        assert!(suggestions.is_empty());
+    }
+
+    #[test]
+    fn accept_selected_shortcode_uses_highlighted_suggestion() {
+        let (alias_to_char, aliases) = emoji_index();
+        let mut input = "hello :jo".to_string();
+        let mut cursor = input.chars().count();
+
+        let accepted =
+            accept_selected_shortcode(&mut input, &mut cursor, &alias_to_char, &aliases, 1);
+
+        assert!(accepted);
+        assert_eq!(input, "hello 😹");
+        assert_eq!(cursor, input.chars().count());
+    }
 }

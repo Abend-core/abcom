@@ -3,7 +3,7 @@ use eframe::egui;
 use crate::app::AppState;
 use crate::message::{AppEvent, GroupAction, MessageAck, MessageAckRequest};
 
-use super::{AbcomApp, sound::play_notification_sound};
+use super::{sound::play_notification_sound, AbcomApp};
 
 impl AbcomApp {
     /// Chargement paresseux des textures emoji (nécessite le contexte egui)
@@ -31,8 +31,17 @@ impl AbcomApp {
             })
             .collect();
 
-        self.emoji_map = self.emoji_textures.iter().enumerate().map(|(i, (ch, _))| (ch.clone(), i)).collect();
-        let available: Vec<String> = self.emoji_textures.iter().map(|(ch, _)| ch.clone()).collect();
+        self.emoji_map = self
+            .emoji_textures
+            .iter()
+            .enumerate()
+            .map(|(i, (ch, _))| (ch.clone(), i))
+            .collect();
+        let available: Vec<String> = self
+            .emoji_textures
+            .iter()
+            .map(|(ch, _)| ch.clone())
+            .collect();
 
         let (alias_to_char, aliases) = super::emoji_picker::build_emoji_shortcode_index(&available);
         self.emoji_alias_to_char = alias_to_char;
@@ -56,7 +65,10 @@ impl AbcomApp {
                                 message_hash: msg_hash,
                                 timestamp: chrono::Local::now().format("%H:%M").to_string(),
                             };
-                            let req = MessageAckRequest { to_addr: peer.addr, ack };
+                            let req = MessageAckRequest {
+                                to_addr: peer.addr,
+                                ack,
+                            };
                             drop(s);
                             let _ = self.send_ack_tx.try_send(req);
                             s = self.state.lock().unwrap();
@@ -88,40 +100,47 @@ impl AbcomApp {
                 }
                 AppEvent::UserTyping(username) => s.set_user_typing(username),
                 AppEvent::UserStoppedTyping(_) => s.clear_typing_if_old(),
-                AppEvent::GroupEventReceived(evt) => {
-                    match evt.action {
-                        GroupAction::Create { group } => {
-                            if !s.groups.iter().any(|g| g.name == group.name) {
-                                s.groups.push(group);
-                                s.save_groups();
-                            }
-                        }
-                        GroupAction::AddMember { group_name, username } => {
-                            if let Some(g) = s.groups.iter_mut().find(|g| g.name == group_name) {
-                                if !g.members.contains(&username) {
-                                    g.members.push(username);
-                                    s.save_groups();
-                                }
-                            }
-                        }
-                        GroupAction::RemoveMember { group_name, username } => {
-                            if let Some(g) = s.groups.iter_mut().find(|g| g.name == group_name) {
-                                g.members.retain(|m| m != &username);
-                                s.save_groups();
-                            }
-                        }
-                        GroupAction::Rename { group_name, new_name } => {
-                            if let Some(g) = s.groups.iter_mut().find(|g| g.name == group_name) {
-                                g.name = new_name;
-                                s.save_groups();
-                            }
-                        }
-                        GroupAction::Delete { group_name } => {
-                            s.groups.retain(|g| g.name != group_name);
+                AppEvent::GroupEventReceived(evt) => match evt.action {
+                    GroupAction::Create { group } => {
+                        if !s.groups.iter().any(|g| g.name == group.name) {
+                            s.groups.push(group);
                             s.save_groups();
                         }
                     }
-                }
+                    GroupAction::AddMember {
+                        group_name,
+                        username,
+                    } => {
+                        if let Some(g) = s.groups.iter_mut().find(|g| g.name == group_name) {
+                            if !g.members.contains(&username) {
+                                g.members.push(username);
+                                s.save_groups();
+                            }
+                        }
+                    }
+                    GroupAction::RemoveMember {
+                        group_name,
+                        username,
+                    } => {
+                        if let Some(g) = s.groups.iter_mut().find(|g| g.name == group_name) {
+                            g.members.retain(|m| m != &username);
+                            s.save_groups();
+                        }
+                    }
+                    GroupAction::Rename {
+                        group_name,
+                        new_name,
+                    } => {
+                        if let Some(g) = s.groups.iter_mut().find(|g| g.name == group_name) {
+                            g.name = new_name;
+                            s.save_groups();
+                        }
+                    }
+                    GroupAction::Delete { group_name } => {
+                        s.groups.retain(|g| g.name != group_name);
+                        s.save_groups();
+                    }
+                },
                 AppEvent::ReadReceiptReceived(receipt) => {
                     s.mark_message_read(receipt.message_hash, receipt.from.clone());
                 }

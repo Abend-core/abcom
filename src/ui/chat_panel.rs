@@ -26,7 +26,9 @@ impl AbcomApp {
 
             ui.horizontal(|ui| {
                 ui.add_space(8.0);
-                ui.vertical_centered(|ui| { ui.heading(conversation_title); });
+                ui.vertical_centered(|ui| {
+                    ui.heading(conversation_title);
+                });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.menu_button("▾ Actions", |ui| {
                         let sound_text = if self.enable_sound_notifications {
@@ -40,9 +42,17 @@ impl AbcomApp {
                         }
                         let this_conv = selected_conv.clone();
                         let is_muted = self.muted_conversations.contains(&this_conv);
-                        let mute_text = if is_muted { "🔔 Réactiver les sons de ce salon" } else { "🔕 Muet pour ce salon" };
+                        let mute_text = if is_muted {
+                            "🔔 Réactiver les sons de ce salon"
+                        } else {
+                            "🔕 Muet pour ce salon"
+                        };
                         if ui.button(mute_text).clicked() {
-                            if is_muted { self.muted_conversations.remove(&this_conv); } else { self.muted_conversations.insert(this_conv); }
+                            if is_muted {
+                                self.muted_conversations.remove(&this_conv);
+                            } else {
+                                self.muted_conversations.insert(this_conv);
+                            }
                             ui.close_menu();
                         }
                         if ui.button("👥 Voir les participants").clicked() {
@@ -65,7 +75,9 @@ impl AbcomApp {
                 let (conv_name, my_name2, sel_conv, peers) = {
                     let s = self.state.lock().unwrap();
                     (
-                        s.selected_conversation.clone().unwrap_or_else(|| "Tous".to_string()),
+                        s.selected_conversation
+                            .clone()
+                            .unwrap_or_else(|| "Tous".to_string()),
                         s.my_username.clone(),
                         s.selected_conversation.clone(),
                         s.peers.clone(),
@@ -78,17 +90,30 @@ impl AbcomApp {
                     .collapsible(false)
                     .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
                     .show(ctx, |ui| {
-                        ui.label(egui::RichText::new(format!("Conversation : {}", conv_name)).strong());
+                        ui.label(
+                            egui::RichText::new(format!("Conversation : {}", conv_name)).strong(),
+                        );
                         ui.separator();
                         if sel_conv.is_none() {
                             for peer in &peers {
-                                ui.horizontal(|ui| { ui.label("👤"); ui.label(&peer.username); });
+                                ui.horizontal(|ui| {
+                                    ui.label("👤");
+                                    ui.label(&peer.username);
+                                });
                             }
-                            if peers.is_empty() { ui.label("Aucun participant connecté"); }
+                            if peers.is_empty() {
+                                ui.label("Aucun participant connecté");
+                            }
                         } else {
-                            ui.horizontal(|ui| { ui.label("👤"); ui.label(format!("{} (vous)", my_name2)); });
+                            ui.horizontal(|ui| {
+                                ui.label("👤");
+                                ui.label(format!("{} (vous)", my_name2));
+                            });
                             if let Some(peer) = sel_conv {
-                                ui.horizontal(|ui| { ui.label("👤"); ui.label(&peer); });
+                                ui.horizontal(|ui| {
+                                    ui.label("👤");
+                                    ui.label(&peer);
+                                });
                             }
                         }
                     });
@@ -107,29 +132,47 @@ impl AbcomApp {
                     for msg in &conv_messages {
                         ui.vertical(|ui| {
                             ui.horizontal(|ui| {
-                                ui.label(egui::RichText::new(format!("[{}]", msg.timestamp)).color(egui::Color32::DARK_GRAY).small());
+                                ui.label(
+                                    egui::RichText::new(format!("[{}]", msg.timestamp))
+                                        .color(egui::Color32::DARK_GRAY)
+                                        .small(),
+                                );
                                 let name_color = if msg.from == my_name {
                                     egui::Color32::from_rgb(80, 200, 120)
                                 } else {
                                     egui::Color32::from_rgb(100, 180, 255)
                                 };
-                                ui.label(egui::RichText::new(format!("{}:", msg.from)).color(name_color).strong());
+                                ui.label(
+                                    egui::RichText::new(format!("{}:", msg.from))
+                                        .color(name_color)
+                                        .strong(),
+                                );
 
                                 // Accusés de lecture (messages envoyés)
                                 if msg.from == my_name {
                                     let s = self.state.lock().unwrap();
                                     let read_count = s.get_read_count(AppState::message_hash(msg));
                                     if read_count > 0 {
-                                        ui.label(egui::RichText::new("✓✓").color(egui::Color32::BLUE).small());
+                                        ui.label(
+                                            egui::RichText::new("✓✓")
+                                                .color(egui::Color32::BLUE)
+                                                .small(),
+                                        );
                                     } else {
-                                        ui.label(egui::RichText::new("✓").color(egui::Color32::GRAY).small());
+                                        ui.label(
+                                            egui::RichText::new("✓")
+                                                .color(egui::Color32::GRAY)
+                                                .small(),
+                                        );
                                     }
                                 }
                             });
-                            ui.horizontal_wrapped(|ui| {
-                                ui.spacing_mut().item_spacing.x = 0.0;
-                                super::emoji_picker::render_inline(ui, &msg.content, &self.emoji_map, &self.emoji_textures, 16.0);
-                            });
+                            super::markdown::render_message_markdown(
+                                ui,
+                                &msg.content,
+                                &self.emoji_map,
+                                &self.emoji_textures,
+                            );
                         });
                     }
                 });
