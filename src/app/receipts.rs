@@ -9,7 +9,6 @@ use super::AppState;
 /// Message en attente d'ACK
 #[derive(Clone, Debug)]
 pub struct PendingMessage {
-    pub message_hash: u64,
     pub to_addr: SocketAddr,
     pub last_retry: SystemTime,
     pub retry_count: u32,
@@ -31,6 +30,7 @@ impl AppState {
             .insert(username);
     }
 
+    #[allow(dead_code)]
     pub fn is_message_read_by(&self, message_hash: u64, username: &str) -> bool {
         self.read_receipts
             .get(&message_hash)
@@ -45,7 +45,6 @@ impl AppState {
     /// Marque un message comme envoyé (en attente d'ACK)
     pub fn mark_message_sent(&mut self, message_hash: u64, to_addr: SocketAddr) {
         self.pending_messages.insert(message_hash, PendingMessage {
-            message_hash,
             to_addr,
             last_retry: SystemTime::now(),
             retry_count: 0,
@@ -77,6 +76,7 @@ impl AppState {
         to_retry
     }
 
+    #[allow(dead_code)]
     pub fn is_message_pending(&self, message_hash: u64) -> bool {
         self.pending_messages.contains_key(&message_hash)
     }

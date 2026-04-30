@@ -1,7 +1,5 @@
 use eframe::egui;
 
-use crate::message::GroupAction;
-
 use super::AbcomApp;
 
 impl AbcomApp {
@@ -74,9 +72,9 @@ impl AbcomApp {
                     let display = record.and_then(|r| r.alias.clone()).unwrap_or_else(|| username.clone());
                     let dot = if online { "🟢" } else { "🔴" };
 
-                    egui::Frame::none()
+                    egui::Frame::NONE
                         .inner_margin(egui::Margin::symmetric(8, 6))
-                        .rounding(8.0)
+                        .corner_radius(8.0)
                         .fill(ui.visuals().extreme_bg_color)
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {

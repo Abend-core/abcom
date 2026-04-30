@@ -11,6 +11,7 @@ pub enum AppEvent {
     PeerDiscovered { username: String, addr: SocketAddr },
     PeerDisconnected { username: String },
     UserTyping(String),
+    #[allow(dead_code)]
     UserStoppedTyping(String),
     GroupEventReceived(GroupEvent),
     ReadReceiptReceived(ReadReceipt),

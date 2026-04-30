@@ -1,6 +1,7 @@
 use crate::message::Group;
 use super::AppState;
 
+#[allow(dead_code)]
 impl AppState {
     fn validate_group_name(name: &str) -> bool {
         !name.is_empty()
