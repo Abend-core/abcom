@@ -47,6 +47,7 @@ pub struct MessageAckRequest {
 }
 
 /// Message réseau unifié (ChatMessage ou GroupEvent)
+#[allow(dead_code)]
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(untagged)]
 pub enum NetworkMessage {

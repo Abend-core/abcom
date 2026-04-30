@@ -1,5 +1,6 @@
 /// Détecte si le curseur est dans un shortcode `:xxx`
 /// Retourne (start_char_index_of_colon, query_after_colon) si c'est le cas
+#[allow(dead_code)]
 pub fn emoji_shortcode_trigger(input: &str, cursor_char: usize) -> Option<(usize, String)> {
     let chars: Vec<char> = input.chars().collect();
     let end = cursor_char.min(chars.len());
@@ -15,6 +16,7 @@ pub fn emoji_shortcode_trigger(input: &str, cursor_char: usize) -> Option<(usize
 }
 
 /// Retourne jusqu'à `limit` suggestions de shortcodes correspondant à la requête courante
+#[allow(dead_code)]
 pub fn shortcode_suggestions(
     input: &str,
     cursor_char: usize,

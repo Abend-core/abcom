@@ -43,6 +43,7 @@ impl AppState {
     }
 
     /// Force la mise hors ligne de tous les pairs (après changement de réseau)
+    #[allow(dead_code)]
     pub fn clear_all_peers_online_status(&mut self) {
         for peer in &mut self.peers {
             peer.online = false;
@@ -92,6 +93,7 @@ impl AppState {
     }
 
     /// Alias d'un pair s'il en a un, sinon son username
+    #[allow(dead_code)]
     pub fn peer_display_name(&self, username: &str) -> String {
         self.peer_records
             .iter()
@@ -101,6 +103,7 @@ impl AppState {
     }
 
     /// Pairs filtrés par network_id
+    #[allow(dead_code)]
     pub fn peers_for_network<'a>(&'a self, network_id: &str) -> Vec<&'a Peer> {
         let seen: Vec<&str> = self.known_networks
             .iter()
