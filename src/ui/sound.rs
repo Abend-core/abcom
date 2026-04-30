@@ -3,8 +3,12 @@ use std::time::Duration;
 
 /// Joue deux tonalités courtes (880 Hz puis 1100 Hz) via rodio
 pub(crate) fn play_notification_sound() {
-    let Ok((_stream, stream_handle)) = OutputStream::try_default() else { return; };
-    let Ok(sink) = Sink::try_new(&stream_handle) else { return; };
+    let Ok((_stream, stream_handle)) = OutputStream::try_default() else {
+        return;
+    };
+    let Ok(sink) = Sink::try_new(&stream_handle) else {
+        return;
+    };
 
     let tone1 = rodio::source::SineWave::new(880.0)
         .take_duration(Duration::from_millis(80))

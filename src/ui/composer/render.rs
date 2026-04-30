@@ -19,7 +19,10 @@ pub fn render_inline(
             if i + len <= chars.len() {
                 let s: String = chars[i..i + len].iter().collect();
                 if let Some(&idx) = emoji_map.get(&s) {
-                    if !acc.is_empty() { ui.label(&acc); acc.clear(); }
+                    if !acc.is_empty() {
+                        ui.label(&acc);
+                        acc.clear();
+                    }
                     if let Some((_, tex)) = textures.get(idx) {
                         ui.add(egui::Image::new(tex).fit_to_exact_size(size));
                     }
@@ -31,16 +34,23 @@ pub fn render_inline(
         }
         if !matched {
             let ch = chars[i];
-            if ch != '\u{fe0f}' && ch != '\u{200d}' { acc.push(ch); }
+            if ch != '\u{fe0f}' && ch != '\u{200d}' {
+                acc.push(ch);
+            }
             i += 1;
         }
     }
-    if !acc.is_empty() { ui.label(&acc); }
+    if !acc.is_empty() {
+        ui.label(&acc);
+    }
 }
 
 /// Mesure la largeur d'un texte en pixels avec la police donnée
 pub fn measure_text_width(text: &str, ctx: &egui::Context, font_id: &egui::FontId) -> f32 {
     ctx.fonts(|fonts| {
-        fonts.layout_no_wrap(text.to_string(), font_id.clone(), egui::Color32::WHITE).rect.width()
+        fonts
+            .layout_no_wrap(text.to_string(), font_id.clone(), egui::Color32::WHITE)
+            .rect
+            .width()
     })
 }

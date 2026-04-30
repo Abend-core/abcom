@@ -27,8 +27,11 @@ pub fn shortcode_suggestions(
     let Some((_start, query)) = emoji_shortcode_trigger(input, cursor_char) else {
         return Vec::new();
     };
-    if query.is_empty() { return Vec::new(); }
-    aliases.iter()
+    if query.is_empty() {
+        return Vec::new();
+    }
+    aliases
+        .iter()
         .filter(|a| a.starts_with(&query))
         .take(limit)
         .filter_map(|a| alias_to_char.get(a).map(|ch| (a.clone(), ch.clone())))
