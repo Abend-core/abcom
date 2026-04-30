@@ -8,10 +8,16 @@ pub(crate) enum MarkdownBlock {
         spans: Vec<MarkdownSpan>,
     },
     Bullet(Vec<MarkdownSpan>),
+    OrderedBullet {
+        number: usize,
+        spans: Vec<MarkdownSpan>,
+    },
+    Blockquote(Vec<MarkdownSpan>),
     CodeBlock {
         language: Option<String>,
         code: String,
     },
+    ThematicBreak,
     Blank,
 }
 
@@ -21,6 +27,7 @@ pub(crate) enum MarkdownSpan {
     Strong(String),
     Emphasis(String),
     Code(String),
+    Link { label: String, url: String },
 }
 
 pub(crate) fn parse_markdown(input: &str) -> Vec<MarkdownBlock> {
@@ -29,10 +36,11 @@ pub(crate) fn parse_markdown(input: &str) -> Vec<MarkdownBlock> {
     }
 
     let mut blocks = Vec::new();
-    let mut lines = input.lines();
+    let mut lines = input.lines().peekable();
 
     while let Some(line) = lines.next() {
         if let Some(language) = fenced_code_language(line) {
+            push_pending_blank(&mut blocks);
             let mut code = String::new();
 
             for code_line in lines.by_ref() {
@@ -50,7 +58,9 @@ pub(crate) fn parse_markdown(input: &str) -> Vec<MarkdownBlock> {
             continue;
         }
 
-        if line.trim().is_empty() {
+        let trimmed = line.trim();
+
+        if trimmed.is_empty() {
             blocks.push(MarkdownBlock::Blank);
             continue;
         }
@@ -63,12 +73,47 @@ pub(crate) fn parse_markdown(input: &str) -> Vec<MarkdownBlock> {
             continue;
         }
 
-        if let Some(text) = line.strip_prefix("- ").or_else(|| line.strip_prefix("* ")) {
+        if let Some(text) = bullet_text(line) {
             blocks.push(MarkdownBlock::Bullet(parse_inline(text)));
             continue;
         }
 
-        blocks.push(MarkdownBlock::Paragraph(parse_inline(line)));
+        if let Some((number, text)) = ordered_bullet_text(line) {
+            blocks.push(MarkdownBlock::OrderedBullet {
+                number,
+                spans: parse_inline(text),
+            });
+            continue;
+        }
+
+        if let Some(text) = blockquote_text(line) {
+            blocks.push(MarkdownBlock::Blockquote(parse_inline(text)));
+            continue;
+        }
+
+        if is_thematic_break(trimmed) {
+            blocks.push(MarkdownBlock::ThematicBreak);
+            continue;
+        }
+
+        let mut paragraph = trimmed.to_string();
+        while let Some(next_line) = lines.peek().copied() {
+            let next_trimmed = next_line.trim();
+            if next_trimmed.is_empty() || starts_special_block(next_line) {
+                break;
+            }
+
+            let separator = if line_ends_with_hard_break(paragraph.as_str()) {
+                "\n"
+            } else {
+                " "
+            };
+            paragraph.push_str(separator);
+            paragraph.push_str(next_trimmed);
+            lines.next();
+        }
+
+        blocks.push(MarkdownBlock::Paragraph(parse_inline(&paragraph)));
     }
 
     blocks
@@ -76,11 +121,68 @@ pub(crate) fn parse_markdown(input: &str) -> Vec<MarkdownBlock> {
 
 fn heading_text(line: &str) -> Option<(usize, &str)> {
     let level = line.chars().take_while(|&c| c == '#').count();
-    if !(1..=3).contains(&level) {
+    if !(1..=6).contains(&level) {
         return None;
     }
     let rest = &line[level..];
     rest.strip_prefix(' ').map(|text| (level, text))
+}
+
+fn bullet_text(line: &str) -> Option<&str> {
+    let trimmed = line.trim_start();
+    trimmed
+        .strip_prefix("- ")
+        .or_else(|| trimmed.strip_prefix("* "))
+        .or_else(|| trimmed.strip_prefix("+ "))
+}
+
+fn ordered_bullet_text(line: &str) -> Option<(usize, &str)> {
+    let trimmed = line.trim_start();
+    let digits = trimmed
+        .chars()
+        .take_while(|character| character.is_ascii_digit())
+        .count();
+
+    if digits == 0 || !trimmed[digits..].starts_with(". ") {
+        return None;
+    }
+
+    let number = trimmed[..digits].parse().ok()?;
+    Some((number, &trimmed[digits + 2..]))
+}
+
+fn blockquote_text(line: &str) -> Option<&str> {
+    line.trim_start().strip_prefix('>').map(str::trim_start)
+}
+
+fn is_thematic_break(line: &str) -> bool {
+    let compact = line.chars().filter(|character| !character.is_whitespace()).collect::<String>();
+    compact.len() >= 3
+        && compact
+            .chars()
+            .all(|character| matches!(character, '-' | '*' | '_'))
+        && compact.chars().all(|character| character == compact.chars().next().unwrap())
+}
+
+fn starts_special_block(line: &str) -> bool {
+    let trimmed = line.trim_start();
+    trimmed.is_empty()
+        || fenced_code_language(line).is_some()
+        || heading_text(line).is_some()
+        || bullet_text(line).is_some()
+        || ordered_bullet_text(line).is_some()
+        || blockquote_text(line).is_some()
+        || is_thematic_break(trimmed)
+}
+
+fn line_ends_with_hard_break(line: &str) -> bool {
+    line.ends_with("  ")
+}
+
+fn push_pending_blank(blocks: &mut Vec<MarkdownBlock>) {
+    if matches!(blocks.last(), Some(MarkdownBlock::Blank)) {
+        blocks.pop();
+    }
 }
 
 fn fenced_code_language(line: &str) -> Option<Option<String>> {
@@ -123,6 +225,15 @@ fn parse_inline(input: &str) -> Vec<MarkdownSpan> {
     let mut rest = input;
 
     while !rest.is_empty() {
+        if let Some((label, url, consumed)) = parse_link(rest) {
+            spans.push(MarkdownSpan::Link {
+                label: label.to_string(),
+                url: url.to_string(),
+            });
+            rest = &rest[consumed..];
+            continue;
+        }
+
         if let Some(code) = rest.strip_prefix('`') {
             if let Some(end) = code.find('`') {
                 spans.push(MarkdownSpan::Code(code[..end].to_string()));
@@ -134,10 +245,10 @@ fn parse_inline(input: &str) -> Vec<MarkdownSpan> {
             }
         }
 
-        if let Some(strong) = rest.strip_prefix("**") {
-            if let Some(end) = strong.find("**") {
+        if let Some((marker, strong)) = strong_text(rest) {
+            if let Some(end) = strong.find(marker) {
                 spans.push(MarkdownSpan::Strong(strong[..end].to_string()));
-                rest = &strong[end + 2..];
+                rest = &strong[end + marker.len()..];
                 continue;
             } else {
                 push_text(&mut spans, rest);
@@ -145,10 +256,10 @@ fn parse_inline(input: &str) -> Vec<MarkdownSpan> {
             }
         }
 
-        if let Some(emphasis) = rest.strip_prefix('*') {
-            if let Some(end) = emphasis.find('*') {
+        if let Some((marker, emphasis)) = emphasis_text(rest) {
+            if let Some(end) = emphasis.find(marker) {
                 spans.push(MarkdownSpan::Emphasis(emphasis[..end].to_string()));
-                rest = &emphasis[end + 1..];
+                rest = &emphasis[end + marker.len()..];
                 continue;
             } else {
                 push_text(&mut spans, rest);
@@ -161,7 +272,7 @@ fn parse_inline(input: &str) -> Vec<MarkdownSpan> {
             .nth(1)
             .map(|(idx, _)| idx)
             .unwrap_or(rest.len());
-        let next_marker = ["`", "**", "*"]
+        let next_marker = ["`", "**", "__", "*", "_", "["]
             .iter()
             .filter_map(|marker| {
                 rest[after_first_char..]
@@ -175,6 +286,37 @@ fn parse_inline(input: &str) -> Vec<MarkdownSpan> {
     }
 
     spans
+}
+
+fn parse_link(input: &str) -> Option<(&str, &str, usize)> {
+    let rest = input.strip_prefix('[')?;
+    let label_end = rest.find("](")?;
+    let after_label = &rest[label_end + 2..];
+    let url_end = after_label.find(')')?;
+    let label = &rest[..label_end];
+    let url = &after_label[..url_end];
+    let consumed = 1 + label_end + 2 + url_end + 1;
+    Some((label, url, consumed))
+}
+
+fn strong_text(input: &str) -> Option<(&'static str, &str)> {
+    if let Some(strong) = input.strip_prefix("**") {
+        Some(("**", strong))
+    } else if let Some(strong) = input.strip_prefix("__") {
+        Some(("__", strong))
+    } else {
+        None
+    }
+}
+
+fn emphasis_text(input: &str) -> Option<(&'static str, &str)> {
+    if let Some(emphasis) = input.strip_prefix('*') {
+        Some(("*", emphasis))
+    } else if let Some(emphasis) = input.strip_prefix('_') {
+        Some(("_", emphasis))
+    } else {
+        None
+    }
 }
 
 fn push_text(spans: &mut Vec<MarkdownSpan>, text: &str) {
@@ -226,8 +368,20 @@ pub(crate) fn render_message_markdown(
                     render_spans(ui, &spans, emoji_map, emoji_textures, None);
                 });
             }
+            MarkdownBlock::OrderedBullet { number, spans } => {
+                ui.horizontal_wrapped(|ui| {
+                    ui.label(format!("{}. ", number));
+                    render_spans(ui, &spans, emoji_map, emoji_textures, None);
+                });
+            }
+            MarkdownBlock::Blockquote(spans) => {
+                render_blockquote(ui, &spans, emoji_map, emoji_textures);
+            }
             MarkdownBlock::CodeBlock { language, code } => {
                 render_code_block(ui, language.as_deref(), &code);
+            }
+            MarkdownBlock::ThematicBreak => {
+                ui.separator();
             }
         }
     }
@@ -270,20 +424,32 @@ fn render_spans(
                 ui.label(rich);
             }
             MarkdownSpan::Code(text) => {
-                ui.label(
-                    egui::RichText::new(text)
-                        .monospace()
-                        .background_color(ui.visuals().widgets.noninteractive.bg_fill),
-                );
+                render_inline_code(ui, text);
+            }
+            MarkdownSpan::Link { label, url } => {
+                ui.hyperlink_to(link_text(label, override_style), url);
             }
         }
     }
 }
 
-fn render_code_block(ui: &mut egui::Ui, _language: Option<&str>, code: &str) {
-    let bg = egui::Color32::from_rgb(17, 24, 39);
-    let border = egui::Color32::from_rgb(75, 85, 99);
-    let text_color = egui::Color32::from_rgb(249, 250, 251);
+fn render_blockquote(
+    ui: &mut egui::Ui,
+    spans: &[MarkdownSpan],
+    emoji_map: &std::collections::HashMap<String, usize>,
+    emoji_textures: &[(String, egui::TextureHandle)],
+) {
+    let dark_mode = ui.visuals().dark_mode;
+    let bg = if dark_mode {
+        egui::Color32::from_rgb(30, 41, 59)
+    } else {
+        egui::Color32::from_rgb(241, 245, 249)
+    };
+    let border = if dark_mode {
+        egui::Color32::from_rgb(125, 211, 252)
+    } else {
+        egui::Color32::from_rgb(3, 105, 161)
+    };
 
     egui::Frame::NONE
         .fill(bg)
@@ -291,20 +457,105 @@ fn render_code_block(ui: &mut egui::Ui, _language: Option<&str>, code: &str) {
         .corner_radius(egui::CornerRadius::same(6))
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
-            ui.set_width(ui.available_width());
-
-            let previous_spacing = ui.spacing().item_spacing;
-            ui.spacing_mut().item_spacing.y = 0.0;
-            for line in code.lines().chain((code.is_empty()).then_some("")) {
-                ui.label(
-                    egui::RichText::new(line)
-                        .monospace()
-                        .size(13.0)
-                        .color(text_color),
-                );
-            }
-            ui.spacing_mut().item_spacing = previous_spacing;
+            ui.horizontal_wrapped(|ui| {
+                render_spans(ui, spans, emoji_map, emoji_textures, None);
+            });
         });
+}
+
+fn render_inline_code(ui: &mut egui::Ui, text: &str) {
+    let dark_mode = ui.visuals().dark_mode;
+    let bg = if dark_mode {
+        egui::Color32::from_rgb(30, 41, 59)
+    } else {
+        egui::Color32::from_rgb(226, 232, 240)
+    };
+    let text_color = if dark_mode {
+        egui::Color32::from_rgb(248, 250, 252)
+    } else {
+        egui::Color32::from_rgb(15, 23, 42)
+    };
+
+    egui::Frame::NONE
+        .fill(bg)
+        .corner_radius(egui::CornerRadius::same(4))
+        .inner_margin(egui::Margin::symmetric(4, 2))
+        .show(ui, |ui| {
+            ui.label(
+                egui::RichText::new(text)
+                    .monospace()
+                    .color(text_color)
+                    .size(13.0),
+            );
+        });
+}
+
+fn render_code_block(ui: &mut egui::Ui, language: Option<&str>, code: &str) {
+    let dark_mode = ui.visuals().dark_mode;
+    let (bg, border, text_color, chip_bg, chip_text) = if dark_mode {
+        (
+            egui::Color32::from_rgb(15, 23, 42),
+            egui::Color32::from_rgb(71, 85, 105),
+            egui::Color32::from_rgb(248, 250, 252),
+            egui::Color32::from_rgb(30, 41, 59),
+            egui::Color32::from_rgb(125, 211, 252),
+        )
+    } else {
+        (
+            egui::Color32::from_rgb(241, 245, 249),
+            egui::Color32::from_rgb(148, 163, 184),
+            egui::Color32::from_rgb(15, 23, 42),
+            egui::Color32::from_rgb(226, 232, 240),
+            egui::Color32::from_rgb(3, 105, 161),
+        )
+    };
+
+    egui::Frame::NONE
+        .fill(bg)
+        .stroke(egui::Stroke::new(1.0, border))
+        .corner_radius(egui::CornerRadius::same(6))
+        .inner_margin(egui::Margin::symmetric(10, 8))
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width().max(180.0));
+
+            if let Some(language) = language.filter(|language| !language.is_empty()) {
+                egui::Frame::NONE
+                    .fill(chip_bg)
+                    .corner_radius(egui::CornerRadius::same(12))
+                    .inner_margin(egui::Margin::symmetric(8, 3))
+                    .show(ui, |ui| {
+                        ui.label(
+                            egui::RichText::new(language)
+                                .small()
+                                .strong()
+                                .color(chip_text),
+                        );
+                    });
+                ui.add_space(6.0);
+            }
+
+            egui::ScrollArea::horizontal()
+                .auto_shrink([false, true])
+                .show(ui, |ui| {
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(if code.is_empty() { " " } else { code })
+                                .monospace()
+                                .size(13.0)
+                                .color(text_color),
+                        )
+                        .wrap_mode(egui::TextWrapMode::Extend),
+                    );
+                });
+        });
+}
+
+fn link_text(label: &str, override_style: Option<SpanOverride>) -> egui::RichText {
+    let mut rich = egui::RichText::new(label).underline();
+    if let Some(SpanOverride::Heading(size)) = override_style {
+        rich = rich.size(size).strong();
+    }
+    rich
 }
 
 #[cfg(test)]
@@ -339,6 +590,39 @@ mod tests {
                     MarkdownSpan::Text("item ".to_string()),
                     MarkdownSpan::Strong("important".to_string()),
                 ]),
+            ]
+        );
+    }
+
+    #[test]
+    fn parses_ordered_quotes_and_links() {
+        assert_eq!(
+            parse_markdown("1. [Guide](https://example.com)\n> note importante"),
+            vec![
+                MarkdownBlock::OrderedBullet {
+                    number: 1,
+                    spans: vec![MarkdownSpan::Link {
+                        label: "Guide".to_string(),
+                        url: "https://example.com".to_string(),
+                    }],
+                },
+                MarkdownBlock::Blockquote(vec![MarkdownSpan::Text(
+                    "note importante".to_string(),
+                )]),
+            ]
+        );
+    }
+
+    #[test]
+    fn merges_plain_lines_into_single_paragraph() {
+        assert_eq!(
+            parse_markdown("ligne un\nligne deux\n\n- suite"),
+            vec![
+                MarkdownBlock::Paragraph(vec![MarkdownSpan::Text(
+                    "ligne un ligne deux".to_string(),
+                )]),
+                MarkdownBlock::Blank,
+                MarkdownBlock::Bullet(vec![MarkdownSpan::Text("suite".to_string())]),
             ]
         );
     }
