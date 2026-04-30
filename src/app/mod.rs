@@ -10,6 +10,7 @@ mod network_detect;
 mod peers;
 mod persistence;
 mod receipts;
+mod transfers;
 mod typing;
 
 pub use peers::Peer;

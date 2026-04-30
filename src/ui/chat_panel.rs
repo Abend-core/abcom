@@ -1,6 +1,7 @@
 use eframe::egui;
 
 use crate::app::AppState;
+use crate::transfer::{TransferDirection, TransferStatus};
 
 use super::{AbcomApp, AppView};
 
@@ -80,6 +81,78 @@ impl AbcomApp {
                 });
             });
             ui.separator();
+
+            let mut transfer_progress: Vec<_> = self.transfer_progress.values().cloned().collect();
+            transfer_progress.sort_by(|left, right| left.transfer_id.cmp(&right.transfer_id));
+            if !transfer_progress.is_empty() {
+                ui.add_space(6.0);
+                ui.group(|ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(
+                        egui::RichText::new(self.tr("Transferts", "Transfers")).strong(),
+                    );
+                    ui.add_space(6.0);
+                    for transfer in transfer_progress.iter().rev().take(4) {
+                        let ratio = if transfer.total_bytes == 0 {
+                            match transfer.status {
+                                TransferStatus::Completed => 1.0,
+                                _ => 0.0,
+                            }
+                        } else {
+                            (transfer.bytes_done as f32 / transfer.total_bytes as f32).clamp(0.0, 1.0)
+                        };
+                        let direction = match transfer.direction {
+                            TransferDirection::Upload => self.tr("Envoi", "Upload"),
+                            TransferDirection::Download => self.tr("Réception", "Download"),
+                        };
+                        let status = match transfer.status {
+                            TransferStatus::Queued => self.tr("En attente", "Queued"),
+                            TransferStatus::Running => self.tr("En cours", "Running"),
+                            TransferStatus::Completed => self.tr("Terminé", "Completed"),
+                            TransferStatus::Failed => self.tr("Échec", "Failed"),
+                        };
+
+                        ui.vertical(|ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(
+                                    egui::RichText::new(format!(
+                                        "{} {} -> {}",
+                                        direction, transfer.label, transfer.peer
+                                    ))
+                                    .strong(),
+                                );
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        ui.label(status);
+                                    },
+                                );
+                            });
+                            if let Some(path) = &transfer.current_path {
+                                ui.label(
+                                    egui::RichText::new(path)
+                                        .small()
+                                        .color(egui::Color32::from_rgb(190, 190, 196)),
+                                );
+                            }
+                            ui.add(
+                                egui::ProgressBar::new(ratio)
+                                    .show_percentage()
+                                    .desired_width(ui.available_width()),
+                            );
+                            if !transfer.detail.is_empty() {
+                                ui.label(
+                                    egui::RichText::new(&transfer.detail)
+                                        .small()
+                                        .color(egui::Color32::from_rgb(160, 160, 168)),
+                                );
+                            }
+                        });
+                        ui.add_space(4.0);
+                    }
+                });
+                ui.separator();
+            }
 
             // Popup participants
             if self.show_participants {
