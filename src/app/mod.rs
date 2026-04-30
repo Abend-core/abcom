@@ -85,4 +85,34 @@ impl AppState {
         state.restore_peers_from_history();
         state
     }
+
+    /// Constructeur de test avec un répertoire de données personnalisé (isolation du disque)
+    #[cfg(test)]
+    pub fn new_with_base(username: &str, base: &std::path::Path) -> Self {
+        let history_path = base.join("messages.json");
+        let read_counts_path = base.join("read_counts.json");
+        let groups_path = base.join("groups.json");
+        let networks_path = base.join("networks.json");
+        let peer_records_path = base.join("peer_records.json");
+        Self {
+            my_username: username.to_string(),
+            peers: Vec::new(),
+            messages: Vec::new(),
+            groups: Vec::new(),
+            selected_conversation: None,
+            typing_users: HashMap::new(),
+            read_counts: HashMap::new(),
+            read_receipts: HashMap::new(),
+            pending_messages: HashMap::new(),
+            known_networks: Vec::new(),
+            peer_records: Vec::new(),
+            current_subnet: None,
+            current_network_id: None,
+            history_path,
+            read_counts_path,
+            groups_path,
+            networks_path,
+            peer_records_path,
+        }
+    }
 }
