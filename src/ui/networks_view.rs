@@ -112,7 +112,14 @@ impl AbcomApp {
     ) {
         let colors = network_colors(ui);
         ui.label(
-            egui::RichText::new(format!("{} réseau(x) connu(s)", known_networks.len()))
+            egui::RichText::new(match self.ui_language {
+                super::UiLanguage::French => {
+                    format!("{} réseau(x) connu(s)", known_networks.len())
+                }
+                super::UiLanguage::English => {
+                    format!("{} known network(s)", known_networks.len())
+                }
+            })
                 .strong()
                 .color(colors.text)
                 .small(),
@@ -120,7 +127,10 @@ impl AbcomApp {
         ui.add_space(8.0);
 
         if known_networks.is_empty() {
-            ui.label(egui::RichText::new("Aucun réseau connu").color(colors.muted));
+            ui.label(
+                egui::RichText::new(self.tr("Aucun réseau connu", "No known network"))
+                    .color(colors.muted),
+            );
             return;
         }
 
@@ -168,32 +178,49 @@ impl AbcomApp {
                                         );
                                         ui.label(
                                             egui::RichText::new(format!(
-                                                "Nom détecté : {}",
-                                                network_base_name(net)
+                                                "{}: {}",
+                                                self.tr("Nom détecté", "Detected name"),
+                                                network_base_name(net, self.tr("inconnu", "unknown"))
                                             ))
                                             .small()
                                             .color(muted_color),
                                         );
                                     } else {
                                         ui.label(
-                                            egui::RichText::new(network_base_name(net))
+                                            egui::RichText::new(network_base_name(
+                                                net,
+                                                self.tr("inconnu", "unknown"),
+                                            ))
                                                 .strong()
                                                 .color(text_color),
                                         );
                                         ui.label(
-                                            egui::RichText::new("Aucun alias")
+                                            egui::RichText::new(
+                                                self.tr("Aucun alias", "No alias")
+                                            )
                                                 .small()
                                                 .color(muted_color),
                                         );
                                     }
 
-                                    let suffix = if is_current { " · actuel" } else { "" };
+                                    let suffix = if is_current {
+                                        format!(" · {}", self.tr("actuel", "current"))
+                                    } else {
+                                        String::new()
+                                    };
                                     ui.label(
-                                        egui::RichText::new(format!(
-                                            "{} pair(s) vu(s){}",
-                                            net.seen_peers.len(),
-                                            suffix
-                                        ))
+                                        egui::RichText::new(match self.ui_language {
+                                            super::UiLanguage::French => format!(
+                                                "{} pair(s) vu(s){}",
+                                                net.seen_peers.len(),
+                                                suffix
+                                            ),
+                                            super::UiLanguage::English => format!(
+                                                "{} peer(s) seen{}",
+                                                net.seen_peers.len(),
+                                                suffix
+                                            ),
+                                        })
                                         .small()
                                         .color(muted_color),
                                     );
@@ -223,7 +250,9 @@ impl AbcomApp {
         let Some(selected_id) = self.selected_network_view.clone() else {
             ui.centered_and_justified(|ui| {
                 ui.label(
-                    egui::RichText::new("Sélectionnez un réseau dans la liste")
+                    egui::RichText::new(
+                        self.tr("Sélectionnez un réseau dans la liste", "Select a network from the list")
+                    )
                         .color(colors.muted),
                 );
             });
@@ -255,20 +284,32 @@ impl AbcomApp {
                 ui.horizontal_wrapped(|ui| {
                     ui.vertical(|ui| {
                         ui.label(
-                            egui::RichText::new(network_base_name(net))
+                            egui::RichText::new(network_base_name(
+                                net,
+                                self.tr("inconnu", "unknown"),
+                            ))
                                 .heading()
                                 .strong()
                                 .color(colors.text),
                         );
                         if let Some(alias) = clean_alias(net.alias.as_deref()) {
                             ui.label(
-                                egui::RichText::new(format!("Alias : {}", alias))
+                                egui::RichText::new(format!(
+                                    "{}: {}",
+                                    self.tr("Alias", "Alias"),
+                                    alias
+                                ))
                                     .strong()
                                     .color(colors.accent),
                             );
                         } else {
                             ui.label(
-                                egui::RichText::new("Alias : non défini").color(colors.muted),
+                                egui::RichText::new(format!(
+                                    "{}: {}",
+                                    self.tr("Alias", "Alias"),
+                                    self.tr("non défini", "not set")
+                                ))
+                                .color(colors.muted),
                             );
                         }
                     });
@@ -276,7 +317,7 @@ impl AbcomApp {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if current_network_id == Some(net.id.as_str()) {
                             ui.label(
-                                egui::RichText::new("Réseau actuel")
+                                egui::RichText::new(self.tr("Réseau actuel", "Current network"))
                                     .strong()
                                     .color(colors.positive),
                             );
@@ -286,20 +327,35 @@ impl AbcomApp {
 
                 ui.add_space(12.0);
                 ui.horizontal_wrapped(|ui| {
-                    detail_pill(ui, "Nom détecté", &network_base_name(net));
-                    detail_pill(ui, "Identifiant", &net.id);
-                    detail_pill(ui, "Sous-réseau", &subnet_label(net));
-                    detail_pill(ui, "Pairs vus", &net.seen_peers.len().to_string());
-                    detail_pill(ui, "En ligne", &online_count.to_string());
+                    detail_pill(
+                        ui,
+                        self.tr("Nom détecté", "Detected name"),
+                        &network_base_name(net, self.tr("inconnu", "unknown")),
+                    );
+                    detail_pill(ui, self.tr("Identifiant", "Identifier"), &net.id);
+                    detail_pill(
+                        ui,
+                        self.tr("Sous-réseau", "Subnet"),
+                        &subnet_label(net, self.tr("inconnu", "unknown")),
+                    );
+                    detail_pill(
+                        ui,
+                        self.tr("Pairs vus", "Peers seen"),
+                        &net.seen_peers.len().to_string(),
+                    );
+                    detail_pill(ui, self.tr("En ligne", "Online"), &online_count.to_string());
                 });
             });
 
         ui.add_space(14.0);
         ui.label(
-            egui::RichText::new("Ajouter un alias")
+            egui::RichText::new(self.tr("Ajouter un alias", "Add an alias"))
                 .strong()
                 .color(colors.text),
         );
+        let alias_hint = self.tr("Ex: Maison, Bureau, Lab...", "Ex: Home, Office, Lab...");
+        let save_alias_label = self.tr("Enregistrer l'alias", "Save alias");
+        let remove_alias_label = self.tr("Retirer", "Remove");
         ui.horizontal(|ui| {
             let entry = self
                 .network_alias_edits
@@ -307,12 +363,12 @@ impl AbcomApp {
                 .or_insert_with(|| net.alias.clone().unwrap_or_default());
             let response = ui.add(
                 egui::TextEdit::singleline(entry)
-                    .hint_text("Ex: Maison, Bureau, Lab...")
+                    .hint_text(alias_hint)
                     .desired_width(320.0),
             );
             let save_alias = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            let save_clicked = ui.button("Enregistrer l'alias").clicked();
-            let clear_clicked = ui.button("Retirer").clicked();
+            let save_clicked = ui.button(save_alias_label).clicked();
+            let clear_clicked = ui.button(remove_alias_label).clicked();
 
             if save_alias || save_clicked || clear_clicked {
                 let new_alias = if clear_clicked {
@@ -329,7 +385,10 @@ impl AbcomApp {
             }
         });
         ui.label(
-            egui::RichText::new("Le nom détecté reste conservé. L'alias sert juste d'étiquette.")
+            egui::RichText::new(self.tr(
+                "Le nom détecté reste conservé. L'alias sert juste d'étiquette.",
+                "The detected name is kept. The alias is only a label.",
+            ))
                 .small()
                 .color(colors.muted),
         );
@@ -337,7 +396,7 @@ impl AbcomApp {
         ui.separator();
         ui.add_space(8.0);
         ui.label(
-            egui::RichText::new("Pairs vus sur ce réseau")
+            egui::RichText::new(self.tr("Pairs vus sur ce réseau", "Peers seen on this network"))
                 .strong()
                 .color(colors.text),
         );
@@ -348,7 +407,10 @@ impl AbcomApp {
             .show(ui, |ui| {
                 if net.seen_peers.is_empty() {
                     ui.label(
-                        egui::RichText::new("Aucun pair enregistré sur ce réseau")
+                        egui::RichText::new(self.tr(
+                            "Aucun pair enregistré sur ce réseau",
+                            "No peer recorded on this network",
+                        ))
                             .color(colors.muted),
                     );
                 }
@@ -366,7 +428,7 @@ impl AbcomApp {
         ui.separator();
         if ui
             .button(
-                egui::RichText::new("Oublier ce réseau")
+                egui::RichText::new(self.tr("Oublier ce réseau", "Forget this network"))
                     .color(egui::Color32::from_rgb(220, 60, 60)),
             )
             .clicked()
@@ -397,13 +459,13 @@ impl AbcomApp {
                 ui.set_width(ui.available_width());
                 if compact_layout {
                     ui.vertical(|ui| {
-                        render_peer_identity(ui, username, record, online, colors);
+                        self.render_peer_identity(ui, username, record, online, colors);
                         ui.add_space(8.0);
                         self.show_peer_controls(ui, username, record);
                     });
                 } else {
                     ui.horizontal_top(|ui| {
-                        render_peer_identity(ui, username, record, online, colors);
+                        self.render_peer_identity(ui, username, record, online, colors);
 
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
                             self.show_peer_controls(ui, username, record);
@@ -419,11 +481,14 @@ impl AbcomApp {
         username: &str,
         record: Option<&PeerRecord>,
     ) {
-        if ui.small_button("Oublier").clicked() {
+        if ui.small_button(self.tr("Oublier", "Forget")).clicked() {
             let mut s = self.state.lock().unwrap();
             s.forget_peer(username);
             s.save_peer_records();
         }
+
+        let peer_alias_hint = self.tr("Alias du pair", "Peer alias");
+        let ok_label = self.tr("OK", "OK");
 
         let entry = self
             .peer_alias_edits
@@ -432,11 +497,11 @@ impl AbcomApp {
         let desired_width = ui.available_width().clamp(140.0, 220.0);
         let response = ui.add(
             egui::TextEdit::singleline(entry)
-                .hint_text("Alias du pair")
+                .hint_text(peer_alias_hint)
                 .desired_width(desired_width),
         );
         let save_alias = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        if save_alias || ui.small_button("OK").clicked() {
+        if save_alias || ui.small_button(ok_label).clicked() {
             let new_alias = clean_alias(Some(entry.as_str())).map(str::to_owned);
             let mut s = self.state.lock().unwrap();
             if let Some(r) = s.peer_records.iter_mut().find(|r| r.username == username) {
@@ -448,46 +513,71 @@ impl AbcomApp {
     }
 }
 
-fn render_peer_identity(
-    ui: &mut egui::Ui,
-    username: &str,
-    record: Option<&PeerRecord>,
-    online: bool,
-    colors: NetworkColors,
-) {
-    ui.horizontal_wrapped(|ui| {
-        ui.label(if online { "🟢" } else { "🔴" });
-        ui.vertical(|ui| {
-            if let Some(alias) = record.and_then(|r| clean_alias(r.alias.as_deref())) {
-                ui.label(egui::RichText::new(alias).strong().color(colors.text));
+impl AbcomApp {
+    fn render_peer_identity(
+        &self,
+        ui: &mut egui::Ui,
+        username: &str,
+        record: Option<&PeerRecord>,
+        online: bool,
+        colors: NetworkColors,
+    ) {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(if online { "🟢" } else { "🔴" });
+            ui.vertical(|ui| {
+                if let Some(alias) = record.and_then(|r| clean_alias(r.alias.as_deref())) {
+                    ui.label(egui::RichText::new(alias).strong().color(colors.text));
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{}: {}",
+                            self.tr("Nom d'origine", "Original name"),
+                            username
+                        ))
+                        .small()
+                        .color(colors.muted),
+                    );
+                } else {
+                    ui.label(egui::RichText::new(username).strong().color(colors.text));
+                }
                 ui.label(
-                    egui::RichText::new(format!("Nom d'origine : {}", username))
+                    egui::RichText::new(self.peer_detail(record, online))
                         .small()
                         .color(colors.muted),
                 );
-            } else {
-                ui.label(egui::RichText::new(username).strong().color(colors.text));
-            }
-            ui.label(
-                egui::RichText::new(peer_detail(record, online))
-                    .small()
-                    .color(colors.muted),
-            );
+            });
         });
-    });
-}
+    }
 
-fn network_base_name(net: &KnownNetwork) -> String {
-    if !net.id.is_empty() {
-        net.id.clone()
-    } else {
-        subnet_label(net)
+    fn peer_detail(&self, record: Option<&PeerRecord>, online: bool) -> String {
+        let status = if online {
+            self.tr("en ligne", "online")
+        } else {
+            self.tr("hors ligne", "offline")
+        };
+        let subnet = record
+            .and_then(|r| r.last_subnet.as_deref())
+            .filter(|s| !s.is_empty())
+            .unwrap_or(self.tr("réseau inconnu", "unknown network"));
+        format!(
+            "{} - {}: {}",
+            status,
+            self.tr("dernier réseau", "last network"),
+            subnet
+        )
     }
 }
 
-fn subnet_label(net: &KnownNetwork) -> String {
+fn network_base_name(net: &KnownNetwork, unknown_label: &str) -> String {
+    if !net.id.is_empty() {
+        net.id.clone()
+    } else {
+        subnet_label(net, unknown_label)
+    }
+}
+
+fn subnet_label(net: &KnownNetwork, unknown_label: &str) -> String {
     if net.subnet.is_empty() {
-        "inconnu".to_string()
+        unknown_label.to_string()
     } else {
         format!("{}.x", net.subnet)
     }
@@ -495,15 +585,6 @@ fn subnet_label(net: &KnownNetwork) -> String {
 
 fn clean_alias(alias: Option<&str>) -> Option<&str> {
     alias.map(str::trim).filter(|alias| !alias.is_empty())
-}
-
-fn peer_detail(record: Option<&PeerRecord>, online: bool) -> String {
-    let status = if online { "en ligne" } else { "hors ligne" };
-    let subnet = record
-        .and_then(|r| r.last_subnet.as_deref())
-        .filter(|s| !s.is_empty())
-        .unwrap_or("réseau inconnu");
-    format!("{} - dernier réseau : {}", status, subnet)
 }
 
 fn detail_pill(ui: &mut egui::Ui, label: &str, value: &str) {

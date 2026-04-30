@@ -15,7 +15,7 @@ impl AbcomApp {
         }
 
         let mut picker_rect: Option<egui::Rect> = None;
-        let picker_window = egui::Window::new("Emojis")
+        let picker_window = egui::Window::new(self.tr("Emojis", "Emojis"))
             .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(0.0, -60.0))
             .resizable(false)
             .collapsible(false)
