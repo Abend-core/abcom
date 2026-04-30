@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -60,6 +61,7 @@ pub(crate) struct AbcomApp {
     pub(crate) input_cursor_char: usize,
     pub(crate) input_has_focus: bool,
     pub(crate) input_scroll_lines: f32,
+    pub(crate) show_attachment_menu: bool,
     pub(crate) show_emoji_picker: bool,
     pub(crate) show_participants: bool,
     pub(crate) enable_sound_notifications: bool,
@@ -88,6 +90,7 @@ pub(crate) struct AbcomApp {
     pub(crate) network_alias_edits: std::collections::HashMap<String, String>,
     pub(crate) peer_alias_edits: std::collections::HashMap<String, String>,
     pub(crate) drafts: std::collections::HashMap<Option<String>, String>,
+    pub(crate) pending_attachments: Vec<PathBuf>,
     pub(crate) ui_language: UiLanguage,
     pub(crate) theme_preference: ThemePreference,
     pub(crate) system_dark_mode: Option<bool>,
@@ -117,6 +120,7 @@ impl AbcomApp {
             input_cursor_char: 0,
             input_has_focus: false,
             input_scroll_lines: 0.0,
+            show_attachment_menu: false,
             show_emoji_picker: false,
             show_participants: false,
             enable_sound_notifications: true,
@@ -145,6 +149,7 @@ impl AbcomApp {
             network_alias_edits: std::collections::HashMap::new(),
             peer_alias_edits: std::collections::HashMap::new(),
             drafts: std::collections::HashMap::new(),
+            pending_attachments: Vec::new(),
             ui_language: UiLanguage::French,
             theme_preference: ThemePreference::System,
             system_dark_mode: None,
