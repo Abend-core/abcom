@@ -23,42 +23,85 @@ impl AbcomApp {
                 .or_else(|| known_networks.first().map(|n| n.id.clone()));
         }
 
-        ui.horizontal(|ui| {
-            ui.heading("🌐 Gérer les réseaux");
+        ui.horizontal_wrapped(|ui| {
+            ui.heading(self.tr("🌐 Gérer les réseaux", "🌐 Manage networks"));
             ui.label(
-                egui::RichText::new("alias séparés du nom détecté")
-                    .small()
-                    .weak(),
+                egui::RichText::new(self.tr(
+                    "alias séparés du nom détecté",
+                    "aliases stay separate from the detected name",
+                ))
+                .small()
+                .weak(),
             );
         });
         ui.separator();
         ui.add_space(8.0);
 
-        ui.horizontal_top(|ui| {
-            ui.allocate_ui_with_layout(
-                egui::vec2(270.0, ui.available_height()),
-                egui::Layout::top_down(egui::Align::LEFT),
-                |ui| {
-                    self.show_networks_list(ui, &known_networks, current_network_id.as_deref());
-                },
-            );
+        let compact_layout = ui.available_width() < 940.0;
 
-            ui.separator();
+        if compact_layout {
+            ui.vertical(|ui| {
+                let list_height = (ui.available_height() * 0.36).clamp(180.0, 300.0);
+                ui.allocate_ui_with_layout(
+                    egui::vec2(ui.available_width(), list_height),
+                    egui::Layout::top_down(egui::Align::LEFT),
+                    |ui| {
+                        self.show_networks_list(ui, &known_networks, current_network_id.as_deref());
+                    },
+                );
 
-            ui.allocate_ui_with_layout(
-                ui.available_size(),
-                egui::Layout::top_down(egui::Align::LEFT),
-                |ui| {
-                    self.show_network_details(
-                        ui,
-                        &known_networks,
-                        &peer_records_snap,
-                        &peers_snap,
-                        current_network_id.as_deref(),
-                    );
-                },
-            );
-        });
+                ui.add_space(8.0);
+                ui.separator();
+                ui.add_space(8.0);
+
+                egui::ScrollArea::vertical()
+                    .id_salt("network_details_compact")
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        self.show_network_details(
+                            ui,
+                            &known_networks,
+                            &peer_records_snap,
+                            &peers_snap,
+                            current_network_id.as_deref(),
+                        );
+                    });
+            });
+        } else {
+            ui.horizontal_top(|ui| {
+                let list_width = (ui.available_width() * 0.30).clamp(240.0, 320.0);
+                let details_width = (ui.available_width() - list_width - 16.0).max(320.0);
+
+                ui.allocate_ui_with_layout(
+                    egui::vec2(list_width, ui.available_height()),
+                    egui::Layout::top_down(egui::Align::LEFT),
+                    |ui| {
+                        self.show_networks_list(ui, &known_networks, current_network_id.as_deref());
+                    },
+                );
+
+                ui.separator();
+
+                ui.allocate_ui_with_layout(
+                    egui::vec2(details_width, ui.available_height()),
+                    egui::Layout::top_down(egui::Align::LEFT),
+                    |ui| {
+                        egui::ScrollArea::vertical()
+                            .id_salt("network_details_wide")
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                self.show_network_details(
+                                    ui,
+                                    &known_networks,
+                                    &peer_records_snap,
+                                    &peers_snap,
+                                    current_network_id.as_deref(),
+                                );
+                            });
+                    },
+                );
+            });
+        }
     }
 
     fn show_networks_list(
@@ -209,7 +252,7 @@ impl AbcomApp {
             .stroke(egui::Stroke::new(1.0, colors.selected_border))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.horizontal_top(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.vertical(|ui| {
                         ui.label(
                             egui::RichText::new(network_base_name(net))
@@ -230,7 +273,7 @@ impl AbcomApp {
                         }
                     });
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         if current_network_id == Some(net.id.as_str()) {
                             ui.label(
                                 egui::RichText::new("Réseau actuel")
@@ -344,6 +387,7 @@ impl AbcomApp {
         online: bool,
     ) {
         let colors = network_colors(ui);
+        let compact_layout = ui.available_width() < 520.0;
         egui::Frame::NONE
             .inner_margin(egui::Margin::symmetric(12, 8))
             .corner_radius(8.0)
@@ -351,61 +395,86 @@ impl AbcomApp {
             .stroke(egui::Stroke::new(1.0, colors.border))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
-                ui.horizontal_top(|ui| {
-                    ui.label(if online { "🟢" } else { "🔴" });
+                if compact_layout {
                     ui.vertical(|ui| {
-                        if let Some(alias) = record.and_then(|r| clean_alias(r.alias.as_deref())) {
-                            ui.label(egui::RichText::new(alias).strong().color(colors.text));
-                            ui.label(
-                                egui::RichText::new(format!("Nom d'origine : {}", username))
-                                    .small()
-                                    .color(colors.muted),
-                            );
-                        } else {
-                            ui.label(egui::RichText::new(username).strong().color(colors.text));
-                        }
-                        ui.label(
-                            egui::RichText::new(peer_detail(record, online))
-                                .small()
-                                .color(colors.muted),
-                        );
+                        render_peer_identity(ui, username, record, online, colors);
+                        ui.add_space(8.0);
+                        self.show_peer_controls(ui, username, record);
                     });
+                } else {
+                    ui.horizontal_top(|ui| {
+                        render_peer_identity(ui, username, record, online, colors);
 
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-                        if ui.small_button("Oublier").clicked() {
-                            let mut s = self.state.lock().unwrap();
-                            s.forget_peer(username);
-                            s.save_peer_records();
-                        }
-
-                        let entry = self
-                            .peer_alias_edits
-                            .entry(username.to_string())
-                            .or_insert_with(|| {
-                                record.and_then(|r| r.alias.clone()).unwrap_or_default()
-                            });
-                        let response = ui.add(
-                            egui::TextEdit::singleline(entry)
-                                .hint_text("Alias du pair")
-                                .desired_width(140.0),
-                        );
-                        let save_alias =
-                            response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                        if save_alias || ui.small_button("OK").clicked() {
-                            let new_alias = clean_alias(Some(entry.as_str())).map(str::to_owned);
-                            let mut s = self.state.lock().unwrap();
-                            if let Some(r) =
-                                s.peer_records.iter_mut().find(|r| r.username == username)
-                            {
-                                r.alias = new_alias.clone();
-                            }
-                            s.save_peer_records();
-                            *entry = new_alias.unwrap_or_default();
-                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                            self.show_peer_controls(ui, username, record);
+                        });
                     });
-                });
+                }
             });
     }
+
+    fn show_peer_controls(
+        &mut self,
+        ui: &mut egui::Ui,
+        username: &str,
+        record: Option<&PeerRecord>,
+    ) {
+        if ui.small_button("Oublier").clicked() {
+            let mut s = self.state.lock().unwrap();
+            s.forget_peer(username);
+            s.save_peer_records();
+        }
+
+        let entry = self
+            .peer_alias_edits
+            .entry(username.to_string())
+            .or_insert_with(|| record.and_then(|r| r.alias.clone()).unwrap_or_default());
+        let desired_width = ui.available_width().clamp(140.0, 220.0);
+        let response = ui.add(
+            egui::TextEdit::singleline(entry)
+                .hint_text("Alias du pair")
+                .desired_width(desired_width),
+        );
+        let save_alias = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if save_alias || ui.small_button("OK").clicked() {
+            let new_alias = clean_alias(Some(entry.as_str())).map(str::to_owned);
+            let mut s = self.state.lock().unwrap();
+            if let Some(r) = s.peer_records.iter_mut().find(|r| r.username == username) {
+                r.alias = new_alias.clone();
+            }
+            s.save_peer_records();
+            *entry = new_alias.unwrap_or_default();
+        }
+    }
+}
+
+fn render_peer_identity(
+    ui: &mut egui::Ui,
+    username: &str,
+    record: Option<&PeerRecord>,
+    online: bool,
+    colors: NetworkColors,
+) {
+    ui.horizontal_wrapped(|ui| {
+        ui.label(if online { "🟢" } else { "🔴" });
+        ui.vertical(|ui| {
+            if let Some(alias) = record.and_then(|r| clean_alias(r.alias.as_deref())) {
+                ui.label(egui::RichText::new(alias).strong().color(colors.text));
+                ui.label(
+                    egui::RichText::new(format!("Nom d'origine : {}", username))
+                        .small()
+                        .color(colors.muted),
+                );
+            } else {
+                ui.label(egui::RichText::new(username).strong().color(colors.text));
+            }
+            ui.label(
+                egui::RichText::new(peer_detail(record, online))
+                    .small()
+                    .color(colors.muted),
+            );
+        });
+    });
 }
 
 fn network_base_name(net: &KnownNetwork) -> String {
