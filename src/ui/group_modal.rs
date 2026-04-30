@@ -15,23 +15,26 @@ impl AbcomApp {
         let all_peers: Vec<String> = peers.iter().map(|p| p.username.clone()).collect();
         let mut is_open = true;
 
-        egui::Window::new("Créer un groupe")
+        egui::Window::new(self.tr("Créer un groupe", "Create a group"))
             .fixed_size([400.0, 350.0])
             .resizable(true)
             .collapsible(false)
             .open(&mut is_open)
             .show(ctx, |ui| {
-                ui.label("Nom du groupe:");
+                ui.label(self.tr("Nom du groupe:", "Group name:"));
                 ui.text_edit_singleline(&mut self.group_name_input);
                 ui.add_space(12.0);
-                ui.label("Sélectionner les pairs à inviter:");
+                ui.label(self.tr(
+                    "Sélectionner les pairs à inviter:",
+                    "Select peers to invite:",
+                ));
                 ui.add_space(8.0);
 
                 egui::ScrollArea::vertical()
                     .max_height(150.0)
                     .show(ui, |ui| {
                         if all_peers.is_empty() {
-                            ui.label("(Aucun pair disponible)");
+                            ui.label(self.tr("(Aucun pair disponible)", "(No peer available)"));
                         } else {
                             for peer in &all_peers {
                                 let mut is_selected = self.group_members_selected.contains(peer);
@@ -63,14 +66,14 @@ impl AbcomApp {
                         );
                     } else if !trimmed.is_empty() {
                         ui.label(
-                            egui::RichText::new("✗ Nom invalide")
+                            egui::RichText::new(self.tr("✗ Nom invalide", "✗ Invalid name"))
                                 .small()
                                 .color(egui::Color32::RED),
                         );
                     }
 
                     if ui
-                        .add_enabled(is_valid, egui::Button::new("✓ Créer"))
+                        .add_enabled(is_valid, egui::Button::new(self.tr("✓ Créer", "✓ Create")))
                         .clicked()
                     {
                         let name = trimmed.to_string();
@@ -97,7 +100,7 @@ impl AbcomApp {
                         }
                     }
 
-                    if ui.button("✕ Annuler").clicked() {
+                    if ui.button(self.tr("✕ Annuler", "✕ Cancel")).clicked() {
                         self.show_group_modal = false;
                         self.group_name_input.clear();
                         self.group_members_selected.clear();

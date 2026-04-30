@@ -50,7 +50,7 @@ impl AbcomApp {
                         .as_ref()
                         .and_then(|s| known_networks.iter().find(|n| &n.id == s))
                         .map(|n| n.display_name())
-                        .unwrap_or_else(|| "Tous".to_string());
+                        .unwrap_or_else(|| self.tr("Tous", "All").to_string());
                     egui::ComboBox::from_id_salt("network_filter")
                         .selected_text(&current_label)
                         .width(150.0)
@@ -58,7 +58,7 @@ impl AbcomApp {
                             if ui
                                 .selectable_label(
                                     self.selected_network_filter.is_none(),
-                                    "🌐 Tous les réseaux",
+                                    self.tr("🌐 Tous les réseaux", "🌐 All networks"),
                                 )
                                 .clicked()
                             {
@@ -69,7 +69,11 @@ impl AbcomApp {
                                     self.selected_network_filter.as_ref() == Some(&net.id);
                                 let is_current = current_network_id.as_ref() == Some(&net.id);
                                 let label = if is_current {
-                                    format!("📡 {} (actuel)", net.display_name())
+                                    format!(
+                                        "📡 {} ({})",
+                                        net.display_name(),
+                                        self.tr("actuel", "current")
+                                    )
                                 } else {
                                     format!("🔌 {}", net.display_name())
                                 };
@@ -99,10 +103,10 @@ impl AbcomApp {
                     };
 
                 // Section conversations
-                ui.heading("👥 Conversations");
+                ui.heading(self.tr("👥 Conversations", "👥 Conversations"));
                 ui.add_space(4.0);
                 if peers.is_empty() {
-                    ui.weak("En attente de pairs...");
+                    ui.weak(self.tr("En attente de pairs...", "Waiting for peers..."));
                 } else {
                     for (idx, peer) in peers.iter().enumerate() {
                         let is_selected = selected_conv
@@ -238,7 +242,7 @@ impl AbcomApp {
 
                 // Section groupes
                 ui.horizontal(|ui| {
-                    ui.heading("🔗 Groupes");
+                    ui.heading(self.tr("🔗 Groupes", "🔗 Groups"));
                     if ui.small_button("+").clicked() {
                         self.show_group_modal = true;
                         self.group_name_input.clear();
@@ -249,7 +253,7 @@ impl AbcomApp {
 
                 let groups = self.state.lock().unwrap().groups.clone();
                 if groups.is_empty() {
-                    ui.weak("Aucun groupe");
+                    ui.weak(self.tr("Aucun groupe", "No group"));
                 } else {
                     for group in &groups {
                         let is_selected = selected_conv
@@ -312,7 +316,7 @@ impl AbcomApp {
                     ui.painter().text(
                         rect.left_center() + egui::vec2(10.0, 0.0),
                         egui::Align2::LEFT_CENTER,
-                        "📢 Tous",
+                        self.tr("📢 Tous", "📢 All"),
                         font_id,
                         ui.visuals().text_color(),
                     );
@@ -325,13 +329,20 @@ impl AbcomApp {
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                     let my_name = self.state.lock().unwrap().my_username.clone();
                     ui.separator();
-                    ui.label(egui::RichText::new(format!("Vous : {}", my_name)).small());
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{}: {}",
+                            self.tr("Vous", "You"),
+                            my_name
+                        ))
+                        .small(),
+                    );
                     ui.add_space(4.0);
                     let btn = ui.add_sized(
                         [ui.available_width(), 32.0],
                         egui::SelectableLabel::new(
                             self.active_view == AppView::Networks,
-                            "🌐  Gérer les réseaux",
+                            self.tr("🌐  Gérer les réseaux", "🌐  Manage networks"),
                         ),
                     );
                     if btn.clicked() {
@@ -354,8 +365,9 @@ impl AbcomApp {
                 .show(ctx, |ui| {
                     ui.label(
                         egui::RichText::new(format!(
-                            "✍ {} en train d'écrire...",
+                            "✍ {} {}",
                             typing_list.join(", ")
+                            ,self.tr("en train d'écrire...", "is typing...")
                         ))
                         .weak()
                         .small(),
