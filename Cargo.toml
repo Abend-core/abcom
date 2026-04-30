@@ -21,6 +21,7 @@ anyhow = "1"
 dirs = "5"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 local-ip-address = "0.6"
+rfd = "0.15"
 
 [target.'cfg(windows)'.dependencies]
 rodio = { version = "0.19", default-features = false, features = ["symphonia-wav"] }
