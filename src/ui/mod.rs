@@ -41,6 +41,12 @@ pub(crate) enum ThemePreference {
     Dark,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AboutTab {
+    Credits,
+    License,
+}
+
 /// État de l'application UI
 pub(crate) struct AbcomApp {
     pub(crate) state: Arc<Mutex<AppState>>,
@@ -85,6 +91,8 @@ pub(crate) struct AbcomApp {
     pub(crate) ui_language: UiLanguage,
     pub(crate) theme_preference: ThemePreference,
     pub(crate) system_dark_mode: Option<bool>,
+    pub(crate) show_credits_modal: bool,
+    pub(crate) about_tab: AboutTab,
 }
 
 impl AbcomApp {
@@ -140,6 +148,8 @@ impl AbcomApp {
             ui_language: UiLanguage::French,
             theme_preference: ThemePreference::System,
             system_dark_mode: None,
+            show_credits_modal: false,
+            about_tab: AboutTab::Credits,
         }
     }
 
