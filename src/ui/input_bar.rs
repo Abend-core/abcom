@@ -38,7 +38,10 @@ impl AbcomApp {
                 .show(ctx, |ui| {
                     ui.centered_and_justified(|ui| {
                         ui.label(
-                            egui::RichText::new("🔴 Cet utilisateur est hors ligne")
+                            egui::RichText::new(self.tr(
+                                "🔴 Cet utilisateur est hors ligne",
+                                "🔴 This user is offline",
+                            ))
                                 .color(egui::Color32::from_rgb(180, 40, 40))
                                 .small(),
                         );

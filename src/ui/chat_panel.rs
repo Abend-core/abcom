@@ -21,7 +21,9 @@ impl AbcomApp {
                 (selected, my_username, msgs)
             };
 
-            let conversation_title = selected_conv.as_deref().unwrap_or("Tous");
+            let conversation_title = selected_conv
+                .as_deref()
+                .unwrap_or(self.tr("Tous", "All"));
             let is_broadcast = selected_conv.is_none();
 
             ui.horizontal(|ui| {
@@ -30,11 +32,11 @@ impl AbcomApp {
                     ui.heading(conversation_title);
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.menu_button("▾ Actions", |ui| {
+                    ui.menu_button(self.tr("▾ Actions", "▾ Actions"), |ui| {
                         let sound_text = if self.enable_sound_notifications {
-                            "🔊 Désactiver tous les sons"
+                            self.tr("🔊 Désactiver tous les sons", "🔊 Disable all sounds")
                         } else {
-                            "🔇 Activer tous les sons"
+                            self.tr("🔇 Activer tous les sons", "🔇 Enable all sounds")
                         };
                         if ui.button(sound_text).clicked() {
                             self.enable_sound_notifications = !self.enable_sound_notifications;
@@ -43,9 +45,12 @@ impl AbcomApp {
                         let this_conv = selected_conv.clone();
                         let is_muted = self.muted_conversations.contains(&this_conv);
                         let mute_text = if is_muted {
-                            "🔔 Réactiver les sons de ce salon"
+                            self.tr(
+                                "🔔 Réactiver les sons de ce salon",
+                                "🔔 Re-enable sounds for this chat",
+                            )
                         } else {
-                            "🔕 Muet pour ce salon"
+                            self.tr("🔕 Muet pour ce salon", "🔕 Mute this chat")
                         };
                         if ui.button(mute_text).clicked() {
                             if is_muted {
@@ -55,12 +60,18 @@ impl AbcomApp {
                             }
                             ui.close_menu();
                         }
-                        if ui.button("👥 Voir les participants").clicked() {
+                        if ui
+                            .button(self.tr("👥 Voir les participants", "👥 View participants"))
+                            .clicked()
+                        {
                             self.show_participants = true;
                             ui.close_menu();
                         }
                         if !is_broadcast {
-                            if ui.button("🗑 Effacer l'historique").clicked() {
+                            if ui
+                                .button(self.tr("🗑 Effacer l'historique", "🗑 Clear history"))
+                                .clicked()
+                            {
                                 self.state.lock().unwrap().clear_conversation_history();
                                 ui.close_menu();
                             }
@@ -77,21 +88,26 @@ impl AbcomApp {
                     (
                         s.selected_conversation
                             .clone()
-                            .unwrap_or_else(|| "Tous".to_string()),
+                                .unwrap_or_else(|| self.tr("Tous", "All").to_string()),
                         s.my_username.clone(),
                         s.selected_conversation.clone(),
                         s.peers.clone(),
                     )
                 };
                 let mut open = self.show_participants;
-                egui::Window::new("Participants")
+                egui::Window::new(self.tr("Participants", "Participants"))
                     .open(&mut open)
                     .resizable(false)
                     .collapsible(false)
                     .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
                     .show(ctx, |ui| {
                         ui.label(
-                            egui::RichText::new(format!("Conversation : {}", conv_name)).strong(),
+                            egui::RichText::new(format!(
+                                "{}: {}",
+                                self.tr("Conversation", "Conversation"),
+                                conv_name
+                            ))
+                            .strong(),
                         );
                         ui.separator();
                         if sel_conv.is_none() {
@@ -102,12 +118,19 @@ impl AbcomApp {
                                 });
                             }
                             if peers.is_empty() {
-                                ui.label("Aucun participant connecté");
+                                ui.label(self.tr(
+                                    "Aucun participant connecté",
+                                    "No connected participant",
+                                ));
                             }
                         } else {
                             ui.horizontal(|ui| {
                                 ui.label("👤");
-                                ui.label(format!("{} (vous)", my_name2));
+                                ui.label(format!(
+                                    "{} ({})",
+                                    my_name2,
+                                    self.tr("vous", "you")
+                                ));
                             });
                             if let Some(peer) = sel_conv {
                                 ui.horizontal(|ui| {
@@ -127,7 +150,9 @@ impl AbcomApp {
                 .show(ui, |ui| {
                     if conv_messages.is_empty() {
                         ui.add_space(50.0);
-                        ui.label(egui::RichText::new("Aucun message").weak());
+                        ui.label(
+                            egui::RichText::new(self.tr("Aucun message", "No message")).weak(),
+                        );
                     }
                     for msg in &conv_messages {
                         ui.vertical(|ui| {
@@ -183,7 +208,7 @@ impl AbcomApp {
     pub(crate) fn show_notification(&mut self, ctx: &egui::Context) {
         if let Some(notif) = &self.last_notification {
             if self.notification_time.elapsed().as_secs_f32() < 3.0 {
-                egui::Window::new("Notification")
+                egui::Window::new(self.tr("Notification", "Notification"))
                     .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 10.0))
                     .resizable(false)
                     .collapsible(false)
