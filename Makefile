@@ -1,4 +1,4 @@
-..PHONY: all build install uninstall run clean
+..PHONY: all build install uninstall run clean test test-verbose test-module test-watch
 
 export PATH := $(HOME)/.cargo/bin:$(PATH)
 CARGO := cargo
@@ -92,3 +92,21 @@ uninstall:
 ## Supprime les artefacts de compilation
 clean:
 	cargo clean
+
+## Lance tous les tests unitaires
+test:
+	$(CARGO) test
+
+## Tests avec sortie complète (println! visibles)
+test-verbose:
+	$(CARGO) test -- --nocapture
+
+## Tests d'un module spécifique  ex: make test-module M=app::peers
+test-module:
+	@test -n "$(M)" || (echo "Usage: make test-module M=app::peers" && exit 1)
+	$(CARGO) test $(M) -- --nocapture
+
+## Tests en mode watch (cargo-watch requis: cargo install cargo-watch)
+test-watch:
+	@command -v cargo-watch >/dev/null 2>&1 || (echo "❌  cargo-watch non installé — lance: cargo install cargo-watch" && exit 1)
+	cargo watch -x test
