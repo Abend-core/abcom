@@ -5,14 +5,17 @@ use eframe::egui;
 use tokio::sync::mpsc;
 
 use crate::app::AppState;
-use crate::message::{AppEvent, ReadReceiptRequest, MessageAckRequest, SendGroupRequest, SendRequest, TypingRequest};
+use crate::message::{
+    AppEvent, MessageAckRequest, ReadReceiptRequest, SendGroupRequest, SendRequest, TypingRequest,
+};
 
-pub mod composer;
 mod chat_panel;
+pub mod composer;
 mod emoji_picker;
 mod events;
 mod group_modal;
 mod input_bar;
+mod markdown;
 mod networks_view;
 mod sidebar;
 mod sound;
@@ -185,15 +188,26 @@ fn app_icon_data() -> Option<egui::IconData> {
             let rgba = img.to_rgba8();
             let (w, h) = rgba.dimensions();
             eprintln!("[ui] Icône chargée : {}x{}", w, h);
-            Some(egui::IconData { rgba: rgba.to_vec(), width: w, height: h })
+            Some(egui::IconData {
+                rgba: rgba.to_vec(),
+                width: w,
+                height: h,
+            })
         }
         Err(err) => {
             eprintln!("[ui] Erreur icône PNG : {}", err);
             let mut rgba = vec![0u8; 32 * 32 * 4];
             for i in 0..(32 * 32) {
-                rgba[i * 4] = 200; rgba[i * 4 + 1] = 50; rgba[i * 4 + 2] = 50; rgba[i * 4 + 3] = 255;
+                rgba[i * 4] = 200;
+                rgba[i * 4 + 1] = 50;
+                rgba[i * 4 + 2] = 50;
+                rgba[i * 4 + 3] = 255;
             }
-            Some(egui::IconData { rgba, width: 32, height: 32 })
+            Some(egui::IconData {
+                rgba,
+                width: 32,
+                height: 32,
+            })
         }
     }
 }
@@ -227,8 +241,13 @@ pub fn run(
         options,
         Box::new(|_cc| {
             Ok(Box::new(AbcomApp::new(
-                state, event_rx, send_tx, send_group_tx,
-                send_typing_tx, send_read_receipt_tx, send_ack_tx,
+                state,
+                event_rx,
+                send_tx,
+                send_group_tx,
+                send_typing_tx,
+                send_read_receipt_tx,
+                send_ack_tx,
             )))
         }),
     )
