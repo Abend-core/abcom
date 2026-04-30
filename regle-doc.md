@@ -49,7 +49,7 @@ Les titres # (H1), ## (H2), ### (H3), #### (H4) reflètent uniquement la granula
     Les titres ne contiennent JAMAIS les emojis 🌱🔧⚙️, pour que le sommaire auto-généré reste propre.
 
 Exemple correct dans back/readme.md :
-
+# Back (nom du service)
 # Architecture
 ## Couches applicatives
 ### Couche service
@@ -368,13 +368,15 @@ Applique l'Heuristique A. Le README.md racine DOIT contenir, dans cet ordre :
 
     Titre du projet.
 
+    📚 Sommaire : arborescence cliquable de TOUS les .md du repo, hiérarchisée et formalisée par sections. Les libellés sont lisibles (pas les noms de fichiers bruts) : on retire tirets et extensions, on ajoute accents et majuscules.
+
+
     🎯 Pitch projet (3-5 lignes).
 
     🏗️ Schéma C4 niveau 1 (Mermaid Context) du système global.
 
     🚀 Quick start : commandes pour lancer le projet.
 
-    📚 Sommaire : arborescence cliquable de TOUS les .md du repo, hiérarchisée et formalisée par sections. Les libellés sont lisibles (pas les noms de fichiers bruts) : on retire tirets et extensions, on ajoute accents et majuscules.
 
     Exemple :
 
@@ -431,3 +433,6 @@ CONTRAINTES FINALES
     Finesse rédactionnelle : les 3 niveaux 🌱🔧⚙️ doivent émerger avec intelligence, uniquement là où ils ont du sens, avec des libellés adaptés au sujet — jamais de copier-coller mécanique, jamais de remplissage forcé (Règles 3 et 5).
     Traçabilité non négociable : tout fichier de doc se termine par sa section de traçabilité (version + commit Git) — Règle 15.
     Ingénierie inverse non négociable : pour chaque service non-trivial, les 5 points de la Règle 11 doivent être couverts.
+    il faut pouvoir naviguer entres les differnet readme donc les readme qui ne sont pas a la racine il faut pouvoir revenir au readme de la racine (acceil)
+
+    
