@@ -2,6 +2,8 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use rfd;
+
 use eframe::egui;
 use tokio::sync::mpsc;
 
@@ -93,6 +95,8 @@ pub(crate) struct AbcomApp {
     pub(crate) peer_alias_edits: std::collections::HashMap<String, String>,
     pub(crate) drafts: std::collections::HashMap<Option<String>, String>,
     pub(crate) pending_attachments: Vec<PathBuf>,
+    /// 0 = none, 1 = pick files, 2 = pick folder (deferred to next frame to avoid AppKit conflict)
+    pub(crate) pending_picker: u8,
     pub(crate) transfer_progress: std::collections::HashMap<String, TransferProgress>,
     pub(crate) ui_language: UiLanguage,
     pub(crate) theme_preference: ThemePreference,
@@ -155,6 +159,7 @@ impl AbcomApp {
             peer_alias_edits: std::collections::HashMap::new(),
             drafts: std::collections::HashMap::new(),
             pending_attachments: Vec::new(),
+            pending_picker: 0,
             transfer_progress: std::collections::HashMap::new(),
             ui_language: UiLanguage::French,
             theme_preference: ThemePreference::System,
@@ -214,6 +219,42 @@ impl eframe::App for AbcomApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
                     egui::UserAttentionType::Reset,
                 ));
+            }
+        }
+
+        // Handle deferred native file/folder picker (must run before egui rendering to
+        // avoid conflicting with the AppKit run-loop on macOS).
+        if self.pending_picker != 0 {
+            let kind = self.pending_picker;
+            self.pending_picker = 0;
+            let (files_title, folder_title, files_added, folder_added) = (
+                self.tr("Ajouter des fichiers", "Add files"),
+                self.tr("Ajouter un dossier", "Add folder"),
+                self.tr("Fichiers ajoutés", "Files added"),
+                self.tr("Dossier ajouté", "Folder added"),
+            );
+            match kind {
+                1 => {
+                    if let Some(paths) = rfd::FileDialog::new().set_title(files_title).pick_files() {
+                        for p in paths {
+                            if !self.pending_attachments.contains(&p) {
+                                self.pending_attachments.push(p);
+                            }
+                        }
+                        self.last_notification = Some(files_added.to_string());
+                        self.notification_time = std::time::Instant::now();
+                    }
+                }
+                2 => {
+                    if let Some(path) = rfd::FileDialog::new().set_title(folder_title).pick_folder() {
+                        if !self.pending_attachments.contains(&path) {
+                            self.pending_attachments.push(path);
+                        }
+                        self.last_notification = Some(folder_added.to_string());
+                        self.notification_time = std::time::Instant::now();
+                    }
+                }
+                _ => {}
             }
         }
 

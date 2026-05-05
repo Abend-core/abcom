@@ -25,6 +25,7 @@ fn should_send_message(
     (pressed_enter || (pressed_enter_fallback && !shortcode_menu_open)) && !input.trim().is_empty()
 }
 
+#[cfg(test)]
 fn push_unique_paths(target: &mut Vec<PathBuf>, paths: impl IntoIterator<Item = PathBuf>) {
     for path in paths {
         if !target.iter().any(|existing| existing == &path) {
@@ -129,9 +130,18 @@ fn attachment_menu_popup(
     add_files_label: &str,
     add_folder_label: &str,
 ) -> Option<AttachmentMenuAction> {
-    let area = egui::Area::new(egui::Id::new("attachment_menu_popup"))
+    // Use the size remembered from the previous frame (or a safe default) so that
+    // the popup's bottom-left is anchored just above the + button.
+    let popup_id = egui::Id::new("attachment_menu_popup");
+    let popup_h = ctx
+        .memory(|m| m.area_rect(popup_id))
+        .map(|r| r.height())
+        .unwrap_or(80.0);
+    let popup_pos = anchor_rect.left_top() - egui::vec2(0.0, popup_h + 6.0);
+
+    let area = egui::Area::new(popup_id)
         .order(egui::Order::Foreground)
-        .fixed_pos(anchor_rect.left_bottom() + egui::vec2(0.0, 6.0));
+        .fixed_pos(popup_pos);
 
     area.show(ctx, |ui| {
         egui::Frame::popup(ui.style())
@@ -289,11 +299,9 @@ impl AbcomApp {
         }
 
         let mut emoji_button_clicked = false;
-        let mut picker_action = None;
+        let mut picker_action: Option<AttachmentMenuAction> = None;
         let add_files_label = self.tr("Ajouter des fichiers", "Add files");
         let add_folder_label = self.tr("Ajouter un dossier", "Add folder");
-        let files_added_label = self.tr("Fichiers ajoutés", "Files added");
-        let folder_added_label = self.tr("Dossier ajouté", "Folder added");
 
         egui::TopBottomPanel::bottom("input_panel")
             .resizable(false)
@@ -465,8 +473,9 @@ impl AbcomApp {
                                         add_files_label,
                                         add_folder_label,
                                     );
+                                    // Estimate popup rect above the + button for outside-click detection.
                                     let popup_rect = egui::Rect::from_min_size(
-                                        plus_btn.rect.left_bottom() + egui::vec2(0.0, 6.0),
+                                        plus_btn.rect.left_top() - egui::vec2(0.0, 92.0),
                                         egui::vec2(216.0, 92.0),
                                     );
 
@@ -618,26 +627,16 @@ impl AbcomApp {
                     });
             });
 
+        // Defer the file/folder picker to the next frame so it runs before egui
+        // rendering, avoiding an AppKit run-loop conflict on macOS.
         match picker_action {
             Some(AttachmentMenuAction::AddFiles) => {
-                if let Some(paths) = rfd::FileDialog::new()
-                    .set_title(add_files_label)
-                    .pick_files()
-                {
-                    push_unique_paths(&mut self.pending_attachments, paths);
-                    self.last_notification = Some(files_added_label.to_string());
-                    self.notification_time = std::time::Instant::now();
-                }
+                self.pending_picker = 1;
+                ctx.request_repaint();
             }
             Some(AttachmentMenuAction::AddFolder) => {
-                if let Some(path) = rfd::FileDialog::new()
-                    .set_title(add_folder_label)
-                    .pick_folder()
-                {
-                    push_unique_paths(&mut self.pending_attachments, [path]);
-                    self.last_notification = Some(folder_added_label.to_string());
-                    self.notification_time = std::time::Instant::now();
-                }
+                self.pending_picker = 2;
+                ctx.request_repaint();
             }
             None => {}
         }
