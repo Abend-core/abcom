@@ -98,7 +98,7 @@ test:
 	$(CARGO) test
 
 ## Tests avec sortie complète (println! visibles)
-test-verbose:
+testv:
 	$(CARGO) test -- --nocapture
 
 ## Tests d'un module spécifique  ex: make test-module M=app::peers
