@@ -12,7 +12,11 @@ mod ui;
 fn main() -> anyhow::Result<()> {
     let username = std::env::args()
         .nth(1)
-        .unwrap_or_else(|| std::env::var("USER").unwrap_or_else(|_| "anonymous".to_string()));
+        .unwrap_or_else(|| {
+            std::env::var("USER")
+                .or_else(|_| std::env::var("USERNAME"))
+                .unwrap_or_else(|_| "anonymous".to_string())
+        });
 
     let state = Arc::new(Mutex::new(app::AppState::new(username.clone())));
 
