@@ -1,7 +1,7 @@
 use eframe::egui;
 
 use crate::app::AppState;
-use crate::message::{AppEvent, GroupAction, MessageAck, MessageAckRequest};
+use crate::message::{AppEvent, GroupAction, MessageAck, MessageAckRequest, ReadReceipt, ReadReceiptRequest};
 use crate::transfer::TransferStatus;
 
 use super::{sound::play_notification_sound, AbcomApp};
@@ -56,7 +56,7 @@ impl AbcomApp {
         while let Ok(evt) = self.event_rx.try_recv() {
             match evt {
                 AppEvent::MessageReceived(msg) => {
-                    // ACK automatique pour les messages privés
+                    // ACK automatique + ReadReceipt pour les messages privés
                     if msg.to_user.is_some() && msg.from != s.my_username {
                         if let Some(peer) = s.peers.iter().find(|p| p.username == msg.from) {
                             let msg_hash = AppState::message_hash(&msg);
@@ -70,8 +70,20 @@ impl AbcomApp {
                                 to_addr: peer.addr,
                                 ack,
                             };
+                            // Envoyer le ReadReceipt automatiquement
+                            let receipt = ReadReceipt {
+                                from: s.my_username.clone(),
+                                to: msg.from.clone(),
+                                message_hash: msg_hash,
+                                timestamp: chrono::Local::now().format("%H:%M").to_string(),
+                            };
+                            let receipt_req = ReadReceiptRequest {
+                                to_addr: peer.addr,
+                                receipt,
+                            };
                             drop(s);
                             let _ = self.send_ack_tx.try_send(req);
+                            let _ = self.send_read_receipt_tx.try_send(receipt_req);
                             s = self.state.lock().unwrap();
                         }
                     }
