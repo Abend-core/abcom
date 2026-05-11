@@ -155,6 +155,86 @@ fn cursor_from_point(points: &[egui::Pos2], target: egui::Pos2) -> usize {
     best_idx
 }
 
+fn selection_range(selection_anchor: Option<usize>, cursor_char: usize) -> Option<(usize, usize)> {
+    selection_anchor.and_then(|anchor| {
+        if anchor == cursor_char {
+            None
+        } else {
+            Some((anchor.min(cursor_char), anchor.max(cursor_char)))
+        }
+    })
+}
+
+fn clear_selection(selection_anchor: &mut Option<usize>) {
+    *selection_anchor = None;
+}
+
+fn replace_selection(
+    text: &mut String,
+    cursor: &mut usize,
+    selection_anchor: &mut Option<usize>,
+    replacement: &str,
+) -> bool {
+    if let Some((start, end)) = selection_range(*selection_anchor, *cursor) {
+        replace_char_range(text, cursor, start, end, replacement);
+        *selection_anchor = None;
+        true
+    } else {
+        false
+    }
+}
+
+fn paint_selection(
+    painter: &egui::Painter,
+    content_rect: egui::Rect,
+    caret_points: &[egui::Pos2],
+    selection: Option<(usize, usize)>,
+    scroll_lines: f32,
+    line_height: f32,
+    color: egui::Color32,
+) {
+    let (start, end) = match selection {
+        Some(range) => range,
+        None => return,
+    };
+    if start >= end || end > caret_points.len() {
+        return;
+    }
+
+    let mut line_start = start;
+    let mut line_y = caret_points[start].y;
+    for idx in (start + 1)..=end {
+        let current_y = if idx < caret_points.len() {
+            caret_points[idx].y
+        } else {
+            caret_points[end - 1].y
+        };
+
+        if idx == end || (current_y - line_y).abs() > f32::EPSILON {
+            let start_x = caret_points[line_start].x;
+            let end_x = if idx == end {
+                caret_points[end].x
+            } else {
+                content_rect.width()
+            };
+            let top = content_rect.top() + line_y + 2.0 - scroll_lines * line_height;
+            let bottom = top + 18.0;
+            let rect = egui::Rect::from_min_max(
+                egui::pos2(content_rect.left() + start_x, top),
+                egui::pos2(content_rect.left() + end_x, bottom),
+            )
+            .intersect(content_rect);
+            if rect.is_positive() {
+                painter.rect_filled(rect, 0.0, color);
+            }
+            line_start = idx;
+            if idx < caret_points.len() {
+                line_y = caret_points[idx].y;
+            }
+        }
+    }
+}
+
 fn move_cursor_vertical(
     points: &[egui::Pos2],
     cursor_char: &mut usize,
@@ -206,6 +286,7 @@ pub fn custom_composer_input(
     shortcode_menu_open: bool,
     shortcode_selected: usize,
     width: f32,
+    selection_anchor: &mut Option<usize>,
 ) -> (egui::Response, bool, bool) {
     let line_height = 22.0;
     let base_content_width = (width.max(120.0) - 12.0).max(20.0);
@@ -225,7 +306,7 @@ pub fn custom_composer_input(
     }
     let visual_lines = line_count.clamp(1, 10) as f32;
     let desired_size = egui::vec2(width.max(120.0), 16.0 + visual_lines * line_height);
-    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
     let content_rect = if needs_scrollbar {
         egui::Rect::from_min_max(
             rect.min + egui::vec2(6.0, 6.0),
@@ -239,17 +320,69 @@ pub fn custom_composer_input(
     let max_scroll = (line_count as f32 - visual_lines).max(0.0);
     *scroll_lines = scroll_lines.clamp(0.0, max_scroll);
 
+    if ui.input(|i| i.pointer.any_pressed()) && response.hovered() {
+        if !ui.input(|i| i.modifiers.shift) {
+            clear_selection(selection_anchor);
+        }
+        if let Some(pos) = response.interact_pointer_pos() {
+            let local = egui::pos2(
+                (pos.x - content_rect.left()).max(0.0),
+                (pos.y - content_rect.top()).max(0.0),
+            );
+            let pressed_cursor = cursor_from_point(&caret_points, local);
+            if selection_anchor.is_none() {
+                *selection_anchor = Some(pressed_cursor);
+            }
+            *cursor_char = pressed_cursor;
+        }
+    }
+
     if response.clicked() {
         *input_has_focus = true;
         response.request_focus();
+        let clicked_cursor = if let Some(pos) = response.interact_pointer_pos() {
+            let local = egui::pos2(
+                (pos.x - content_rect.left()).max(0.0),
+                (pos.y - content_rect.top()).max(0.0),
+            );
+            cursor_from_point(&caret_points, local)
+        } else {
+            input.chars().count()
+        };
+        if ui.input(|i| i.modifiers.shift) {
+            if selection_anchor.is_none() {
+                *selection_anchor = Some(*cursor_char);
+            }
+            *cursor_char = clicked_cursor;
+        } else {
+            if selection_range(*selection_anchor, clicked_cursor).is_none() {
+                clear_selection(selection_anchor);
+            }
+            *cursor_char = clicked_cursor;
+        }
+    }
+
+    if response.drag_started() {
+        if selection_anchor.is_none() {
+            if let Some(pos) = response.interact_pointer_pos() {
+                let local = egui::pos2(
+                    (pos.x - content_rect.left()).max(0.0),
+                    (pos.y - content_rect.top()).max(0.0),
+                );
+                let drag_start_cursor = cursor_from_point(&caret_points, local);
+                *selection_anchor = Some(drag_start_cursor);
+                *cursor_char = drag_start_cursor;
+            }
+        }
+    }
+
+    if response.dragged() {
         if let Some(pos) = response.interact_pointer_pos() {
             let local = egui::pos2(
                 (pos.x - content_rect.left()).max(0.0),
                 (pos.y - content_rect.top()).max(0.0),
             );
             *cursor_char = cursor_from_point(&caret_points, local);
-        } else {
-            *cursor_char = input.chars().count();
         }
     }
 
@@ -306,17 +439,20 @@ pub fn custom_composer_input(
             match event {
                 egui::Event::Text(t) => {
                     if !t.contains('\n') && !t.contains('\r') {
+                        replace_selection(input, cursor_char, selection_anchor, "");
                         insert_text_at_cursor(input, cursor_char, &t);
                         changed = true;
                     }
                 }
                 egui::Event::Ime(egui::ImeEvent::Commit(t)) => {
                     if !t.contains('\n') && !t.contains('\r') && !t.is_empty() {
+                        replace_selection(input, cursor_char, selection_anchor, "");
                         insert_text_at_cursor(input, cursor_char, &t);
                         changed = true;
                     }
                 }
                 egui::Event::Paste(t) => {
+                    replace_selection(input, cursor_char, selection_anchor, "");
                     insert_text_at_cursor(input, cursor_char, &t.replace(['\r', '\n'], " "));
                     changed = true;
                 }
@@ -326,9 +462,19 @@ pub fn custom_composer_input(
                     modifiers,
                     ..
                 } => match key {
+                    egui::Key::A if modifiers.ctrl || modifiers.command => {
+                        let total_chars = input.chars().count();
+                        if total_chars > 0 {
+                            *selection_anchor = Some(0);
+                            *cursor_char = total_chars;
+                        } else {
+                            clear_selection(selection_anchor);
+                        }
+                    }
                     egui::Key::Enter => {
                         match enter_key_action(shortcode_menu_open, modifiers.shift) {
                             EnterKeyAction::InsertNewline => {
+                                replace_selection(input, cursor_char, selection_anchor, "");
                                 insert_text_at_cursor(input, cursor_char, "\n");
                                 changed = true;
                             }
@@ -367,28 +513,61 @@ pub fn custom_composer_input(
                         }
                     }
                     egui::Key::Backspace => {
-                        let before = input.len();
-                        remove_prev_char(input, cursor_char);
-                        changed |= input.len() != before;
+                        if !replace_selection(input, cursor_char, selection_anchor, "") {
+                            let before = input.len();
+                            remove_prev_char(input, cursor_char);
+                            changed |= input.len() != before;
+                        } else {
+                            changed = true;
+                        }
                     }
                     egui::Key::Delete => {
-                        let before = input.len();
-                        remove_next_char(input, cursor_char);
-                        changed |= input.len() != before;
+                        if !replace_selection(input, cursor_char, selection_anchor, "") {
+                            let before = input.len();
+                            remove_next_char(input, cursor_char);
+                            changed |= input.len() != before;
+                        } else {
+                            changed = true;
+                        }
                     }
                     egui::Key::ArrowLeft => {
+                        if modifiers.shift {
+                            if selection_anchor.is_none() {
+                                *selection_anchor = Some(*cursor_char);
+                            }
+                        } else {
+                            clear_selection(selection_anchor);
+                        }
                         if *cursor_char > 0 {
                             *cursor_char -= 1;
                         }
+                        if selection_range(*selection_anchor, *cursor_char).is_none() {
+                            clear_selection(selection_anchor);
+                        }
                     }
                     egui::Key::ArrowRight => {
+                        if modifiers.shift {
+                            if selection_anchor.is_none() {
+                                *selection_anchor = Some(*cursor_char);
+                            }
+                        } else {
+                            clear_selection(selection_anchor);
+                        }
                         let len = input.chars().count();
                         if *cursor_char < len {
                             *cursor_char += 1;
                         }
+                        if selection_range(*selection_anchor, *cursor_char).is_none() {
+                            clear_selection(selection_anchor);
+                        }
                     }
                     egui::Key::ArrowUp => {
                         if !shortcode_menu_open {
+                            if modifiers.shift && selection_anchor.is_none() {
+                                *selection_anchor = Some(*cursor_char);
+                            } else if !modifiers.shift {
+                                clear_selection(selection_anchor);
+                            }
                             let points = composer_caret_positions(
                                 ui,
                                 input,
@@ -397,10 +576,18 @@ pub fn custom_composer_input(
                                 content_rect.width().max(20.0),
                             );
                             move_cursor_vertical(&points, cursor_char, -1, line_height);
+                            if selection_range(*selection_anchor, *cursor_char).is_none() {
+                                clear_selection(selection_anchor);
+                            }
                         }
                     }
                     egui::Key::ArrowDown => {
                         if !shortcode_menu_open {
+                            if modifiers.shift && selection_anchor.is_none() {
+                                *selection_anchor = Some(*cursor_char);
+                            } else if !modifiers.shift {
+                                clear_selection(selection_anchor);
+                            }
                             let points = composer_caret_positions(
                                 ui,
                                 input,
@@ -409,13 +596,32 @@ pub fn custom_composer_input(
                                 content_rect.width().max(20.0),
                             );
                             move_cursor_vertical(&points, cursor_char, 1, line_height);
+                            if selection_range(*selection_anchor, *cursor_char).is_none() {
+                                clear_selection(selection_anchor);
+                            }
                         }
                     }
                     egui::Key::Home => {
+                        if modifiers.shift && selection_anchor.is_none() {
+                            *selection_anchor = Some(*cursor_char);
+                        } else if !modifiers.shift {
+                            clear_selection(selection_anchor);
+                        }
                         *cursor_char = 0;
+                        if selection_range(*selection_anchor, *cursor_char).is_none() {
+                            clear_selection(selection_anchor);
+                        }
                     }
                     egui::Key::End => {
+                        if modifiers.shift && selection_anchor.is_none() {
+                            *selection_anchor = Some(*cursor_char);
+                        } else if !modifiers.shift {
+                            clear_selection(selection_anchor);
+                        }
                         *cursor_char = input.chars().count();
+                        if selection_range(*selection_anchor, *cursor_char).is_none() {
+                            clear_selection(selection_anchor);
+                        }
                     }
                     _ => {}
                 },
@@ -445,6 +651,16 @@ pub fn custom_composer_input(
         );
     } else {
         let painter = ui.painter().with_clip_rect(content_rect);
+        paint_selection(
+            &painter,
+            content_rect,
+            &caret_points,
+            selection_range(*selection_anchor, *cursor_char),
+            *scroll_lines,
+            line_height,
+            ui.visuals().selection.bg_fill,
+        );
+
         let chars: Vec<char> = input.chars().collect();
         let mut i = 0;
         let mut x = content_rect.left();

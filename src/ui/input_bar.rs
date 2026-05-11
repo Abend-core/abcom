@@ -385,6 +385,7 @@ impl AbcomApp {
                                     menu_open_now,
                                     self.shortcode_selected,
                                     available_w,
+                                    &mut self.input_selection_anchor,
                                 );
 
                                 ui.add_space(6.0);
@@ -617,6 +618,7 @@ impl AbcomApp {
                                     &self.input,
                                 ) {
                                     if send_current_message(self, selected_addr, &all_peers) {
+                                        self.input_selection_anchor = None;
                                         resp.request_focus();
                                         self.show_emoji_picker = false;
                                     }

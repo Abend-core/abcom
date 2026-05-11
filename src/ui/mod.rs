@@ -63,6 +63,7 @@ pub(crate) struct AbcomApp {
     pub(crate) send_transfer_tx: mpsc::Sender<TransferRequest>,
     pub(crate) input: String,
     pub(crate) input_cursor_char: usize,
+    pub(crate) input_selection_anchor: Option<usize>,
     pub(crate) input_has_focus: bool,
     pub(crate) input_scroll_lines: f32,
     pub(crate) show_attachment_menu: bool,
@@ -127,6 +128,7 @@ impl AbcomApp {
             send_transfer_tx,
             input: String::new(),
             input_cursor_char: 0,
+            input_selection_anchor: None,
             input_has_focus: false,
             input_scroll_lines: 0.0,
             show_attachment_menu: false,
@@ -187,6 +189,7 @@ impl AbcomApp {
         let draft = self.drafts.get(&conversation).cloned().unwrap_or_default();
         self.input = draft;
         self.input_cursor_char = 0;
+        self.input_selection_anchor = None;
         self.input_has_focus = false;
         self.input_scroll_lines = 0.0;
     }
