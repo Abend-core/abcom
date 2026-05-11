@@ -263,7 +263,6 @@ impl eframe::App for AbcomApp {
 
         self.show_header_bar(ctx);
         self.show_sidebar_panel(ctx);
-        self.show_typing_panel(ctx);
         let emoji_btn_clicked = self.show_input_bar(ctx);
         self.show_notification(ctx);
         self.show_emoji_picker_window(ctx, emoji_btn_clicked);
