@@ -1,4 +1,4 @@
-..PHONY: all build install uninstall run clean test test-verbose test-module test-watch
+.PHONY: all build install uninstall run run-windows help clean test test-verbose test-module test-watch
 
 export PATH := $(HOME)/.cargo/bin:$(PATH)
 CARGO := cargo
@@ -31,7 +31,22 @@ run-windows:
 	@mkdir -p /mnt/c/Users/$(USER)/AppData/Local/abcom/assets
 	@cp -f target/x86_64-pc-windows-gnu/release/abcom.exe /mnt/c/Users/$(USER)/AppData/Local/abcom/abcom_new.exe 2>/dev/null || true
 	@cp -f assets/app_icon.jpg /mnt/c/Users/$(USER)/AppData/Local/abcom/assets/ 2>/dev/null || true
-	@/mnt/c/Windows/System32/cmd.exe /c start "" "C:\Users\$(USER)\AppData\Local\abcom\abcom_new.exe" $(USER)
+	@cd /mnt/c/Users/$(USER)/AppData/Local/abcom && /mnt/c/Windows/System32/cmd.exe /c start "" "C:\Users\$(USER)\AppData\Local\abcom\abcom_new.exe" $(USER)
+
+## Affiche l'aide des cibles du Makefile
+help:
+	@printf "\nTargets disponibles:\n"
+	@printf "  make build            - compile en mode développement\n"
+	@printf "  make release          - compile en mode release optimisé\n"
+	@printf "  make run              - lance l'application localement\n"
+	@printf "  make run-windows      - compile pour Windows depuis WSL et lance l'appli\n"
+	@printf "  make install          - installe binaire + raccourci + service systemd\n"
+	@printf "  make uninstall        - désinstalle le binaire et le service\n"
+	@printf "  make clean            - supprime les artefacts de compilation\n"
+	@printf "  make test             - lance tous les tests\n"
+	@printf "  make test-verbose     - lance les tests avec --nocapture\n"
+	@printf "  make test-module M=.. - lance un module de test spécifique\n"
+	@printf "  make test-watch       - lance les tests en mode watch\n\n"
 
 ## Installe le binaire + active le service systemd + raccourci menu
 install: release
