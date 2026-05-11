@@ -33,7 +33,7 @@ impl AbcomApp {
                     ui.heading(conversation_title);
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.menu_button(self.tr("▾ Actions", "▾ Actions"), |ui| {
+                    ui.menu_button(self.tr("Actions", "Actions"), |ui| {
                         let sound_text = if self.enable_sound_notifications {
                             self.tr("🔊 Désactiver tous les sons", "🔊 Disable all sounds")
                         } else {
