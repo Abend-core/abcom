@@ -60,20 +60,20 @@ impl AbcomApp {
 
                     if is_valid {
                         ui.label(
-                            egui::RichText::new(format!("✓ {}", trimmed.len()))
+                            egui::RichText::new(format!("OK {}", trimmed.len()))
                                 .small()
                                 .color(egui::Color32::GREEN),
                         );
                     } else if !trimmed.is_empty() {
                         ui.label(
-                            egui::RichText::new(self.tr("✗ Nom invalide", "✗ Invalid name"))
+                            egui::RichText::new(self.tr("Nom invalide", "Invalid name"))
                                 .small()
                                 .color(egui::Color32::RED),
                         );
                     }
 
                     if ui
-                        .add_enabled(is_valid, egui::Button::new(self.tr("✓ Créer", "✓ Create")))
+                        .add_enabled(is_valid, egui::Button::new(self.tr("Créer", "Create")))
                         .clicked()
                     {
                         let name = trimmed.to_string();

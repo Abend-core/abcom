@@ -446,7 +446,7 @@ impl AbcomApp {
                                 } else {
                                     action_button(
                                         ui,
-                                        egui::RichText::new("☺")
+                                        egui::RichText::new("Em")
                                             .size(16.0)
                                             .color(egui::Color32::from_rgb(244, 245, 247)),
                                         self.tr("Emojis", "Emoji"),
@@ -625,25 +625,26 @@ impl AbcomApp {
                                     }
                                 }
 
-                                if !typing_list.is_empty() {
-                                    ui.add_space(4.0);
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Min),
-                                        |ui| {
-                                            ui.label(
-                                                egui::RichText::new(format!(
-                                                    "✍ {} {}",
-                                                    typing_list.join(", "),
-                                                    self.tr("en train d'écrire...", "is typing...")
-                                                ))
-                                                .weak()
-                                                .small(),
-                                            );
-                                        },
-                                    );
-                                }
                             },
                             );
+
+                            if !typing_list.is_empty() {
+                                ui.add_space(4.0);
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Min),
+                                    |ui| {
+                                        ui.label(
+                                            egui::RichText::new(format!(
+                                                "{} {}",
+                                                typing_list.join(", "),
+                                                self.tr("en train d'écrire...", "is typing...")
+                                            ))
+                                            .color(egui::Color32::WHITE)
+                                            .small(),
+                                        );
+                                    },
+                                );
+                            }
                         });
                     });
             });

@@ -185,10 +185,7 @@ impl AbcomApp {
                         ui.separator();
                         if sel_conv.is_none() {
                             for peer in &peers {
-                                ui.horizontal(|ui| {
-                                    ui.label("👤");
-                                    ui.label(&peer.username);
-                                });
+                                ui.label(&peer.username);
                             }
                             if peers.is_empty() {
                                 ui.label(self.tr(
@@ -197,19 +194,13 @@ impl AbcomApp {
                                 ));
                             }
                         } else {
-                            ui.horizontal(|ui| {
-                                ui.label("👤");
-                                ui.label(format!(
-                                    "{} ({})",
-                                    my_name2,
-                                    self.tr("vous", "you")
-                                ));
-                            });
+                            ui.label(format!(
+                                "{} ({})",
+                                my_name2,
+                                self.tr("vous", "you")
+                            ));
                             if let Some(peer) = sel_conv {
-                                ui.horizontal(|ui| {
-                                    ui.label("👤");
-                                    ui.label(&peer);
-                                });
+                                ui.label(&peer);
                             }
                         }
                     });
@@ -252,13 +243,13 @@ impl AbcomApp {
                                     let read_count = s.get_read_count(AppState::message_hash(msg));
                                     if read_count > 0 {
                                         ui.label(
-                                            egui::RichText::new("✓✓")
+                                            egui::RichText::new("vv")
                                                 .color(egui::Color32::BLUE)
                                                 .small(),
                                         );
                                     } else {
                                         ui.label(
-                                            egui::RichText::new("✓")
+                                            egui::RichText::new("v")
                                                 .color(egui::Color32::GRAY)
                                                 .small(),
                                         );
