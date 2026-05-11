@@ -1,6 +1,5 @@
 use eframe::egui;
 
-use crate::app::AppState;
 use crate::transfer::{TransferDirection, TransferStatus};
 
 use super::{AbcomApp, AppView};
@@ -237,24 +236,6 @@ impl AbcomApp {
                                         .strong(),
                                 );
 
-                                // Accusés de lecture (messages envoyés)
-                                if msg.from == my_name {
-                                    let s = self.state.lock().unwrap();
-                                    let read_count = s.get_read_count(AppState::message_hash(msg));
-                                    if read_count > 0 {
-                                        ui.label(
-                                            egui::RichText::new("vv")
-                                                .color(egui::Color32::BLUE)
-                                                .small(),
-                                        );
-                                    } else {
-                                        ui.label(
-                                            egui::RichText::new("v")
-                                                .color(egui::Color32::GRAY)
-                                                .small(),
-                                        );
-                                    }
-                                }
                             });
                             super::markdown::render_message_markdown(
                                 ui,
