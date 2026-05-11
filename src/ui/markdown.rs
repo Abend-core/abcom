@@ -346,6 +346,9 @@ pub(crate) fn render_message_markdown(
     emoji_map: &std::collections::HashMap<String, usize>,
     emoji_textures: &[(String, egui::TextureHandle)],
 ) {
+    let is_emoji_only = is_text_emoji_only(text, emoji_map);
+    let emoji_size = if is_emoji_only { 44.0 } else { 22.0 };
+
     for block in parse_markdown(text) {
         match block {
             MarkdownBlock::Blank => {
@@ -353,7 +356,7 @@ pub(crate) fn render_message_markdown(
             }
             MarkdownBlock::Paragraph(spans) => {
                 ui.horizontal_wrapped(|ui| {
-                    render_spans(ui, &spans, emoji_map, emoji_textures, None)
+                    render_spans_with_emoji_size(ui, &spans, emoji_map, emoji_textures, None, emoji_size)
                 });
             }
             MarkdownBlock::Heading { level, spans } => {
@@ -363,29 +366,30 @@ pub(crate) fn render_message_markdown(
                     _ => 17.0,
                 };
                 ui.horizontal_wrapped(|ui| {
-                    render_spans(
+                    render_spans_with_emoji_size(
                         ui,
                         &spans,
                         emoji_map,
                         emoji_textures,
                         Some(SpanOverride::Heading(size)),
+                        emoji_size,
                     );
                 });
             }
             MarkdownBlock::Bullet(spans) => {
                 ui.horizontal_wrapped(|ui| {
                     ui.label("• ");
-                    render_spans(ui, &spans, emoji_map, emoji_textures, None);
+                    render_spans_with_emoji_size(ui, &spans, emoji_map, emoji_textures, None, emoji_size);
                 });
             }
             MarkdownBlock::OrderedBullet { number, spans } => {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(format!("{}. ", number));
-                    render_spans(ui, &spans, emoji_map, emoji_textures, None);
+                    render_spans_with_emoji_size(ui, &spans, emoji_map, emoji_textures, None, emoji_size);
                 });
             }
             MarkdownBlock::Blockquote(spans) => {
-                render_blockquote(ui, &spans, emoji_map, emoji_textures);
+                render_blockquote_with_emoji_size(ui, &spans, emoji_map, emoji_textures, emoji_size);
             }
             MarkdownBlock::CodeBlock { language, code } => {
                 render_code_block(ui, language.as_deref(), &code);
@@ -397,17 +401,44 @@ pub(crate) fn render_message_markdown(
     }
 }
 
+fn is_text_emoji_only(text: &str, emoji_map: &std::collections::HashMap<String, usize>) -> bool {
+    let chars: Vec<char> = text.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let mut matched = false;
+        for len in [2usize, 1] {
+            if i + len <= chars.len() {
+                let s: String = chars[i..i + len].iter().collect();
+                if emoji_map.contains_key(&s) {
+                    i += len;
+                    matched = true;
+                    break;
+                }
+            }
+        }
+        if !matched {
+            let ch = chars[i];
+            if ch != '\u{fe0f}' && ch != '\u{200d}' && !ch.is_whitespace() {
+                return false;
+            }
+            i += 1;
+        }
+    }
+    true
+}
+
 #[derive(Clone, Copy)]
 enum SpanOverride {
     Heading(f32),
 }
 
-fn render_spans(
+fn render_spans_with_emoji_size(
     ui: &mut egui::Ui,
     spans: &[MarkdownSpan],
     emoji_map: &std::collections::HashMap<String, usize>,
     emoji_textures: &[(String, egui::TextureHandle)],
     override_style: Option<SpanOverride>,
+    emoji_size: f32,
 ) {
     ui.spacing_mut().item_spacing.x = 0.0;
     for span in spans {
@@ -416,7 +447,7 @@ fn render_spans(
                 if let Some(SpanOverride::Heading(size)) = override_style {
                     ui.label(egui::RichText::new(text).strong().size(size));
                 } else {
-                    super::emoji_picker::render_inline(ui, text, emoji_map, emoji_textures, 16.0);
+                    super::emoji_picker::render_inline(ui, text, emoji_map, emoji_textures, emoji_size);
                 }
             }
             MarkdownSpan::Strong(text) => {
@@ -443,11 +474,12 @@ fn render_spans(
     }
 }
 
-fn render_blockquote(
+fn render_blockquote_with_emoji_size(
     ui: &mut egui::Ui,
     spans: &[MarkdownSpan],
     emoji_map: &std::collections::HashMap<String, usize>,
     emoji_textures: &[(String, egui::TextureHandle)],
+    emoji_size: f32,
 ) {
     let dark_mode = ui.visuals().dark_mode;
     let bg = if dark_mode {
@@ -468,7 +500,7 @@ fn render_blockquote(
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                render_spans(ui, spans, emoji_map, emoji_textures, None);
+                render_spans_with_emoji_size(ui, spans, emoji_map, emoji_textures, None, emoji_size);
             });
         });
 }

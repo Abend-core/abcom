@@ -356,23 +356,4 @@ impl AbcomApp {
             });
     }
 
-    /// Bandeau de typage en bas de page
-    pub(crate) fn show_typing_panel(&mut self, ctx: &egui::Context) {
-        let typing_list = self.state.lock().unwrap().typing_users_list();
-        if !typing_list.is_empty() {
-            egui::TopBottomPanel::bottom("typing_panel")
-                .exact_height(25.0)
-                .show(ctx, |ui| {
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "✍ {} {}",
-                            typing_list.join(", ")
-                            ,self.tr("en train d'écrire...", "is typing...")
-                        ))
-                        .weak()
-                        .small(),
-                    );
-                });
-        }
-    }
 }

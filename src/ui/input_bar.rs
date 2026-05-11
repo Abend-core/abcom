@@ -300,6 +300,7 @@ impl AbcomApp {
 
         let mut emoji_button_clicked = false;
         let mut picker_action: Option<AttachmentMenuAction> = None;
+        let typing_list = self.state.lock().unwrap().typing_users_list();
         let add_files_label = self.tr("Ajouter des fichiers", "Add files");
         let add_folder_label = self.tr("Ajouter un dossier", "Add folder");
 
@@ -622,6 +623,24 @@ impl AbcomApp {
                                         resp.request_focus();
                                         self.show_emoji_picker = false;
                                     }
+                                }
+
+                                if !typing_list.is_empty() {
+                                    ui.add_space(4.0);
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Min),
+                                        |ui| {
+                                            ui.label(
+                                                egui::RichText::new(format!(
+                                                    "✍ {} {}",
+                                                    typing_list.join(", "),
+                                                    self.tr("en train d'écrire...", "is typing...")
+                                                ))
+                                                .weak()
+                                                .small(),
+                                            );
+                                        },
+                                    );
                                 }
                             },
                             );
