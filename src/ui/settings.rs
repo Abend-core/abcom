@@ -1,6 +1,6 @@
 use eframe::egui;
 
-use super::{AboutTab, AbcomApp, ThemePreference, UiLanguage};
+use super::{AbcomApp, SettingsTab, ThemePreference, UiLanguage};
 
 const LICENSE_TEXT: &str = include_str!("../../LICENSE");
 
@@ -23,154 +23,165 @@ impl AbcomApp {
         });
     }
 
-    pub(crate) fn show_header_bar(&mut self, ctx: &egui::Context) {
+    /// Fenêtre Paramètres : regroupe langue, thème, crédits et licence.
+    /// Ouverte depuis l'icône engrenage en bas de la barre latérale, elle
+    /// remplace l'ancien bandeau supérieur. Un bandeau d'onglets permet de
+    /// naviguer entre Général, Crédits et Licence.
+    pub(crate) fn render_settings(&mut self, ctx: &egui::Context) {
+        if !self.show_settings {
+            return;
+        }
+
         let version = env!("CARGO_PKG_VERSION");
         let service_name = "Abcom";
+
+        let title = self.tr("Paramètres", "Settings");
+        let general_label = self.tr("Général", "General");
+        let credits_label = self.tr("Crédits", "Credits");
+        let license_label = self.tr("Licence", "License");
+
+        // Onglet Général
         let language_label = self.tr("Langue", "Language");
-        let theme_label = self.tr("Theme", "Theme");
-        let credits_label = self.tr("Credits", "Credits");
-        let license_tab_label = self.tr("Licence", "License");
-        let theme_system_label = self.tr("Suivre le systeme", "Follow system");
+        let theme_label = self.tr("Thème", "Theme");
+        let theme_system_label = self.tr("Suivre le système", "Follow system");
         let theme_light_label = self.tr("Clair", "Light");
         let theme_dark_label = self.tr("Sombre", "Dark");
-        let panel_fill = ctx.style().visuals.panel_fill;
-        let panel_stroke = ctx.style().visuals.widgets.noninteractive.bg_stroke;
-        let info_title = self.tr("Informations", "Information");
-        let about_label = self.tr("Service", "Service");
-        let description_label = self.tr("Description", "Description");
-        let copyright_label = self.tr("Copyright", "Copyright");
-        let license_label = self.tr("Licence", "License");
-        let version_label = self.tr("Version", "Version");
-        let developers_label = self.tr("Developpeurs", "Developers");
+
+        // Onglet Crédits
+        let service_field = self.tr("Service", "Service");
+        let description_field = self.tr("Description", "Description");
+        let version_field = self.tr("Version", "Version");
+        let developers_field = self.tr("Développeurs", "Developers");
+        let copyright_field = self.tr("Copyright", "Copyright");
+        let license_field = self.tr("Licence", "License");
         let description_text = self.tr(
-            "Messagerie pair-a-pair locale avec decouverte automatique des pairs, conversations, groupes, aliases reseau et rendu Markdown natif.",
-            "Local peer-to-peer messaging with automatic peer discovery, conversations, groups, network aliases, and native Markdown rendering.",
+            "Messagerie pair-à-pair locale : découverte automatique des pairs, conversations, groupes, alias de contacts et rendu Markdown natif.",
+            "Local peer-to-peer messaging: automatic peer discovery, conversations, groups, contact aliases, and native Markdown rendering.",
         );
         let warranty_text = self.tr(
-            "Logiciel distribue sans garantie. Voir la licence AGPL v3 pour les details.",
+            "Logiciel distribué sans garantie. Voir la licence AGPL v3 pour les détails.",
             "Software distributed without warranty. See the AGPL v3 license for details.",
         );
 
-        egui::TopBottomPanel::top("header_bar")
+        // Taille fixe (celle, maximale, de l'onglet Licence) pour que la fenêtre
+        // ne change pas de dimensions quand on bascule d'un onglet à l'autre.
+        const SETTINGS_SIZE: egui::Vec2 = egui::vec2(640.0, 480.0);
+
+        let mut open = self.show_settings;
+        egui::Window::new(title)
+            .open(&mut open)
             .resizable(false)
-            .exact_height(28.0)
-            .frame(
-                egui::Frame::NONE
-                    .fill(panel_fill)
-                    .stroke(panel_stroke)
-                    .inner_margin(egui::Margin::symmetric(0, 0))
-                    .outer_margin(egui::Margin::symmetric(0, 0)),
-            )
+            .collapsible(false)
+            .fixed_size(SETTINGS_SIZE)
+            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
             .show(ctx, |ui| {
-                ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
-                ui.spacing_mut().button_padding = egui::vec2(8.0, 0.0);
-                ui.set_height(ui.available_height());
+                // `fixed_size` borne la zone disponible mais, la fenêtre n'étant
+                // pas redimensionnable, egui la rétracterait à la hauteur du
+                // contenu. On force donc le contenu à remplir toute la zone pour
+                // que la fenêtre garde la même taille sur tous les onglets.
+                ui.set_min_size(ui.available_size());
 
-                ui.horizontal_centered(|ui| {
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if ui.button(credits_label).clicked() {
-                            self.about_tab = AboutTab::Credits;
-                            self.show_credits_modal = true;
-                        }
-
-                        if ui.button(license_tab_label).clicked() {
-                            self.about_tab = AboutTab::License;
-                            self.show_credits_modal = true;
-                        }
-
-                        ui.menu_button(theme_label, |ui| {
-                            ui.set_min_width(180.0);
-                            ui.radio_value(
-                                &mut self.theme_preference,
-                                ThemePreference::System,
-                                theme_system_label,
-                            );
-                            ui.radio_value(
-                                &mut self.theme_preference,
-                                ThemePreference::Light,
-                                theme_light_label,
-                            );
-                            ui.radio_value(
-                                &mut self.theme_preference,
-                                ThemePreference::Dark,
-                                theme_dark_label,
-                            );
-                        });
-
-                        ui.menu_button(language_label, |ui| {
-                            ui.set_min_width(180.0);
-                            ui.radio_value(&mut self.ui_language, UiLanguage::French, "Francais");
-                            ui.radio_value(&mut self.ui_language, UiLanguage::English, "English");
-                        });
-                    });
-                });
-            });
-
-        if self.show_credits_modal {
-            let mut open = self.show_credits_modal;
-            egui::Window::new(info_title)
-                .open(&mut open)
-                .resizable(true)
-                .collapsible(false)
-                .default_width(640.0)
-                .default_height(480.0)
-                .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-                .show(ctx, |ui| {
-                    ui.horizontal(|ui| {
-                        let credits_selected = self.about_tab == AboutTab::Credits;
-                        if ui.selectable_label(credits_selected, credits_label).clicked() {
-                            self.about_tab = AboutTab::Credits;
-                        }
-                        let license_selected = self.about_tab == AboutTab::License;
+                // Bandeau d'onglets
+                ui.horizontal(|ui| {
+                    for (tab, label) in [
+                        (SettingsTab::General, general_label),
+                        (SettingsTab::Credits, credits_label),
+                        (SettingsTab::License, license_label),
+                    ] {
                         if ui
-                            .selectable_label(license_selected, license_tab_label)
+                            .selectable_label(self.settings_tab == tab, label)
                             .clicked()
                         {
-                            self.about_tab = AboutTab::License;
-                        }
-                    });
-                    ui.separator();
-                    ui.add_space(6.0);
-
-                    match self.about_tab {
-                        AboutTab::Credits => {
-                            ui.label(egui::RichText::new(service_name).heading().strong());
-                            ui.add_space(8.0);
-                            ui.label(
-                                egui::RichText::new(format!("{}: {}", about_label, service_name))
-                                    .strong(),
-                            );
-                            ui.label(format!("{}: {}", description_label, description_text));
-                            ui.label(format!("{}: {}", version_label, version));
-                            ui.label(format!(
-                                "{}: Hugo Lagouardat Massiroles, Rudy Alves",
-                                developers_label
-                            ));
-                            ui.label(format!("{}: Abnd © 2026", copyright_label));
-                            ui.label(format!("{}: GNU Affero General Public License v3", license_label));
-                            ui.label(egui::RichText::new(warranty_text).small().weak());
-                        }
-                        AboutTab::License => {
-                            ui.label(
-                                egui::RichText::new("GNU Affero General Public License v3")
-                                    .strong()
-                                    .heading(),
-                            );
-                            ui.add_space(6.0);
-                            egui::ScrollArea::vertical()
-                                .auto_shrink([false, false])
-                                .show(ui, |ui| {
-                                    ui.add(
-                                        egui::Label::new(
-                                            egui::RichText::new(LICENSE_TEXT).monospace().size(12.0),
-                                        )
-                                        .wrap_mode(egui::TextWrapMode::Wrap),
-                                    );
-                                });
+                            self.settings_tab = tab;
                         }
                     }
                 });
-            self.show_credits_modal = open;
-        }
+                ui.separator();
+                ui.add_space(8.0);
+
+                match self.settings_tab {
+                    SettingsTab::General => {
+                        egui::Grid::new("settings_general")
+                            .num_columns(2)
+                            .spacing([16.0, 12.0])
+                            .show(ui, |ui| {
+                                ui.label(egui::RichText::new(language_label).strong());
+                                ui.horizontal(|ui| {
+                                    ui.radio_value(
+                                        &mut self.ui_language,
+                                        UiLanguage::French,
+                                        "Français",
+                                    );
+                                    ui.radio_value(
+                                        &mut self.ui_language,
+                                        UiLanguage::English,
+                                        "English",
+                                    );
+                                });
+                                ui.end_row();
+
+                                ui.label(egui::RichText::new(theme_label).strong());
+                                ui.horizontal(|ui| {
+                                    ui.radio_value(
+                                        &mut self.theme_preference,
+                                        ThemePreference::System,
+                                        theme_system_label,
+                                    );
+                                    ui.radio_value(
+                                        &mut self.theme_preference,
+                                        ThemePreference::Light,
+                                        theme_light_label,
+                                    );
+                                    ui.radio_value(
+                                        &mut self.theme_preference,
+                                        ThemePreference::Dark,
+                                        theme_dark_label,
+                                    );
+                                });
+                                ui.end_row();
+                            });
+                    }
+                    SettingsTab::Credits => {
+                        ui.label(egui::RichText::new(service_name).heading().strong());
+                        ui.add_space(8.0);
+                        ui.label(
+                            egui::RichText::new(format!("{}: {}", service_field, service_name))
+                                .strong(),
+                        );
+                        ui.label(format!("{}: {}", description_field, description_text));
+                        ui.label(format!("{}: {}", version_field, version));
+                        ui.label(format!(
+                            "{}: Hugo Lagouardat Massiroles, Rudy Alves",
+                            developers_field
+                        ));
+                        ui.label(format!("{}: Abnd © 2026", copyright_field));
+                        ui.label(format!(
+                            "{}: GNU Affero General Public License v3",
+                            license_field
+                        ));
+                        ui.add_space(6.0);
+                        ui.label(egui::RichText::new(warranty_text).small().weak());
+                    }
+                    SettingsTab::License => {
+                        ui.label(
+                            egui::RichText::new("GNU Affero General Public License v3")
+                                .strong()
+                                .heading(),
+                        );
+                        ui.add_space(6.0);
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(LICENSE_TEXT).monospace().size(12.0),
+                                    )
+                                    .wrap_mode(egui::TextWrapMode::Wrap),
+                                );
+                            });
+                    }
+                }
+            });
+        self.show_settings = open;
     }
 }

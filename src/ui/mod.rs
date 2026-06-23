@@ -12,7 +12,7 @@ use crate::message::{
 use crate::transfer::{TransferDecision, TransferOffer, TransferProgress, TransferRequest};
 
 mod chat_panel;
-mod header;
+mod settings;
 pub mod composer;
 mod emoji_picker;
 mod events;
@@ -35,8 +35,10 @@ pub(crate) enum ThemePreference {
     Dark,
 }
 
+/// Onglet actif de la fenêtre Paramètres.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AboutTab {
+pub(crate) enum SettingsTab {
+    General,
     Credits,
     License,
 }
@@ -107,8 +109,8 @@ pub(crate) struct AbcomApp {
     pub(crate) ui_language: UiLanguage,
     pub(crate) theme_preference: ThemePreference,
     pub(crate) system_dark_mode: Option<bool>,
-    pub(crate) show_credits_modal: bool,
-    pub(crate) about_tab: AboutTab,
+    pub(crate) show_settings: bool,
+    pub(crate) settings_tab: SettingsTab,
 }
 
 impl AbcomApp {
@@ -174,8 +176,8 @@ impl AbcomApp {
             ui_language: UiLanguage::French,
             theme_preference: ThemePreference::System,
             system_dark_mode: None,
-            show_credits_modal: false,
-            about_tab: AboutTab::Credits,
+            show_settings: false,
+            settings_tab: SettingsTab::General,
         }
     }
 
@@ -290,13 +292,13 @@ impl eframe::App for AbcomApp {
             // Si l'utilisateur annule le sélecteur, l'offre reste affichée.
         }
 
-        self.show_header_bar(ctx);
         self.show_sidebar_panel(ctx);
         let emoji_btn_clicked = self.show_input_bar(ctx);
         self.show_notification(ctx);
         self.show_emoji_picker_window(ctx, emoji_btn_clicked);
         self.render_group_modal(ctx);
         self.show_central_panel(ctx);
+        self.render_settings(ctx);
 
         ctx.request_repaint_after(Duration::from_millis(100));
     }
