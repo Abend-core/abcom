@@ -9,7 +9,7 @@ Il donne une vue d'ensemble de l'état du développement en cours.
 
 | Feature | Branche | Description | Responsable | Statut |
 |---|---|---|---|---|
-| — | — | — | — | — |
+| Gestion des médias | `feature/gestion-medias` | Fichiers ≤ 1 Go envoyés comme messages média (vignette image / carte fichier), visionneuse plein écran et téléchargement ; > 1 Go via le transfert | — | ✅ prête (PR vers dev) |
 
 ---
 
