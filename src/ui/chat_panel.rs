@@ -234,9 +234,12 @@ impl AbcomApp {
 
                                 // Accusés de réception / lecture
                                 if msg.from == my_name {
-                                    let read_count = self.state.lock().unwrap()
-                                        .get_read_count(AppState::message_hash(msg));
-                                    show_receipt(ui, read_count > 0);
+                                    let hash = AppState::message_hash(msg);
+                                    let s = self.state.lock().unwrap();
+                                    let delivered = !s.is_message_pending(hash);
+                                    let read = s.get_read_count(hash) > 0;
+                                    drop(s);
+                                    show_receipt(ui, delivered, read);
                                 }
                             });
                             super::markdown::render_message_markdown(
@@ -456,21 +459,25 @@ fn close_button(ui: &mut egui::Ui) -> bool {
 
 /// Dessine une ou deux coches selon le statut de lecture du message.
 /// `read = false` → une coche grise (envoyé) ; `read = true` → deux coches bleues (lu).
-fn show_receipt(ui: &mut egui::Ui, read: bool) {
-    let w = if read { 17.0_f32 } else { 9.0_f32 };
+/// Affiche l'indicateur de statut d'un message :
+/// - ✓  gris  = envoyé, livraison en attente
+/// - ✓✓ gris  = livré (ACK reçu), pas encore lu
+/// - ✓✓ bleu  = lu (ReadReceipt reçu)
+fn show_receipt(ui: &mut egui::Ui, delivered: bool, read: bool) {
+    let double = delivered || read;
+    let w = if double { 17.0_f32 } else { 9.0_f32 };
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 12.0), egui::Sense::hover());
     if !ui.is_rect_visible(rect) {
         return;
     }
     let color = if read {
-        egui::Color32::from_rgb(80, 180, 255)
+        egui::Color32::from_rgb(80, 180, 255) // bleu = lu
     } else {
-        egui::Color32::from_gray(160)
+        egui::Color32::from_gray(160)          // gris = envoyé ou livré
     };
     let stroke = egui::Stroke::new(1.5, color);
     let p = ui.painter();
 
-    // Dessine une coche à partir du coin gauche du rect donné
     let draw_tick = |ox: f32| {
         let base = rect.left_top() + egui::vec2(ox, 4.0);
         p.line_segment([base, base + egui::vec2(2.5, 3.0)], stroke);
@@ -478,7 +485,7 @@ fn show_receipt(ui: &mut egui::Ui, read: bool) {
     };
 
     draw_tick(0.0);
-    if read {
-        draw_tick(6.0); // seconde coche décalée à droite
+    if double {
+        draw_tick(6.0);
     }
 }
