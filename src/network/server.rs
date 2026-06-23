@@ -35,6 +35,7 @@ async fn handle_incoming(mut stream: TcpStream, tx: Sender<AppEvent>) {
             Ok(NetworkPacket::Typing(indicator))  => { let _ = tx.send(AppEvent::UserTyping(indicator.from)).await; }
             Ok(NetworkPacket::ReadReceipt(r))     => { let _ = tx.send(AppEvent::ReadReceiptReceived(r)).await; }
             Ok(NetworkPacket::Ack(ack))           => { let _ = tx.send(AppEvent::MessageAckReceived(ack)).await; }
+            Ok(NetworkPacket::Avatar(announce))   => { let _ = tx.send(AppEvent::AvatarReceived(announce)).await; }
             Err(_) => eprintln!("[network] Paquet entrant non reconnu ({} bytes)", buf.len()),
         }
     }

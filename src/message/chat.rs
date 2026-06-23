@@ -8,7 +8,12 @@ use super::group::GroupEvent;
 pub struct ChatMessage {
     pub from: String,
     pub content: String,
+    /// Heure d'affichage `"%H:%M"` (repli pour les anciens messages / pairs).
     pub timestamp: String,
+    /// Instant Unix (secondes), source de vérité pour la date et l'heure.
+    /// Optionnel pour rester compatible avec les anciens messages et pairs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp_epoch: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub to_user: Option<String>,
 }
@@ -36,6 +41,7 @@ mod tests {
             from: from.to_string(),
             content: content.to_string(),
             timestamp: "14:00".to_string(),
+            timestamp_epoch: None,
             to_user: to.map(|s| s.to_string()),
         }
     }
@@ -82,6 +88,33 @@ mod tests {
         let json = r#"{"from":"alice","content":"test","timestamp":"12:00"}"#;
         let m: ChatMessage = serde_json::from_str(json).unwrap();
         assert!(m.to_user.is_none());
+    }
+
+    #[test]
+    fn deserialize_without_timestamp_epoch_defaults_to_none() {
+        // Ancien format / pair non mis à jour : pas de champ timestamp_epoch
+        let json = r#"{"from":"alice","content":"test","timestamp":"12:00"}"#;
+        let m: ChatMessage = serde_json::from_str(json).unwrap();
+        assert!(m.timestamp_epoch.is_none());
+    }
+
+    #[test]
+    fn timestamp_epoch_round_trips_and_is_omitted_when_none() {
+        let with = ChatMessage {
+            from: "alice".to_string(),
+            content: "hi".to_string(),
+            timestamp: "12:00".to_string(),
+            timestamp_epoch: Some(1_750_000_000),
+            to_user: None,
+        };
+        let json = serde_json::to_string(&with).unwrap();
+        assert!(json.contains("timestamp_epoch"));
+        let decoded: ChatMessage = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded.timestamp_epoch, Some(1_750_000_000));
+
+        let without = ChatMessage { timestamp_epoch: None, ..with };
+        let json = serde_json::to_string(&without).unwrap();
+        assert!(!json.contains("timestamp_epoch"));
     }
 
     #[test]

@@ -90,6 +90,7 @@ mod tests {
             from: from.to_string(),
             content: content.to_string(),
             timestamp: "12:00".to_string(),
+            timestamp_epoch: None,
             to_user: to.map(|s| s.to_string()),
         }
     }

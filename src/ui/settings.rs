@@ -1,6 +1,10 @@
 use eframe::egui;
 
+use super::avatar::show_avatar;
 use super::{AbcomApp, SettingsTab, ThemePreference, UiLanguage};
+
+/// Diamètre de l'aperçu d'avatar dans l'onglet Profil.
+const PROFILE_AVATAR_SIZE: f32 = 96.0;
 
 const LICENSE_TEXT: &str = include_str!("../../LICENSE");
 
@@ -36,9 +40,28 @@ impl AbcomApp {
         let service_name = "Abcom";
 
         let title = self.tr("Paramètres", "Settings");
+        let profile_label = self.tr("Profil", "Profile");
         let general_label = self.tr("Général", "General");
         let credits_label = self.tr("Crédits", "Credits");
         let license_label = self.tr("Licence", "License");
+
+        // Onglet Profil
+        let profile_heading = self.tr("Image de profil", "Profile picture");
+        let profile_hint = self.tr(
+            "Visible par les autres pairs dans les conversations.",
+            "Visible to other peers in conversations.",
+        );
+        let choose_label = self.tr("Choisir une image…", "Choose an image…");
+        let change_label = self.tr("Changer l'image…", "Change image…");
+        let remove_label = self.tr("Retirer", "Remove");
+
+        // Avatar courant (texture chargée paresseusement) calculé avant la
+        // fenêtre pour éviter un double emprunt de `self` dans la closure.
+        let my_name = self.state.lock().unwrap().my_username.clone();
+        let avatar_texture = self.avatar_texture(ctx, &my_name);
+        let has_avatar = self.state.lock().unwrap().my_avatar.is_some();
+        let mut pick_avatar = false;
+        let mut clear_avatar = false;
 
         // Onglet Général
         let language_label = self.tr("Langue", "Language");
@@ -84,6 +107,7 @@ impl AbcomApp {
                 // Bandeau d'onglets
                 ui.horizontal(|ui| {
                     for (tab, label) in [
+                        (SettingsTab::Profile, profile_label),
                         (SettingsTab::General, general_label),
                         (SettingsTab::Credits, credits_label),
                         (SettingsTab::License, license_label),
@@ -100,6 +124,31 @@ impl AbcomApp {
                 ui.add_space(8.0);
 
                 match self.settings_tab {
+                    SettingsTab::Profile => {
+                        ui.label(egui::RichText::new(profile_heading).strong());
+                        ui.add_space(12.0);
+                        ui.horizontal(|ui| {
+                            show_avatar(ui, avatar_texture.as_ref(), &my_name, PROFILE_AVATAR_SIZE);
+                            ui.add_space(16.0);
+                            ui.vertical(|ui| {
+                                ui.add_space(4.0);
+                                ui.label(egui::RichText::new(&my_name).heading().strong());
+                                ui.add_space(2.0);
+                                ui.label(egui::RichText::new(profile_hint).small().weak());
+                                ui.add_space(10.0);
+                                ui.horizontal(|ui| {
+                                    let button_label =
+                                        if has_avatar { change_label } else { choose_label };
+                                    if ui.button(button_label).clicked() {
+                                        pick_avatar = true;
+                                    }
+                                    if has_avatar && ui.button(remove_label).clicked() {
+                                        clear_avatar = true;
+                                    }
+                                });
+                            });
+                        });
+                    }
                     SettingsTab::General => {
                         egui::Grid::new("settings_general")
                             .num_columns(2)
@@ -183,5 +232,17 @@ impl AbcomApp {
                 }
             });
         self.show_settings = open;
+
+        // Application différée des actions de l'onglet Profil (hors closure pour
+        // éviter tout emprunt concurrent de `self`).
+        if pick_avatar {
+            // Le sélecteur natif est ouvert à la frame suivante (cf. `update`).
+            self.pending_avatar_pick = true;
+        }
+        if clear_avatar {
+            self.state.lock().unwrap().clear_my_avatar();
+            self.avatar_textures.remove(&my_name);
+            self.broadcast_my_avatar();
+        }
     }
 }

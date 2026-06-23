@@ -97,7 +97,7 @@ mod tests {
     }
 
     fn make_msg(from: &str, content: &str) -> ChatMessage {
-        ChatMessage { from: from.to_string(), content: content.to_string(), timestamp: "12:00".to_string(), to_user: None }
+        ChatMessage { from: from.to_string(), content: content.to_string(), timestamp: "12:00".to_string(), timestamp_epoch: None, to_user: None }
     }
 
     #[test]
