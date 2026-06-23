@@ -1,9 +1,182 @@
+use chrono::{Datelike, Local, NaiveDate, TimeZone};
 use eframe::egui;
 
 use crate::app::AppState;
+use crate::message::ChatMessage;
 use crate::transfer::{TransferDecision, TransferDirection, TransferStatus};
 
-use super::AbcomApp;
+use super::{AbcomApp, UiLanguage};
+
+/// Diamètre de l'avatar affiché en tête de chaque groupe de messages.
+const AVATAR_SIZE: f32 = 40.0;
+/// Espace horizontal entre l'avatar et le texte du message.
+const AVATAR_GUTTER: f32 = 12.0;
+/// Espace vertical séparant deux groupes de messages.
+const GROUP_SPACING: f32 = 10.0;
+/// Écart de temps au-delà duquel un nouvel en-tête est ouvert pour un même
+/// auteur (façon Discord/Cinny). Évite que des messages espacés de plusieurs
+/// heures ou jours paraissent envoyés d'un coup. Ajustable.
+const GROUP_BREAK_SECS: u64 = 5 * 60;
+/// Couleur du nom pour nos propres messages (conservée partout).
+const OWN_NAME_COLOR: egui::Color32 = egui::Color32::from_rgb(80, 200, 120);
+/// Couleur du nom d'un autre pair en conversation 1-à-1.
+const PEER_NAME_COLOR: egui::Color32 = egui::Color32::from_rgb(100, 180, 255);
+
+/// Palette de couleurs distinctes pour les pairs dans les vues multi-personnes
+/// (groupes et « Tous »), inspirée des couleurs d'utilisateur de Cinny.
+const PEER_PALETTE: [egui::Color32; 8] = [
+    egui::Color32::from_rgb(128, 195, 255),
+    egui::Color32::from_rgb(255, 153, 253),
+    egui::Color32::from_rgb(102, 255, 212),
+    egui::Color32::from_rgb(255, 128, 164),
+    egui::Color32::from_rgb(255, 163, 102),
+    egui::Color32::from_rgb(51, 252, 255),
+    egui::Color32::from_rgb(158, 153, 255),
+    egui::Color32::from_rgb(197, 255, 153),
+];
+
+/// Couleur déterministe attribuée à un pair (même nom → même couleur) pour le
+/// distinguer des autres participants dans une conversation multi-personnes.
+fn peer_color(username: &str) -> egui::Color32 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    username.hash(&mut hasher);
+    PEER_PALETTE[(hasher.finish() as usize) % PEER_PALETTE.len()]
+}
+
+const MONTHS_FR: [&str; 12] = [
+    "janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août",
+    "septembre", "octobre", "novembre", "décembre",
+];
+const MONTHS_EN: [&str; 12] = [
+    "January", "February", "March", "April", "May", "June", "July", "August",
+    "September", "October", "November", "December",
+];
+
+/// Jour local d'un message à partir de son instant Unix (`None` si absent).
+fn message_day(msg: &ChatMessage) -> Option<NaiveDate> {
+    let epoch = msg.timestamp_epoch?;
+    Local
+        .timestamp_opt(epoch as i64, 0)
+        .single()
+        .map(|dt| dt.date_naive())
+}
+
+/// Heure d'en-tête au format 24 h, dérivée de l'instant Unix si présent,
+/// sinon repli sur la chaîne `timestamp` (anciens messages / pairs).
+fn header_time(msg: &ChatMessage) -> String {
+    match msg.timestamp_epoch.and_then(|e| Local.timestamp_opt(e as i64, 0).single()) {
+        Some(dt) => dt.format("%H:%M").to_string(),
+        None => msg.timestamp.clone(),
+    }
+}
+
+/// Décide si un message ouvre un nouveau groupe (nouvel en-tête avec avatar).
+/// Vrai si l'auteur change, si le jour change, ou si l'écart de temps dépasse
+/// `GROUP_BREAK_SECS`. Sans instant comparable, on se rabat sur l'auteur seul.
+fn starts_new_group(
+    prev_from: Option<&str>,
+    prev_epoch: Option<u64>,
+    from: &str,
+    epoch: Option<u64>,
+    day_changed: bool,
+) -> bool {
+    if prev_from != Some(from) || day_changed {
+        return true;
+    }
+    match (prev_epoch, epoch) {
+        (Some(prev), Some(now)) => now.saturating_sub(prev) > GROUP_BREAK_SECS,
+        _ => false,
+    }
+}
+
+/// Libellé localisé d'un séparateur de date (« Aujourd'hui », « Hier » ou date
+/// complète selon la langue).
+fn day_divider_label(date: NaiveDate, today: NaiveDate, language: UiLanguage) -> String {
+    if date == today {
+        return match language {
+            UiLanguage::French => "Aujourd'hui".to_string(),
+            UiLanguage::English => "Today".to_string(),
+        };
+    }
+    if Some(date) == today.pred_opt() {
+        return match language {
+            UiLanguage::French => "Hier".to_string(),
+            UiLanguage::English => "Yesterday".to_string(),
+        };
+    }
+    let (day, month, year) = (date.day(), date.month0() as usize, date.year());
+    match language {
+        UiLanguage::French => format!("{} {} {}", day, MONTHS_FR[month], year),
+        UiLanguage::English => format!("{} {}, {}", MONTHS_EN[month], day, year),
+    }
+}
+
+/// Dessine un séparateur de date pleine largeur : une ligne fine traversée par
+/// le libellé centré, façon Discord/Cinny.
+fn render_day_divider(ui: &mut egui::Ui, label: &str) {
+    ui.add_space(14.0);
+    let line_color = egui::Color32::from_gray(80);
+    let text_color = egui::Color32::from_gray(150);
+    let font = egui::TextStyle::Small.resolve(ui.style());
+
+    let full_width = ui.available_width();
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(full_width, 18.0), egui::Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let painter = ui.painter();
+    let galley = painter.layout_no_wrap(label.to_string(), font, text_color);
+    let text_w = galley.size().x;
+    let gap = 12.0;
+    let center_y = rect.center().y;
+    let mid_x = rect.center().x;
+
+    let left_end = mid_x - text_w / 2.0 - gap;
+    let right_start = mid_x + text_w / 2.0 + gap;
+    let stroke = egui::Stroke::new(1.0, line_color);
+    painter.line_segment(
+        [egui::pos2(rect.left(), center_y), egui::pos2(left_end, center_y)],
+        stroke,
+    );
+    painter.line_segment(
+        [egui::pos2(right_start, center_y), egui::pos2(rect.right(), center_y)],
+        stroke,
+    );
+    painter.galley(
+        egui::pos2(mid_x - text_w / 2.0, center_y - galley.size().y / 2.0),
+        galley,
+        text_color,
+    );
+    ui.add_space(6.0);
+}
+
+/// En-tête d'un groupe de messages : nom coloré suivi, collé à droite, de
+/// l'heure d'envoi (format 24 h) et, pour nos messages, de l'accusé de lecture.
+fn render_message_header(
+    ui: &mut egui::Ui,
+    display_name: &str,
+    timestamp: &str,
+    name_color: egui::Color32,
+    read: Option<bool>,
+) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 6.0;
+        ui.label(
+            egui::RichText::new(display_name)
+                .color(name_color)
+                .family(egui::FontFamily::Name(super::BOLD_FAMILY.into())),
+        );
+        ui.label(
+            egui::RichText::new(timestamp)
+                .small()
+                .color(egui::Color32::from_gray(140)),
+        );
+        if let Some(read) = read {
+            show_receipt(ui, read);
+        }
+    });
+}
 
 impl AbcomApp {
     /// Zone centrale : fil de la conversation sélectionnée
@@ -202,6 +375,29 @@ impl AbcomApp {
                 }
             }
 
+            // Avatars et noms d'affichage des auteurs, préparés avant la zone
+            // défilante (le chargement de texture emprunte `self` mutablement).
+            let unique_authors: Vec<String> = {
+                let mut authors: Vec<String> =
+                    conv_messages.iter().map(|m| m.from.clone()).collect();
+                authors.sort();
+                authors.dedup();
+                authors
+            };
+            let mut author_avatars: std::collections::HashMap<String, Option<egui::TextureHandle>> =
+                std::collections::HashMap::new();
+            for author in &unique_authors {
+                let texture = self.avatar_texture(ctx, author);
+                author_avatars.insert(author.clone(), texture);
+            }
+            let author_names: std::collections::HashMap<String, String> = {
+                let s = self.state.lock().unwrap();
+                unique_authors
+                    .iter()
+                    .map(|a| (a.clone(), s.peer_display_name(a)))
+                    .collect()
+            };
+
             // Aire de messages
             egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
@@ -213,39 +409,103 @@ impl AbcomApp {
                             egui::RichText::new(self.tr("Aucun message", "No message")).weak(),
                         );
                     }
-                    for msg in &conv_messages {
-                        ui.vertical(|ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    egui::RichText::new(format!("[{}]", msg.timestamp))
-                                        .color(egui::Color32::DARK_GRAY)
-                                        .small(),
-                                );
-                                let name_color = if msg.from == my_name {
-                                    egui::Color32::from_rgb(80, 200, 120)
-                                } else {
-                                    egui::Color32::from_rgb(100, 180, 255)
-                                };
-                                ui.label(
-                                    egui::RichText::new(format!("{}:", msg.from))
-                                        .color(name_color)
-                                        .strong(),
-                                );
 
-                                // Accusés de réception / lecture
-                                if msg.from == my_name {
-                                    let read_count = self.state.lock().unwrap()
-                                        .get_read_count(AppState::message_hash(msg));
-                                    show_receipt(ui, read_count > 0);
-                                }
-                            });
-                            super::markdown::render_message_markdown(
-                                ui,
-                                &msg.content,
-                                &self.emoji_map,
-                                &self.emoji_textures,
-                            );
+                    // Rendu façon Discord : les messages consécutifs d'un même
+                    // auteur sont regroupés sous un seul en-tête (avatar + nom +
+                    // heure), les suivants étant alignés sous le texte. Un écart
+                    // de temps ou un changement de jour rouvre un en-tête, et un
+                    // séparateur de date marque chaque nouvelle journée.
+                    let language = self.ui_language;
+                    let today = Local::now().date_naive();
+                    // Vue multi-personnes (groupe `#…` ou « Tous ») : chaque pair
+                    // reçoit une couleur distincte ; en 1-à-1 on garde le bleu.
+                    let multi_person = selected_conv
+                        .as_deref()
+                        .is_none_or(|c| c.starts_with('#'));
+                    let mut last_from: Option<&str> = None;
+                    let mut last_epoch: Option<u64> = None;
+                    let mut last_day: Option<NaiveDate> = None;
+                    for msg in &conv_messages {
+                        let day = message_day(msg);
+                        let day_changed = match (day, last_day) {
+                            (Some(d), Some(prev)) => d != prev,
+                            (Some(_), None) => last_from.is_some(),
+                            _ => false,
+                        };
+                        if let Some(d) = day {
+                            if day_changed || last_day.is_none() {
+                                render_day_divider(ui, &day_divider_label(d, today, language));
+                            }
+                        }
+
+                        let starts_group = starts_new_group(
+                            last_from,
+                            last_epoch,
+                            &msg.from,
+                            msg.timestamp_epoch,
+                            day_changed,
+                        );
+                        let is_me = msg.from == my_name;
+                        let name_color = if is_me {
+                            OWN_NAME_COLOR
+                        } else if multi_person {
+                            peer_color(&msg.from)
+                        } else {
+                            PEER_NAME_COLOR
+                        };
+                        let read = is_me.then(|| {
+                            self.state
+                                .lock()
+                                .unwrap()
+                                .get_read_count(AppState::message_hash(msg))
+                                > 0
                         });
+
+                        if starts_group {
+                            ui.add_space(GROUP_SPACING);
+                            ui.horizontal(|ui| {
+                                // Retrait du texte = avatar + gouttière, sans
+                                // espacement parasite, pour qu'il coïncide avec
+                                // les messages de continuation (cf. branche else).
+                                ui.spacing_mut().item_spacing.x = 0.0;
+                                let avatar = author_avatars
+                                    .get(&msg.from)
+                                    .and_then(|texture| texture.as_ref());
+                                let display = author_names
+                                    .get(&msg.from)
+                                    .map(String::as_str)
+                                    .unwrap_or(&msg.from);
+                                super::avatar::show_avatar(ui, avatar, display, AVATAR_SIZE);
+                                ui.add_space(AVATAR_GUTTER);
+                                ui.vertical(|ui| {
+                                    render_message_header(ui, display, &header_time(msg), name_color, read);
+                                    super::markdown::render_message_markdown(
+                                        ui,
+                                        &msg.content,
+                                        &self.emoji_map,
+                                        &self.emoji_textures,
+                                    );
+                                });
+                            });
+                        } else {
+                            ui.horizontal(|ui| {
+                                ui.spacing_mut().item_spacing.x = 0.0;
+                                ui.add_space(AVATAR_SIZE + AVATAR_GUTTER);
+                                ui.vertical(|ui| {
+                                    super::markdown::render_message_markdown(
+                                        ui,
+                                        &msg.content,
+                                        &self.emoji_map,
+                                        &self.emoji_textures,
+                                    );
+                                });
+                            });
+                        }
+                        last_from = Some(msg.from.as_str());
+                        last_epoch = msg.timestamp_epoch;
+                        if day.is_some() {
+                            last_day = day;
+                        }
                     }
 
                     // Transferts et propositions de fichiers, intégrés au fil
@@ -480,5 +740,68 @@ fn show_receipt(ui: &mut egui::Ui, read: bool) {
     draw_tick(0.0);
     if read {
         draw_tick(6.0); // seconde coche décalée à droite
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{day_divider_label, starts_new_group, GROUP_BREAK_SECS};
+    use crate::ui::UiLanguage;
+    use chrono::NaiveDate;
+
+    #[test]
+    fn group_breaks_on_author_change() {
+        assert!(starts_new_group(Some("alice"), Some(100), "bob", Some(110), false));
+    }
+
+    #[test]
+    fn group_breaks_on_day_change() {
+        assert!(starts_new_group(Some("alice"), Some(100), "alice", Some(110), true));
+    }
+
+    #[test]
+    fn group_keeps_same_author_within_window() {
+        assert!(!starts_new_group(
+            Some("alice"),
+            Some(1_000),
+            "alice",
+            Some(1_000 + GROUP_BREAK_SECS),
+            false,
+        ));
+    }
+
+    #[test]
+    fn group_breaks_after_time_gap() {
+        assert!(starts_new_group(
+            Some("alice"),
+            Some(1_000),
+            "alice",
+            Some(1_000 + GROUP_BREAK_SECS + 1),
+            false,
+        ));
+    }
+
+    #[test]
+    fn group_falls_back_to_author_without_epoch() {
+        // Sans instants comparables : même auteur reste groupé.
+        assert!(!starts_new_group(Some("alice"), None, "alice", None, false));
+    }
+
+    #[test]
+    fn divider_labels_today_and_yesterday() {
+        let today = NaiveDate::from_ymd_opt(2026, 5, 20).unwrap();
+        let yesterday = NaiveDate::from_ymd_opt(2026, 5, 19).unwrap();
+        assert_eq!(day_divider_label(today, today, UiLanguage::French), "Aujourd'hui");
+        assert_eq!(day_divider_label(today, today, UiLanguage::English), "Today");
+        assert_eq!(day_divider_label(yesterday, today, UiLanguage::French), "Hier");
+        assert_eq!(day_divider_label(yesterday, today, UiLanguage::English), "Yesterday");
+    }
+
+    #[test]
+    fn divider_labels_full_date_localized() {
+        let today = NaiveDate::from_ymd_opt(2026, 6, 23).unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 5, 18).unwrap();
+        assert_eq!(day_divider_label(date, today, UiLanguage::French), "18 mai 2026");
+        assert_eq!(day_divider_label(date, today, UiLanguage::English), "May 18, 2026");
     }
 }

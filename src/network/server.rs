@@ -3,7 +3,9 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::Sender;
 
 use crate::config;
-use crate::message::{AppEvent, ChatMessage, GroupEvent, MessageAck, ReadReceipt, TypingIndicator};
+use crate::message::{
+    AppEvent, AvatarAnnounce, ChatMessage, GroupEvent, MessageAck, ReadReceipt, TypingIndicator,
+};
 
 /// Serveur TCP : écoute les connexions entrantes et dispatche les événements
 pub async fn run_server(tx: Sender<AppEvent>) {
@@ -29,7 +31,12 @@ pub async fn run_server(tx: Sender<AppEvent>) {
 async fn handle_incoming(mut stream: TcpStream, tx: Sender<AppEvent>) {
     let mut buf = Vec::new();
     if stream.read_to_end(&mut buf).await.is_ok() && !buf.is_empty() {
-        if let Ok(msg) = serde_json::from_slice::<ChatMessage>(&buf) {
+        // `AvatarAnnounce` est testé en premier : son champ obligatoire `png`
+        // l'isole des autres types, et le tester avant `TypingIndicator` évite
+        // que ce dernier ne capture l'annonce via le seul champ `from`.
+        if let Ok(announce) = serde_json::from_slice::<AvatarAnnounce>(&buf) {
+            let _ = tx.send(AppEvent::AvatarReceived(announce)).await;
+        } else if let Ok(msg) = serde_json::from_slice::<ChatMessage>(&buf) {
             let _ = tx.send(AppEvent::MessageReceived(msg)).await;
         } else if let Ok(event) = serde_json::from_slice::<GroupEvent>(&buf) {
             let _ = tx.send(AppEvent::GroupEventReceived(event)).await;
