@@ -252,17 +252,49 @@ impl AbcomApp {
 
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                     let my_name = self.state.lock().unwrap().my_username.clone();
+                    let settings_tip = self.tr("Paramètres", "Settings");
+                    let you_label = self.tr("Vous", "You");
                     ui.separator();
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "{}: {}",
-                            self.tr("Vous", "You"),
-                            my_name
-                        ))
-                        .small(),
-                    );
+                    // « Vous : <instance> » à gauche, engrenage Paramètres à droite
+                    ui.horizontal(|ui| {
+                        ui.label(
+                            egui::RichText::new(format!("{}: {}", you_label, my_name)).small(),
+                        );
+                        ui.with_layout(
+                            egui::Layout::right_to_left(egui::Align::Center),
+                            |ui| {
+                                if gear_button(ui).on_hover_text(settings_tip).clicked() {
+                                    self.settings_tab = super::SettingsTab::General;
+                                    self.show_settings = true;
+                                }
+                            },
+                        );
+                    });
                 });
             });
     }
+}
 
+/// Bouton « engrenage » peint (rendu fiable, sans dépendre d'un glyphe emoji).
+fn gear_button(ui: &mut egui::Ui) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let color = if resp.hovered() {
+            ui.visuals().widgets.hovered.fg_stroke.color
+        } else {
+            ui.visuals().widgets.inactive.fg_stroke.color
+        };
+        let stroke = egui::Stroke::new(1.4, color);
+        let painter = ui.painter();
+        let c = rect.center();
+        let (r_ring, r_teeth, r_hole) = (4.8, 7.5, 2.0);
+        for k in 0..8 {
+            let angle = k as f32 * std::f32::consts::TAU / 8.0;
+            let dir = egui::vec2(angle.cos(), angle.sin());
+            painter.line_segment([c + dir * r_ring, c + dir * r_teeth], stroke);
+        }
+        painter.circle_stroke(c, r_ring, stroke);
+        painter.circle_stroke(c, r_hole, stroke);
+    }
+    resp
 }
