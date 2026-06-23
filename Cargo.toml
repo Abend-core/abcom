@@ -24,6 +24,7 @@ rfd = "0.15"
 walkdir = "2"
 socket2 = { version = "0.5", features = ["all"] }
 resvg = "0.47.0"
+zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 [target.'cfg(windows)'.dependencies]
 rodio = { version = "0.19", default-features = false, features = ["symphonia-wav"] }
