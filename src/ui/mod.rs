@@ -2,8 +2,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use rfd;
-
 use eframe::egui;
 use tokio::sync::mpsc;
 
@@ -21,16 +19,8 @@ mod events;
 mod group_modal;
 mod input_bar;
 mod markdown;
-mod networks_view;
 mod sidebar;
 mod sound;
-
-/// Vue active dans la zone centrale
-#[derive(PartialEq, Clone)]
-pub(crate) enum AppView {
-    Chat,
-    Networks,
-}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UiLanguage {
@@ -93,18 +83,15 @@ pub(crate) struct AbcomApp {
     pub(crate) emoji_aliases: Vec<String>,
     pub(crate) shortcode_selected: usize,
     pub(crate) last_cleanup_time: std::time::Instant,
-    pub(crate) last_network_check: std::time::Instant,
     pub(crate) show_group_modal: bool,
     pub(crate) group_name_input: String,
     pub(crate) group_members_selected: std::collections::HashSet<String>,
     pub(crate) last_typing_broadcast: std::time::Instant,
     pub(crate) last_retry_time: std::time::Instant,
     pub(crate) muted_conversations: std::collections::HashSet<Option<String>>,
-    pub(crate) selected_network_filter: Option<String>,
-    pub(crate) active_view: AppView,
-    pub(crate) selected_network_view: Option<String>,
-    pub(crate) network_alias_edits: std::collections::HashMap<String, String>,
-    pub(crate) peer_alias_edits: std::collections::HashMap<String, String>,
+    /// Renommage de contact : pair ciblé par la modale (None = fermée).
+    pub(crate) rename_target: Option<String>,
+    pub(crate) rename_input: String,
     pub(crate) drafts: std::collections::HashMap<Option<String>, String>,
     pub(crate) pending_attachments: Vec<PathBuf>,
     /// 0 = none, 1 = pick files, 2 = pick folder (deferred to next frame to avoid AppKit conflict)
@@ -125,6 +112,8 @@ pub(crate) struct AbcomApp {
 }
 
 impl AbcomApp {
+    // Câblage des canaux mpsc indépendants vers les tâches réseau/transfert.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         state: Arc<Mutex<AppState>>,
         event_rx: mpsc::Receiver<AppEvent>,
@@ -170,18 +159,14 @@ impl AbcomApp {
             emoji_aliases: Vec::new(),
             shortcode_selected: 0,
             last_cleanup_time: std::time::Instant::now(),
-            last_network_check: std::time::Instant::now() - Duration::from_secs(15),
             show_group_modal: false,
             group_name_input: String::new(),
             group_members_selected: std::collections::HashSet::new(),
             last_typing_broadcast: std::time::Instant::now(),
             last_retry_time: std::time::Instant::now(),
             muted_conversations: std::collections::HashSet::new(),
-            selected_network_filter: None,
-            active_view: AppView::Chat,
-            selected_network_view: None,
-            network_alias_edits: std::collections::HashMap::new(),
-            peer_alias_edits: std::collections::HashMap::new(),
+            rename_target: None,
+            rename_input: String::new(),
             drafts: std::collections::HashMap::new(),
             pending_attachments: Vec::new(),
             pending_picker: 0,
@@ -350,6 +335,8 @@ fn app_icon_data() -> Option<egui::IconData> {
 }
 
 /// Point d'entrée de l'interface graphique
+// Câblage des canaux mpsc indépendants transmis tels quels à `AbcomApp::new`.
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     state: Arc<Mutex<AppState>>,
     event_rx: mpsc::Receiver<AppEvent>,

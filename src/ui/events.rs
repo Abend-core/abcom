@@ -240,32 +240,12 @@ impl AbcomApp {
             .retain(|o| o.received_at.elapsed() < std::time::Duration::from_secs(115));
     }
 
-    /// Tâches périodiques : nettoyage pairs, détection réseau, retry ACK
+    /// Tâches périodiques : nettoyage des pairs inactifs et retry ACK
     pub(crate) fn periodic_tasks(&mut self) {
         if self.last_cleanup_time.elapsed().as_secs() >= 5 {
             self.last_cleanup_time = std::time::Instant::now();
-            {
-                let mut s = self.state.lock().unwrap();
-                s.cleanup_inactive_peers(10);
-            }
-            if self.last_network_check.elapsed().as_secs() >= 15 {
-                self.last_network_check = std::time::Instant::now();
-                let (new_id, new_subnet) = crate::app::AppState::detect_network_id();
-                let (old_id, old_subnet) = {
-                    let s = self.state.lock().unwrap();
-                    (s.current_network_id.clone(), s.current_subnet.clone())
-                };
-                if new_id != old_id || new_subnet != old_subnet {
-                    let mut s = self.state.lock().unwrap();
-                    s.current_network_id = new_id.clone();
-                    s.current_subnet = new_subnet.clone();
-                    if let Some(ref id) = new_id {
-                        s.ensure_network_known(id, new_subnet.as_deref());
-                    }
-                    drop(s);
-                    self.selected_network_filter = new_id;
-                }
-            }
+            let mut s = self.state.lock().unwrap();
+            s.cleanup_inactive_peers(10);
         }
 
         if self.last_retry_time.elapsed().as_secs_f32() >= 2.0 {

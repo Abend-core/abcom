@@ -3,17 +3,12 @@ use eframe::egui;
 use crate::app::AppState;
 use crate::transfer::{TransferDecision, TransferDirection, TransferStatus};
 
-use super::{AbcomApp, AppView};
+use super::AbcomApp;
 
 impl AbcomApp {
-    /// Zone centrale : messages ou vue réseaux
+    /// Zone centrale : fil de la conversation sélectionnée
     pub(crate) fn show_central_panel(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            if self.active_view == AppView::Networks {
-                self.show_networks_view(ui);
-                return;
-            }
-
             let (selected_conv, my_name, conv_messages) = {
                 let s = self.state.lock().unwrap();
                 let selected = s.selected_conversation.clone();
@@ -22,15 +17,24 @@ impl AbcomApp {
                 (selected, my_username, msgs)
             };
 
-            let conversation_title = selected_conv
+            // Conversation privée (1-à-1) = pair sélectionné qui n'est pas un groupe `#…`
+            let private_peer = selected_conv
                 .as_deref()
-                .unwrap_or(self.tr("Tous", "All"));
+                .filter(|c| !c.starts_with('#'))
+                .map(str::to_string);
             let is_broadcast = selected_conv.is_none();
+
+            let conversation_title = match &private_peer {
+                Some(user) => self.state.lock().unwrap().peer_display_name(user),
+                None => selected_conv
+                    .clone()
+                    .unwrap_or_else(|| self.tr("Tous", "All").to_string()),
+            };
 
             ui.horizontal(|ui| {
                 ui.add_space(8.0);
                 ui.vertical_centered(|ui| {
-                    ui.heading(conversation_title);
+                    ui.heading(&conversation_title);
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.menu_button(self.tr("Actions", "Actions"), |ui| {
@@ -68,15 +72,32 @@ impl AbcomApp {
                             self.show_participants = true;
                             ui.close_menu();
                         }
-                        if !is_broadcast {
+                        if let Some(user) = &private_peer {
                             if ui
+                                .button(self.tr("Renommer ce contact", "Rename contact"))
+                                .clicked()
+                            {
+                                self.rename_input = self
+                                    .state
+                                    .lock()
+                                    .unwrap()
+                                    .peer_records
+                                    .iter()
+                                    .find(|r| &r.username == user)
+                                    .and_then(|r| r.alias.clone())
+                                    .unwrap_or_default();
+                                self.rename_target = Some(user.clone());
+                                ui.close_menu();
+                            }
+                        }
+                        if !is_broadcast
+                            && ui
                                 .button(self.tr("🗑 Effacer l'historique", "🗑 Clear history"))
                                 .clicked()
                             {
                                 self.state.lock().unwrap().clear_conversation_history();
                                 ui.close_menu();
                             }
-                        }
                     });
                 });
             });
@@ -133,6 +154,52 @@ impl AbcomApp {
                         }
                     });
                 self.show_participants = open;
+            }
+
+            // Modale de renommage de contact
+            if let Some(target) = self.rename_target.clone() {
+                // Libellés calculés avant la closure (évite d'emprunter `self`
+                // pendant qu'on édite `self.rename_input`).
+                let title = self.tr("Renommer le contact", "Rename contact");
+                let lbl_original = self.tr("Nom d'origine", "Original name");
+                let hint = self.tr("Alias (vide = retirer)", "Alias (empty = remove)");
+                let save_lbl = self.tr("Enregistrer", "Save");
+                let clear_lbl = self.tr("Retirer l'alias", "Remove alias");
+
+                let mut open = true;
+                let mut do_save = false;
+                let mut do_clear = false;
+                egui::Window::new(title)
+                    .open(&mut open)
+                    .resizable(false)
+                    .collapsible(false)
+                    .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                    .show(ctx, |ui| {
+                        ui.label(format!("{}: {}", lbl_original, target));
+                        ui.add_space(6.0);
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.rename_input)
+                                .hint_text(hint)
+                                .desired_width(240.0),
+                        );
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            do_save = ui.button(save_lbl).clicked();
+                            do_clear = ui.button(clear_lbl).clicked();
+                        });
+                    });
+
+                if do_save {
+                    let trimmed = self.rename_input.trim();
+                    let alias = (!trimmed.is_empty()).then(|| trimmed.to_string());
+                    self.state.lock().unwrap().set_peer_alias(&target, alias);
+                    self.rename_target = None;
+                } else if do_clear {
+                    self.state.lock().unwrap().set_peer_alias(&target, None);
+                    self.rename_target = None;
+                } else if !open {
+                    self.rename_target = None;
+                }
             }
 
             // Aire de messages
