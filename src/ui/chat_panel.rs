@@ -207,6 +207,42 @@ fn render_message_header(
     });
 }
 
+/// Rend le corps d'un message (texte Markdown puis média éventuel) et renvoie
+/// l'action déclenchée sur le média, le cas échéant.
+fn render_message_body(
+    ui: &mut egui::Ui,
+    msg: &ChatMessage,
+    emoji_map: &std::collections::HashMap<String, usize>,
+    emoji_textures: &[(String, egui::TextureHandle)],
+    media_textures: &std::collections::HashMap<String, Option<egui::TextureHandle>>,
+) -> Option<super::media::MediaAction> {
+    if !msg.content.is_empty() {
+        super::markdown::render_message_markdown(ui, &msg.content, emoji_map, emoji_textures);
+    }
+    if let Some(media) = &msg.media {
+        let texture = media_textures.get(&media.id).and_then(|t| t.as_ref());
+        return super::media::render_media_block(ui, media, texture);
+    }
+    None
+}
+
+/// Enregistre l'action média choisie (ouverture ou téléchargement) dans les
+/// variables collectées pendant le rendu, traitées après la zone défilante.
+fn apply_media_action(
+    action: super::media::MediaAction,
+    msg: &ChatMessage,
+    view_open: &mut Option<String>,
+    download: &mut Option<(String, String)>,
+) {
+    let Some(media) = &msg.media else { return };
+    match action {
+        super::media::MediaAction::View => *view_open = Some(media.id.clone()),
+        super::media::MediaAction::Download => {
+            *download = Some((media.id.clone(), media.filename.clone()))
+        }
+    }
+}
+
 impl AbcomApp {
     /// Zone centrale : fil de la conversation sélectionnée
     pub(crate) fn show_central_panel(&mut self, ctx: &egui::Context) {
@@ -425,6 +461,24 @@ impl AbcomApp {
                     .collect()
             };
 
+            // Textures des médias image (chargées paresseusement, mises en cache).
+            let mut media_textures: std::collections::HashMap<String, Option<egui::TextureHandle>> =
+                std::collections::HashMap::new();
+            for msg in &conv_messages {
+                if let Some(media) = &msg.media {
+                    if media.kind == crate::message::MediaKind::Image
+                        && !media_textures.contains_key(&media.id)
+                    {
+                        let texture = self.media_texture(ctx, &media.id);
+                        media_textures.insert(media.id.clone(), texture);
+                    }
+                }
+            }
+
+            // Actions médias collectées pendant le rendu, appliquées ensuite.
+            let mut media_view_open: Option<String> = None;
+            let mut media_download: Option<(String, String)> = None;
+
             // Aire de messages
             egui::ScrollArea::vertical()
                 .auto_shrink([false; 2])
@@ -510,12 +564,20 @@ impl AbcomApp {
                                         name_color,
                                         receipt,
                                     );
-                                    super::markdown::render_message_markdown(
+                                    if let Some(action) = render_message_body(
                                         ui,
-                                        &msg.content,
+                                        msg,
                                         &self.emoji_map,
                                         &self.emoji_textures,
-                                    );
+                                        &media_textures,
+                                    ) {
+                                        apply_media_action(
+                                            action,
+                                            msg,
+                                            &mut media_view_open,
+                                            &mut media_download,
+                                        );
+                                    }
                                 });
                             });
                         } else {
@@ -523,12 +585,20 @@ impl AbcomApp {
                                 ui.spacing_mut().item_spacing.x = 0.0;
                                 ui.add_space(AVATAR_SIZE + AVATAR_GUTTER);
                                 ui.vertical(|ui| {
-                                    super::markdown::render_message_markdown(
+                                    if let Some(action) = render_message_body(
                                         ui,
-                                        &msg.content,
+                                        msg,
                                         &self.emoji_map,
                                         &self.emoji_textures,
-                                    );
+                                        &media_textures,
+                                    ) {
+                                        apply_media_action(
+                                            action,
+                                            msg,
+                                            &mut media_view_open,
+                                            &mut media_download,
+                                        );
+                                    }
                                 });
                             });
                         }
@@ -542,6 +612,14 @@ impl AbcomApp {
                     // Transferts et propositions de fichiers, intégrés au fil
                     self.render_transfer_cards(ui, &selected_conv);
                 });
+
+            // Application des actions médias collectées pendant le rendu.
+            if let Some(id) = media_view_open {
+                self.media_viewer = Some(id);
+            }
+            if let Some((id, filename)) = media_download {
+                self.download_media(&id, &filename);
+            }
         });
     }
 
@@ -696,7 +774,7 @@ impl AbcomApp {
 }
 
 /// Formate une taille en octets de façon lisible (o / Ko / Mo / Go).
-fn format_bytes(bytes: u64) -> String {
+pub(crate) fn format_bytes(bytes: u64) -> String {
     const KB: f64 = 1024.0;
     const MB: f64 = KB * 1024.0;
     const GB: f64 = MB * 1024.0;
