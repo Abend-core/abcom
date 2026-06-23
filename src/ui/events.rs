@@ -56,7 +56,9 @@ impl AbcomApp {
         while let Ok(evt) = self.event_rx.try_recv() {
             match evt {
                 AppEvent::MessageReceived(msg) => {
-                    // ACK automatique + ReadReceipt pour les messages privés
+                    // ACK automatique (livraison) pour les messages privés.
+                    // Le ReadReceipt (lecture) n'est envoyé que si la conversation
+                    // est déjà ouverte et la fenêtre active — sinon différé à l'ouverture.
                     if msg.to_user.is_some() && msg.from != s.my_username {
                         if let Some(peer) = s.peers.iter().find(|p| p.username == msg.from) {
                             let msg_hash = AppState::message_hash(&msg);
@@ -66,24 +68,26 @@ impl AbcomApp {
                                 message_hash: msg_hash,
                                 timestamp: chrono::Local::now().format("%H:%M").to_string(),
                             };
-                            let req = MessageAckRequest {
+                            let ack_req = MessageAckRequest { to_addr: peer.addr, ack };
+
+                            // ReadReceipt uniquement si la conv est déjà ouverte + fenêtre focalisée
+                            let already_reading = self.window_focused
+                                && s.selected_conversation == Some(msg.from.clone());
+                            let receipt_req = already_reading.then(|| ReadReceiptRequest {
                                 to_addr: peer.addr,
-                                ack,
-                            };
-                            // Envoyer le ReadReceipt automatiquement
-                            let receipt = ReadReceipt {
-                                from: s.my_username.clone(),
-                                to: msg.from.clone(),
-                                message_hash: msg_hash,
-                                timestamp: chrono::Local::now().format("%H:%M").to_string(),
-                            };
-                            let receipt_req = ReadReceiptRequest {
-                                to_addr: peer.addr,
-                                receipt,
-                            };
+                                receipt: ReadReceipt {
+                                    from: s.my_username.clone(),
+                                    to: msg.from.clone(),
+                                    message_hash: msg_hash,
+                                    timestamp: chrono::Local::now().format("%H:%M").to_string(),
+                                },
+                            });
+
                             drop(s);
-                            let _ = self.send_ack_tx.try_send(req);
-                            let _ = self.send_read_receipt_tx.try_send(receipt_req);
+                            let _ = self.send_ack_tx.try_send(ack_req);
+                            if let Some(rr) = receipt_req {
+                                let _ = self.send_read_receipt_tx.try_send(rr);
+                            }
                             s = self.state.lock().unwrap();
                         }
                     }

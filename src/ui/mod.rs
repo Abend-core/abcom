@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 
 use crate::app::AppState;
 use crate::message::{
-    AppEvent, MessageAckRequest, ReadReceiptRequest, SendGroupRequest, SendRequest, TypingRequest,
+    AppEvent, MessageAckRequest, ReadReceipt, ReadReceiptRequest, SendGroupRequest, SendRequest, TypingRequest,
 };
 use crate::transfer::{TransferDecision, TransferOffer, TransferProgress, TransferRequest};
 
@@ -208,7 +208,39 @@ impl AbcomApp {
     pub(crate) fn switch_conversation(&mut self, new_conversation: Option<String>) {
         self.save_draft();
         self.state.lock().unwrap().selected_conversation = new_conversation.clone();
-        self.load_draft(new_conversation);
+        self.load_draft(new_conversation.clone());
+
+        // Envoyer les ReadReceipts pour tous les messages privés reçus dans cette conv
+        if let Some(peer_name) = new_conversation.filter(|c| !c.starts_with('#')) {
+            self.send_read_receipts_for_peer(&peer_name);
+        }
+    }
+
+    /// Envoie un ReadReceipt pour chaque message privé reçu du pair donné.
+    pub(crate) fn send_read_receipts_for_peer(&mut self, peer_name: &str) {
+        let s = self.state.lock().unwrap();
+        let my_name = s.my_username.clone();
+        let peer_addr = s.peers.iter().find(|p| p.username == peer_name).map(|p| p.addr);
+        let Some(addr) = peer_addr else { return };
+
+        let now = chrono::Local::now().format("%H:%M").to_string();
+        let receipts: Vec<_> = s.messages.iter()
+            .filter(|m| m.from == peer_name && m.to_user.as_deref() == Some(my_name.as_str()))
+            .map(|m| ReadReceiptRequest {
+                to_addr: addr,
+                receipt: ReadReceipt {
+                    from: my_name.clone(),
+                    to: peer_name.to_string(),
+                    message_hash: crate::app::AppState::message_hash(m),
+                    timestamp: now.clone(),
+                },
+            })
+            .collect();
+        drop(s);
+
+        for req in receipts {
+            let _ = self.send_read_receipt_tx.try_send(req);
+        }
     }
 }
 
