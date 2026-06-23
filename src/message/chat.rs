@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
 use super::group::GroupEvent;
+use super::media::MediaAttachment;
 
 /// Un message de chat sérialisé envoyé par TCP
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -16,6 +17,9 @@ pub struct ChatMessage {
     pub timestamp_epoch: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub to_user: Option<String>,
+    /// Média (image ou fichier) joint au message, le cas échéant.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<MediaAttachment>,
 }
 
 /// Demande d'envoi d'un message à une adresse TCP
@@ -43,6 +47,7 @@ mod tests {
             timestamp: "14:00".to_string(),
             timestamp_epoch: None,
             to_user: to.map(|s| s.to_string()),
+            media: None,
         }
     }
 
@@ -109,6 +114,7 @@ mod tests {
             timestamp: "12:00".to_string(),
             timestamp_epoch: Some(1_750_000_000),
             to_user: None,
+            media: None,
         };
         let json = serde_json::to_string(&with).unwrap();
         assert!(json.contains("timestamp_epoch"));

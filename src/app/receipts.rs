@@ -20,15 +20,16 @@ impl AppState {
     /// ce qui est indispensable : Alice calcule le hash côté envoi, Bob le recalcule
     /// côté réception pour l'inclure dans l'ACK — ils doivent tomber sur la même valeur.
     ///
-    /// La clé inclut `timestamp_epoch` + `to_user` pour éviter les collisions entre
-    /// deux messages identiques envoyés par le même utilisateur à des moments différents.
+    /// La clé inclut `timestamp_epoch` + `to_user` + `media.id` pour éviter les collisions
+    /// entre messages identiques ou vides (cas des médias).
     pub fn message_hash(msg: &ChatMessage) -> u64 {
         let key = format!(
-            "{}:{}:{}:{}",
+            "{}:{}:{}:{}:{}",
             msg.from,
             msg.to_user.as_deref().unwrap_or("broadcast"),
             msg.timestamp_epoch.unwrap_or(0),
-            msg.content
+            msg.content,
+            msg.media.as_ref().map(|m| m.id.as_str()).unwrap_or("")
         );
         let mut hash: u64 = 14_695_981_039_346_656_037;
         for byte in key.bytes() {
@@ -124,6 +125,7 @@ mod tests {
             timestamp: "12:00".to_string(),
             timestamp_epoch: None,
             to_user: None,
+            media: None,
         }
     }
 
@@ -157,6 +159,7 @@ mod tests {
             timestamp: "12:00".to_string(),
             timestamp_epoch: Some(1_750_000_000),
             to_user: Some("bob".to_string()),
+            media: None,
         };
         let expected = AppState::message_hash(&m);
         assert_eq!(AppState::message_hash(&m), expected);
@@ -174,6 +177,7 @@ mod tests {
             timestamp: "14:00".to_string(),
             timestamp_epoch: Some(1_000),
             to_user: None,
+            media: None,
         };
         let m2 = ChatMessage {
             timestamp_epoch: Some(2_000),
