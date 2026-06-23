@@ -58,7 +58,7 @@ impl AbcomApp {
         let mut s = self.state.lock().unwrap();
         while let Ok(evt) = self.event_rx.try_recv() {
             match evt {
-                AppEvent::MessageReceived(msg) => {
+                AppEvent::MessageReceived(mut msg) => {
                     // ACK automatique (livraison) pour les messages privés.
                     // Le ReadReceipt (lecture) n'est envoyé que si la conversation
                     // est déjà ouverte et la fenêtre active — sinon différé à l'ouverture.
@@ -95,6 +95,15 @@ impl AbcomApp {
                                 let _ = self.send_read_receipt_tx.try_send(rr);
                             }
                             s = self.state.lock().unwrap();
+                        }
+                    }
+
+                    // Média reçu : écrire les octets en cache puis les retirer
+                    // du message pour garder l'historique léger.
+                    if let Some(media) = msg.media.as_mut() {
+                        if media.data.is_some() {
+                            s.store_media(media);
+                            media.data = None;
                         }
                     }
 
