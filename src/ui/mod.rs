@@ -222,13 +222,9 @@ impl eframe::App for AbcomApp {
         self.process_transfer_offers();
         self.periodic_tasks();
 
-        // Flash barre des tâches si message non lu
+        // Flash barre des tâches si message non lu — envoyé une seule fois au changement d'état
         if self.has_unread {
-            if !ctx.input(|i| i.focused) {
-                ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
-                    egui::UserAttentionType::Informational,
-                ));
-            } else {
+            if ctx.input(|i| i.focused) {
                 self.has_unread = false;
                 ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
                     egui::UserAttentionType::Reset,
@@ -300,7 +296,7 @@ impl eframe::App for AbcomApp {
         self.show_central_panel(ctx);
         self.render_settings(ctx);
 
-        ctx.request_repaint_after(Duration::from_millis(100));
+        ctx.request_repaint_after(Duration::from_millis(500));
     }
 }
 
