@@ -36,10 +36,28 @@ Il donne une vue d'ensemble de l'état du développement en cours.
 
 ---
 
-## Comment mettre à jour ce fichier
+## Comment mettre à jour ce fichier — règle anti-conflit
 
-**En début de feature** : ajouter une ligne dans "En cours" avec le statut `🚧 En cours`.
+> **Ce fichier n'existe que sur `dev`. Il ne doit JAMAIS être modifié depuis une branche `feature/` ou `task/`.**  
+> Les mises à jour se font uniquement en deux moments précis, directement sur `dev` :
 
-**En fin de feature** (avant PR → dev) : déplacer la ligne dans "Terminées" avec la date du merge.
+**1. En début de feature** — juste après avoir créé la branche feature depuis dev :
+```bash
+git checkout dev
+# éditer AVANCEMENT.md : ajouter la feature en "En cours"
+git add AVANCEMENT.md && git commit -m "chore(avancement): démarrer feature/ma-feature"
+git checkout feature/ma-feature
+```
 
-**Les agents IA** doivent obligatoirement mettre à jour ce fichier sur `dev` avant de merger une feature.
+**2. En fin de feature** — juste après le merge de la PR feature → dev :
+```bash
+# la PR vient d'être mergée sur dev
+git checkout dev && git pull
+# éditer AVANCEMENT.md : déplacer la feature en "Terminées"
+git add AVANCEMENT.md && git commit -m "chore(avancement): clore feature/ma-feature"
+git push origin dev
+```
+
+Pourquoi ça n'entraîne pas de conflits : les features ne touchent jamais ce fichier,  
+donc il ne peut pas y avoir de divergence. Les seules modifications viennent de `dev` lui-même,  
+de façon séquentielle.
