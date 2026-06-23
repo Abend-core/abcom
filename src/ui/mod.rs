@@ -14,6 +14,7 @@ use crate::transfer::{TransferDecision, TransferOffer, TransferProgress, Transfe
 
 mod avatar;
 mod chat_panel;
+mod media;
 mod settings;
 pub mod composer;
 mod emoji_picker;
@@ -121,6 +122,10 @@ pub(crate) struct AbcomApp {
     pub(crate) avatar_sent_to: std::collections::HashSet<String>,
     /// Sélection d'image de profil différée (sélecteur natif, voir `update`).
     pub(crate) pending_avatar_pick: bool,
+    /// Textures des médias image, indexées par identifiant (None = échec/non-image).
+    pub(crate) media_textures: std::collections::HashMap<String, Option<egui::TextureHandle>>,
+    /// Identifiant du média affiché en grand dans la visionneuse (None = fermée).
+    pub(crate) media_viewer: Option<String>,
 }
 
 impl AbcomApp {
@@ -193,6 +198,8 @@ impl AbcomApp {
             avatar_textures: std::collections::HashMap::new(),
             avatar_sent_to: std::collections::HashSet::new(),
             pending_avatar_pick: false,
+            media_textures: std::collections::HashMap::new(),
+            media_viewer: None,
         }
     }
 
@@ -373,6 +380,7 @@ impl eframe::App for AbcomApp {
         self.render_group_modal(ctx);
         self.show_central_panel(ctx);
         self.render_settings(ctx);
+        self.show_media_viewer(ctx);
 
         ctx.request_repaint_after(Duration::from_millis(500));
     }
