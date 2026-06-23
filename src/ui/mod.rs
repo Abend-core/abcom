@@ -301,7 +301,7 @@ impl eframe::App for AbcomApp {
 }
 
 fn app_icon_data() -> Option<egui::IconData> {
-    let data = include_bytes!("../../Sans titre.png");
+    let data = include_bytes!("../../assets/app_icon.png");
     eprintln!("[ui] Chargement icône PNG ({} bytes)", data.len());
     match image::load_from_memory(data) {
         Ok(img) => {
