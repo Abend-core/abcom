@@ -7,10 +7,12 @@ use tokio::sync::mpsc;
 
 use crate::app::AppState;
 use crate::message::{
-    AppEvent, MessageAckRequest, ReadReceipt, ReadReceiptRequest, SendGroupRequest, SendRequest, TypingRequest,
+    AppEvent, AvatarRequest, MessageAckRequest, ReadReceipt, ReadReceiptRequest, SendGroupRequest,
+    SendRequest, TypingRequest,
 };
 use crate::transfer::{TransferDecision, TransferOffer, TransferProgress, TransferRequest};
 
+mod avatar;
 mod chat_panel;
 mod settings;
 pub mod composer;
@@ -38,6 +40,7 @@ pub(crate) enum ThemePreference {
 /// Onglet actif de la fenêtre Paramètres.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SettingsTab {
+    Profile,
     General,
     Credits,
     License,
@@ -63,6 +66,7 @@ pub(crate) struct AbcomApp {
     pub(crate) send_typing_tx: mpsc::Sender<TypingRequest>,
     pub(crate) send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
     pub(crate) send_ack_tx: mpsc::Sender<MessageAckRequest>,
+    pub(crate) send_avatar_tx: mpsc::Sender<AvatarRequest>,
     pub(crate) send_transfer_tx: mpsc::Sender<TransferRequest>,
     pub(crate) input: String,
     pub(crate) input_cursor_char: usize,
@@ -111,6 +115,12 @@ pub(crate) struct AbcomApp {
     pub(crate) system_dark_mode: Option<bool>,
     pub(crate) show_settings: bool,
     pub(crate) settings_tab: SettingsTab,
+    /// Textures d'avatars, indexées par nom d'utilisateur (cache de rendu).
+    pub(crate) avatar_textures: std::collections::HashMap<String, egui::TextureHandle>,
+    /// Pairs auxquels notre avatar a déjà été envoyé (évite les répétitions).
+    pub(crate) avatar_sent_to: std::collections::HashSet<String>,
+    /// Sélection d'image de profil différée (sélecteur natif, voir `update`).
+    pub(crate) pending_avatar_pick: bool,
 }
 
 impl AbcomApp {
@@ -124,6 +134,7 @@ impl AbcomApp {
         send_typing_tx: mpsc::Sender<TypingRequest>,
         send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
         send_ack_tx: mpsc::Sender<MessageAckRequest>,
+        send_avatar_tx: mpsc::Sender<AvatarRequest>,
         send_transfer_tx: mpsc::Sender<TransferRequest>,
         offer_rx: mpsc::Receiver<TransferOffer>,
     ) -> Self {
@@ -135,6 +146,7 @@ impl AbcomApp {
             send_typing_tx,
             send_read_receipt_tx,
             send_ack_tx,
+            send_avatar_tx,
             send_transfer_tx,
             offer_rx,
             pending_offers: Vec::new(),
@@ -178,6 +190,9 @@ impl AbcomApp {
             system_dark_mode: None,
             show_settings: false,
             settings_tab: SettingsTab::General,
+            avatar_textures: std::collections::HashMap::new(),
+            avatar_sent_to: std::collections::HashSet::new(),
+            pending_avatar_pick: false,
         }
     }
 
@@ -254,14 +269,13 @@ impl eframe::App for AbcomApp {
         self.process_transfer_offers();
         self.periodic_tasks();
 
-        // Flash barre des tâches si message non lu — envoyé une seule fois au changement d'état
-        if self.has_unread {
-            if ctx.input(|i| i.focused) {
-                self.has_unread = false;
-                ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
-                    egui::UserAttentionType::Reset,
-                ));
-            }
+        // Flash barre des tâches si message non lu — réinitialisé une seule fois
+        // quand la fenêtre reprend le focus (pas d'envoi répété en boucle).
+        if self.has_unread && ctx.input(|i| i.focused) {
+            self.has_unread = false;
+            ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
+                egui::UserAttentionType::Reset,
+            ));
         }
 
         // Handle deferred native file/folder picker (must run before egui rendering to
@@ -300,6 +314,38 @@ impl eframe::App for AbcomApp {
             }
         }
 
+        // Sélection de l'image de profil (différée comme les autres sélecteurs
+        // natifs pour éviter un conflit avec la run-loop AppKit sur macOS).
+        if self.pending_avatar_pick {
+            self.pending_avatar_pick = false;
+            let (pick_title, error_msg) = (
+                self.tr("Choisir une image de profil", "Choose a profile picture"),
+                self.tr(
+                    "Image de profil invalide",
+                    "Invalid profile picture",
+                ),
+            );
+            if let Some(path) = rfd::FileDialog::new()
+                .set_title(pick_title)
+                .add_filter("Images", &["png", "jpg", "jpeg", "svg"])
+                .pick_file()
+            {
+                match avatar::load_normalized_avatar(&path) {
+                    Ok(png) => {
+                        let my_name = self.state.lock().unwrap().my_username.clone();
+                        self.state.lock().unwrap().set_my_avatar(png);
+                        self.avatar_textures.remove(&my_name);
+                        self.broadcast_my_avatar();
+                    }
+                    Err(e) => {
+                        eprintln!("[ui] Avatar non chargé : {}", e);
+                        self.last_notification = Some(error_msg.to_string());
+                        self.notification_time = std::time::Instant::now();
+                    }
+                }
+            }
+        }
+
         // Choix du dossier de réception après acceptation d'un fichier (différé
         // pour ne pas entrer en conflit avec la run-loop AppKit sur macOS).
         if let Some(transfer_id) = self.pending_accept.take() {
@@ -330,6 +376,26 @@ impl eframe::App for AbcomApp {
 
         ctx.request_repaint_after(Duration::from_millis(500));
     }
+}
+
+/// Nom de la famille de police en gras enregistrée dans egui (Inter Bold).
+/// egui ne synthétise pas le gras : on charge une vraie police pour les noms.
+pub(crate) const BOLD_FAMILY: &str = "bold";
+
+/// Définitions de polices : on conserve les polices par défaut et on ajoute
+/// Inter Bold (OFL) sous la famille [`BOLD_FAMILY`] pour les noms d'auteur.
+fn build_fonts() -> egui::FontDefinitions {
+    let mut fonts = egui::FontDefinitions::default();
+    fonts.font_data.insert(
+        "inter-bold".to_owned(),
+        Arc::new(egui::FontData::from_static(include_bytes!(
+            "../../assets/fonts/Inter-Bold.ttf"
+        ))),
+    );
+    fonts
+        .families
+        .insert(egui::FontFamily::Name(BOLD_FAMILY.into()), vec!["inter-bold".to_owned()]);
+    fonts
 }
 
 fn app_icon_data() -> Option<egui::IconData> {
@@ -375,6 +441,7 @@ pub fn run(
     send_typing_tx: mpsc::Sender<TypingRequest>,
     send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
     send_ack_tx: mpsc::Sender<MessageAckRequest>,
+    send_avatar_tx: mpsc::Sender<AvatarRequest>,
     send_transfer_tx: mpsc::Sender<TransferRequest>,
     offer_rx: mpsc::Receiver<TransferOffer>,
 ) -> anyhow::Result<()> {
@@ -395,7 +462,8 @@ pub fn run(
     eframe::run_native(
         "Abcom",
         options,
-        Box::new(|_cc| {
+        Box::new(|cc| {
+            cc.egui_ctx.set_fonts(build_fonts());
             Ok(Box::new(AbcomApp::new(
                 state,
                 event_rx,
@@ -404,6 +472,7 @@ pub fn run(
                 send_typing_tx,
                 send_read_receipt_tx,
                 send_ack_tx,
+                send_avatar_tx,
                 send_transfer_tx,
                 offer_rx,
             )))

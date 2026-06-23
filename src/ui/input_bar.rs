@@ -193,11 +193,12 @@ fn send_current_message(
         }
 
         let content = app.input.trim().to_string();
-        let now = chrono::Local::now().format("%H:%M").to_string();
+        let now = chrono::Local::now();
         let msg = ChatMessage {
             from: my_name.clone(),
             content,
-            timestamp: now,
+            timestamp: now.format("%H:%M").to_string(),
+            timestamp_epoch: Some(now.timestamp() as u64),
             to_user: selected_peer_name.clone(),
         };
 

@@ -2,7 +2,10 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::Receiver;
 
-use crate::message::{MessageAckRequest, NetworkPacket, ReadReceiptRequest, SendGroupRequest, SendRequest, TypingRequest};
+use crate::message::{
+    AvatarRequest, MessageAckRequest, NetworkPacket, ReadReceiptRequest, SendGroupRequest,
+    SendRequest, TypingRequest,
+};
 
 async fn send_packet(addr: std::net::SocketAddr, packet: NetworkPacket) {
     match TcpStream::connect(addr).await {
@@ -45,6 +48,14 @@ pub async fn run_sender_typing(mut rx: Receiver<TypingRequest>) {
 pub async fn run_sender_read_receipts(mut rx: Receiver<ReadReceiptRequest>) {
     while let Some(req) = rx.recv().await {
         let packet = NetworkPacket::ReadReceipt(req.receipt);
+        tokio::spawn(send_packet(req.to_addr, packet));
+    }
+}
+
+/// Expéditeur TCP pour les annonces d'avatar (image de profil)
+pub async fn run_sender_avatar(mut rx: Receiver<AvatarRequest>) {
+    while let Some(req) = rx.recv().await {
+        let packet = NetworkPacket::Avatar(req.announce);
         tokio::spawn(send_packet(req.to_addr, packet));
     }
 }
