@@ -9,7 +9,7 @@ use crate::transfer::TransferRequest;
 
 use super::composer;
 use super::emoji_picker::emoji_shortcode_trigger;
-use super::{AbcomApp, AppView};
+use super::AbcomApp;
 
 const ACTION_BUTTON_SIZE: [f32; 2] = [34.0, 34.0];
 
@@ -268,11 +268,6 @@ fn send_current_message(
 impl AbcomApp {
     /// Barre de saisie en bas de fenêtre. Retourne true si le bouton emoji a été cliqué.
     pub(crate) fn show_input_bar(&mut self, ctx: &egui::Context) -> bool {
-        // Ne pas afficher la barre de saisie en Networks view
-        if self.active_view == AppView::Networks {
-            return false;
-        }
-
         let selected_peer_online = {
             let s = self.state.lock().unwrap();
             match &s.selected_conversation {
@@ -522,19 +517,16 @@ impl AbcomApp {
                             if self.input_has_focus && menu_open_now {
                         if ctx.input_mut(|i| {
                             i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
-                        }) {
-                            if !shortcode_list.is_empty() {
+                        })
+                            && !shortcode_list.is_empty() {
                                 self.shortcode_selected =
                                     (self.shortcode_selected + 1).min(shortcode_list.len() - 1);
                             }
-                        }
                         if ctx
                             .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp))
-                        {
-                            if !shortcode_list.is_empty() {
+                            && !shortcode_list.is_empty() {
                                 self.shortcode_selected = self.shortcode_selected.saturating_sub(1);
                             }
-                        }
                             }
 
                             if self.input_has_focus && !shortcode_list.is_empty() {
@@ -619,13 +611,12 @@ impl AbcomApp {
                                     pressed_enter_fallback,
                                     menu_open_now,
                                     &self.input,
-                                ) {
-                                    if send_current_message(self, selected_addr, &all_peers) {
+                                )
+                                    && send_current_message(self, selected_addr, &all_peers) {
                                         self.input_selection_anchor = None;
                                         resp.request_focus();
                                         self.show_emoji_picker = false;
                                     }
-                                }
 
                             },
                             );

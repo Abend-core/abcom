@@ -157,6 +157,8 @@ pub(crate) fn shortcode_suggestions(
 }
 
 /// Affiche la popup de suggestions de shortcodes
+// Paramètres de rendu et d'état indépendants ; regrouper n'apporterait rien.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn show_shortcode_popup(
     ctx: &egui::Context,
     _ui: &mut egui::Ui,

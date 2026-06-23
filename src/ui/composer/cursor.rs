@@ -2,15 +2,20 @@ use eframe::egui;
 
 use super::render::measure_text_width;
 
-/// Retourne les positions pixel (x, y) de chaque caractère dans le composeur.
-/// Retourne aussi la liste (line_start_char_idx, y_pixel) pour chaque ligne.
+/// Positions calculées par [`composer_caret_positions`] :
+/// `.0` = position pixel (x, y) de chaque caractère ;
+/// `.1` = (index char de début de ligne, y pixel) pour chaque ligne.
+pub type CaretPositions = (Vec<(usize, f32)>, Vec<(usize, f32)>);
+
+/// Retourne les positions pixel (x, y) de chaque caractère dans le composeur,
+/// ainsi que la liste des débuts de ligne.
 pub fn composer_caret_positions(
     text: &str,
     emoji_map: &std::collections::HashMap<String, usize>,
     _emoji_textures: &[(String, egui::TextureHandle)],
     ui: &egui::Ui,
     line_height: f32,
-) -> (Vec<(usize, f32)>, Vec<(usize, f32)>) {
+) -> CaretPositions {
     let inner_rect = ui.available_rect_before_wrap();
     let font_id = egui::TextStyle::Body.resolve(ui.style());
     let chars: Vec<char> = text.chars().collect();
@@ -123,6 +128,9 @@ pub fn cursor_from_point(
 }
 
 /// Déplace le curseur verticalement (direction: -1 = haut, +1 = bas)
+// Paramètres de rendu indépendants (texte, métriques, contexte egui) :
+// les regrouper n'apporterait pas de clarté.
+#[allow(clippy::too_many_arguments)]
 pub fn move_cursor_vertical(
     text: &str,
     cursor: usize,
