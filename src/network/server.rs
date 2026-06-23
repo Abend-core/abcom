@@ -3,7 +3,7 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::Sender;
 
 use crate::config;
-use crate::message::{AppEvent, ChatMessage, GroupEvent, MessageAck, ReadReceipt, TypingIndicator};
+use crate::message::{AppEvent, NetworkPacket};
 
 /// Serveur TCP : écoute les connexions entrantes et dispatche les événements
 pub async fn run_server(tx: Sender<AppEvent>) {
@@ -29,18 +29,13 @@ pub async fn run_server(tx: Sender<AppEvent>) {
 async fn handle_incoming(mut stream: TcpStream, tx: Sender<AppEvent>) {
     let mut buf = Vec::new();
     if stream.read_to_end(&mut buf).await.is_ok() && !buf.is_empty() {
-        if let Ok(msg) = serde_json::from_slice::<ChatMessage>(&buf) {
-            let _ = tx.send(AppEvent::MessageReceived(msg)).await;
-        } else if let Ok(event) = serde_json::from_slice::<GroupEvent>(&buf) {
-            let _ = tx.send(AppEvent::GroupEventReceived(event)).await;
-        } else if let Ok(indicator) = serde_json::from_slice::<TypingIndicator>(&buf) {
-            let _ = tx.send(AppEvent::UserTyping(indicator.from)).await;
-        } else if let Ok(receipt) = serde_json::from_slice::<ReadReceipt>(&buf) {
-            let _ = tx.send(AppEvent::ReadReceiptReceived(receipt)).await;
-        } else if let Ok(ack) = serde_json::from_slice::<MessageAck>(&buf) {
-            let _ = tx.send(AppEvent::MessageAckReceived(ack)).await;
-        } else {
-            eprintln!("[network] Message entrant non reconnu ({} bytes)", buf.len());
+        match serde_json::from_slice::<NetworkPacket>(&buf) {
+            Ok(NetworkPacket::Chat(msg))          => { let _ = tx.send(AppEvent::MessageReceived(msg)).await; }
+            Ok(NetworkPacket::Group(event))       => { let _ = tx.send(AppEvent::GroupEventReceived(event)).await; }
+            Ok(NetworkPacket::Typing(indicator))  => { let _ = tx.send(AppEvent::UserTyping(indicator.from)).await; }
+            Ok(NetworkPacket::ReadReceipt(r))     => { let _ = tx.send(AppEvent::ReadReceiptReceived(r)).await; }
+            Ok(NetworkPacket::Ack(ack))           => { let _ = tx.send(AppEvent::MessageAckReceived(ack)).await; }
+            Err(_) => eprintln!("[network] Paquet entrant non reconnu ({} bytes)", buf.len()),
         }
     }
 }
