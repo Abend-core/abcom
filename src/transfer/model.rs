@@ -2,8 +2,8 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::oneshot;
 
-pub const TRANSFER_PORT: u16 = 9001;
 pub const TRANSFER_BUFFER_SIZE: usize = 64 * 1024;
 const MAX_HEADER_BYTES: usize = 1024 * 1024;
 
@@ -17,6 +17,25 @@ pub struct TransferRequest {
     pub recipient: String,
     pub to_addr: SocketAddr,
     pub paths: Vec<PathBuf>,
+}
+
+/// Proposition de réception d'un fichier, transmise à l'UI pour décision.
+/// L'utilisateur accepte ou refuse via `decision_tx`.
+pub struct TransferOffer {
+    pub transfer_id: String,
+    pub from: String,
+    pub label: String,
+    pub total_bytes: u64,
+    pub item_count: usize,
+    pub decision_tx: oneshot::Sender<TransferDecision>,
+}
+
+/// Réponse de l'utilisateur à une proposition de transfert.
+#[derive(Debug)]
+pub struct TransferDecision {
+    pub accept: bool,
+    /// Dossier de destination choisi (présent uniquement si accepté).
+    pub dest_dir: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -69,6 +88,8 @@ pub enum TransferStatus {
     Running,
     Completed,
     Failed,
+    /// Le destinataire a refusé le transfert.
+    Rejected,
 }
 
 #[derive(Clone, Debug)]

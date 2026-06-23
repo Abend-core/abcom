@@ -35,6 +35,14 @@ pub struct PeerRecord {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct DiscoveryPacket {
     pub username: String,
+    /// Port TCP de chat annoncé par l'émetteur. Absent des anciens paquets,
+    /// auquel cas il vaut 9000 par défaut (rétro-compatibilité).
+    #[serde(default = "default_chat_port")]
+    pub port: u16,
+}
+
+fn default_chat_port() -> u16 {
+    9000
 }
 
 #[cfg(test)]
@@ -114,10 +122,20 @@ mod tests {
 
     #[test]
     fn discovery_packet_round_trip() {
-        let p = DiscoveryPacket { username: "alice".to_string() };
+        let p = DiscoveryPacket { username: "alice".to_string(), port: 9010 };
         let json = serde_json::to_string(&p).unwrap();
         let decoded: DiscoveryPacket = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.username, "alice");
+        assert_eq!(decoded.port, 9010);
+    }
+
+    #[test]
+    fn discovery_packet_legacy_without_port_defaults_to_9000() {
+        // Ancien paquet sans champ `port` → 9000 par défaut
+        let json = r#"{"username":"bob"}"#;
+        let decoded: DiscoveryPacket = serde_json::from_str(json).unwrap();
+        assert_eq!(decoded.username, "bob");
+        assert_eq!(decoded.port, 9000);
     }
 
     #[test]

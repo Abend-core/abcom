@@ -108,19 +108,6 @@ pub fn prepare_transfer(from: &str, to: &str, paths: &[PathBuf]) -> Result<Prepa
     })
 }
 
-pub fn prepare_receive_root(manifest: &TransferManifest) -> Result<PathBuf> {
-    let base = dirs::download_dir()
-        .or_else(dirs::data_dir)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let root = base
-        .join("abcom-transfers")
-        .join(sanitize_component(&manifest.from))
-        .join(sanitize_component(&manifest.transfer_id));
-    std::fs::create_dir_all(&root)
-        .with_context(|| format!("unable to create {}", root.display()))?;
-    Ok(root)
-}
-
 pub fn resolve_output_path(root: &Path, relative_path: &str) -> Result<PathBuf> {
     let mut sanitized = PathBuf::new();
     for component in Path::new(relative_path).components() {
