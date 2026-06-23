@@ -17,6 +17,8 @@ Il donne une vue d'ensemble de l'état du développement en cours.
 
 | Feature | Branche | Description | Mergé le |
 |---|---|---|---|
+| Correctif accusés de réception | `feature/fix-receipts` | NetworkPacket taggé + logique ✓/✓✓ gris/✓✓ bleu | 2026-06-23 |
+| Nettoyage racine du projet | `feature/root-cleanup` | Suppression .old.md, dist/, specification/, réorganisation | 2026-06-23 |
 | Règles Git & docs projet | `feature/project-docs` | git.md, CHANGELOG.md, AVANCEMENT.md | 2026-06-23 |
 | Correctif surcharge CPU | `fix/cpu-overload-loop` | Boucle infinie has_unread + son bloquant UI | 2026-06-23 |
 | Transfert de fichiers | `feature/transfert` | Envoi/réception avec acceptation, progress bar | — |
