@@ -54,7 +54,7 @@ impl AppState {
 
     pub fn remove_member_from_group(&mut self, group_name: &str, username: &str) -> bool {
         if let Some(g) = self.groups.iter_mut().find(|g| g.name == group_name) {
-            if g.owner == self.my_username && username != &g.owner {
+            if g.owner == self.my_username && username != g.owner {
                 g.members.retain(|m| m != username);
                 self.save_groups();
                 return true;

@@ -26,7 +26,7 @@ impl AppState {
     pub fn mark_message_read(&mut self, message_hash: u64, username: String) {
         self.read_receipts
             .entry(message_hash)
-            .or_insert_with(std::collections::HashSet::new)
+            .or_default()
             .insert(username);
     }
 

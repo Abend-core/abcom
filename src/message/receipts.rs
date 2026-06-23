@@ -58,7 +58,7 @@ pub enum NetworkMessage {
 #[cfg(test)]
 mod tests {
     use super::{TypingIndicator, ReadReceipt, MessageAck, NetworkMessage};
-    use crate::message::{ChatMessage, GroupEvent, GroupAction, Group};
+    use crate::message::{ChatMessage, GroupEvent, GroupAction};
 
     // ── TypingIndicator ─────────────────────────────────────────────────────
 

@@ -21,39 +21,15 @@ impl AppState {
             .unwrap_or_default()
             .as_secs();
 
-        let network_id = self.current_network_id.clone();
         for peer in &mut self.peers {
             if peer.username == username {
                 peer.addr = addr;
                 peer.last_seen = now;
                 peer.online = true;
-                let _ = peer;
-                if let Some(ref id) = network_id {
-                    self.record_peer_on_network(&username, id);
-                }
                 return;
             }
         }
-        if let Some(ref id) = network_id {
-            self.record_peer_on_network(&username, id);
-        }
         self.peers.push(Peer { username, addr, last_seen: now, online: true });
-    }
-
-    /// Force la mise hors ligne de tous les pairs (après changement de réseau)
-    #[allow(dead_code)]
-    pub fn clear_all_peers_online_status(&mut self) {
-        for peer in &mut self.peers {
-            peer.online = false;
-            peer.last_seen = 0;
-        }
-    }
-
-    /// Supprime complètement un pair de la liste
-    pub fn forget_peer(&mut self, username: &str) -> bool {
-        let before = self.peers.len();
-        self.peers.retain(|p| p.username != username);
-        self.peers.len() < before
     }
 
     /// Nettoie les pairs inactifs et retourne les usernames déconnectés
@@ -91,7 +67,6 @@ impl AppState {
     }
 
     /// Alias d'un pair s'il en a un, sinon son username
-    #[allow(dead_code)]
     pub fn peer_display_name(&self, username: &str) -> String {
         self.peer_records
             .iter()
@@ -100,57 +75,17 @@ impl AppState {
             .unwrap_or_else(|| username.to_string())
     }
 
-    /// Pairs filtrés par network_id
-    #[allow(dead_code)]
-    pub fn peers_for_network<'a>(&'a self, network_id: &str) -> Vec<&'a Peer> {
-        let seen: Vec<&str> = self.known_networks
-            .iter()
-            .find(|n| n.id == network_id)
-            .map(|n| n.seen_peers.iter().map(|s| s.as_str()).collect())
-            .unwrap_or_default();
-        self.peers.iter().filter(|p| seen.contains(&p.username.as_str())).collect()
-    }
-
-    /// Enregistre un pair sur le réseau actuel
-    pub fn record_peer_on_network(&mut self, username: &str, network_id: &str) {
-        if let Some(net) = self.known_networks.iter_mut().find(|n| n.id == network_id) {
-            if !net.seen_peers.contains(&username.to_string()) {
-                net.seen_peers.push(username.to_string());
-            }
-        } else {
-            use crate::message::KnownNetwork;
-            self.known_networks.push(KnownNetwork {
-                id: network_id.to_string(),
-                subnet: self.current_subnet.clone().unwrap_or_default(),
-                alias: None,
-                seen_peers: vec![username.to_string()],
-            });
-        }
-
+    /// Définit (ou retire, si `None`) l'alias d'un pair, puis persiste.
+    pub fn set_peer_alias(&mut self, username: &str, alias: Option<String>) {
         if let Some(rec) = self.peer_records.iter_mut().find(|r| r.username == username) {
-            rec.last_subnet = Some(network_id.to_string());
+            rec.alias = alias;
         } else {
             use crate::message::PeerRecord;
             self.peer_records.push(PeerRecord {
                 username: username.to_string(),
-                alias: None,
-                last_subnet: Some(network_id.to_string()),
+                alias,
             });
         }
-
-        self.save_networks();
-        self.save_peer_records();
-    }
-
-    /// Supprime un réseau et tous ses pairs du registre
-    pub fn forget_network(&mut self, network_id: &str) {
-        if let Some(net) = self.known_networks.iter().find(|n| n.id == network_id).cloned() {
-            for peer in &net.seen_peers {
-                self.peer_records.retain(|r| &r.username != peer);
-            }
-        }
-        self.known_networks.retain(|n| n.id != network_id);
-        self.save_networks();
         self.save_peer_records();
     }
 
@@ -219,30 +154,6 @@ mod tests {
         s.add_peer("bob".to_string(), a2);
         assert_eq!(s.peers.len(), 1, "no duplicate");
         assert_eq!(s.peers[0].addr.ip().to_string(), "192.168.1.6");
-    }
-
-    #[test]
-    fn test_forget_peer_found() {
-        let mut s = state("alice");
-        s.peers.push(peer("bob", "192.168.1.5", true));
-        assert!(s.forget_peer("bob"));
-        assert!(s.peers.is_empty());
-    }
-
-    #[test]
-    fn test_forget_peer_not_found() {
-        let mut s = state("alice");
-        assert!(!s.forget_peer("nobody"));
-    }
-
-    #[test]
-    fn test_clear_all_peers_online_status() {
-        let mut s = state("alice");
-        s.peers.push(peer("bob", "192.168.1.5", true));
-        s.peers.push(peer("charlie", "192.168.1.6", true));
-        s.clear_all_peers_online_status();
-        assert!(s.peers.iter().all(|p| !p.online));
-        assert!(s.peers.iter().all(|p| p.last_seen == 0));
     }
 
     #[test]
@@ -328,8 +239,19 @@ mod tests {
         s.peer_records.push(PeerRecord {
             username: "bob".to_string(),
             alias: Some("Robert".to_string()),
-            last_subnet: None,
         });
         assert_eq!(s.peer_display_name("bob"), "Robert");
+    }
+
+    #[test]
+    fn test_set_peer_alias_then_clear() {
+        // new_with_base isole les écritures disque dans un répertoire temporaire
+        let dir = std::env::temp_dir().join(format!("abcom_alias_{}", std::process::id()));
+        let mut s = AppState::new_with_base("alice", &dir);
+        s.set_peer_alias("bob", Some("Robert".to_string()));
+        assert_eq!(s.peer_display_name("bob"), "Robert");
+        s.set_peer_alias("bob", None);
+        assert_eq!(s.peer_display_name("bob"), "bob");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use crate::message::{Group, KnownNetwork, PeerRecord};
+use crate::message::{Group, PeerRecord};
 use super::AppState;
 
 impl AppState {
@@ -45,21 +45,6 @@ impl AppState {
         }
     }
 
-    pub(super) fn load_networks(&mut self) {
-        if self.networks_path.exists() {
-            if let Ok(content) = std::fs::read_to_string(&self.networks_path) {
-                if let Ok(mut nets) = serde_json::from_str::<Vec<KnownNetwork>>(&content) {
-                    for net in &mut nets {
-                        if net.id.is_empty() && !net.subnet.is_empty() {
-                            net.id = net.subnet.clone();
-                        }
-                    }
-                    self.known_networks = nets;
-                }
-            }
-        }
-    }
-
     pub(super) fn load_peer_records(&mut self) {
         if self.peer_records_path.exists() {
             if let Ok(content) = std::fs::read_to_string(&self.peer_records_path) {
@@ -94,15 +79,6 @@ impl AppState {
         }
     }
 
-    pub fn save_networks(&self) {
-        if let Some(parent) = self.networks_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Ok(json) = serde_json::to_string_pretty(&self.known_networks) {
-            let _ = std::fs::write(&self.networks_path, json);
-        }
-    }
-
     pub fn save_peer_records(&self) {
         if let Some(parent) = self.peer_records_path.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -116,8 +92,8 @@ impl AppState {
 #[cfg(test)]
 mod tests {
     use crate::app::AppState;
-    use crate::message::{Group, KnownNetwork, PeerRecord};
-    use std::path::PathBuf;
+    use crate::message::{Group, PeerRecord};
+    use std::path::{Path, PathBuf};
 
     fn tmp_dir(label: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("abcom_test_{}_{}", label, std::process::id()));
@@ -125,7 +101,7 @@ mod tests {
         dir
     }
 
-    fn state_in(dir: &PathBuf, username: &str) -> AppState {
+    fn state_in(dir: &Path, username: &str) -> AppState {
         AppState::new_with_base(username, dir)
     }
 
@@ -186,48 +162,12 @@ mod tests {
     #[test]
     fn groups_round_trip_empty() {
         let dir = tmp_dir("groups_empty");
-        let mut s1 = state_in(&dir, "alice");
+        let s1 = state_in(&dir, "alice");
         s1.save_groups();
 
         let mut s2 = state_in(&dir, "alice");
         s2.load_groups();
         assert!(s2.groups.is_empty());
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    // ── save_networks + load_networks round-trip ───────────────────────────
-
-    #[test]
-    fn networks_round_trip() {
-        let dir = tmp_dir("networks_rt");
-        let mut s1 = state_in(&dir, "alice");
-        s1.known_networks.push(KnownNetwork {
-            id: "ssid-home".to_string(),
-            subnet: "192.168.1".to_string(),
-            alias: Some("Maison".to_string()),
-            seen_peers: vec!["bob".to_string()],
-        });
-        s1.save_networks();
-
-        let mut s2 = state_in(&dir, "alice");
-        s2.load_networks();
-        assert_eq!(s2.known_networks.len(), 1);
-        assert_eq!(s2.known_networks[0].id, "ssid-home");
-        assert_eq!(s2.known_networks[0].alias, Some("Maison".to_string()));
-        assert_eq!(s2.known_networks[0].seen_peers.len(), 1);
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn networks_load_migrates_empty_id_from_subnet() {
-        // Ancien format sans id → load_networks doit remplir id depuis subnet
-        let dir = tmp_dir("networks_migrate");
-        let json = r#"[{"id":"","subnet":"192.168.0","alias":null,"seen_peers":[]}]"#;
-        std::fs::write(dir.join("networks.json"), json).unwrap();
-
-        let mut s = state_in(&dir, "alice");
-        s.load_networks();
-        assert_eq!(s.known_networks[0].id, "192.168.0");
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -240,7 +180,6 @@ mod tests {
         s1.peer_records.push(PeerRecord {
             username: "bob".to_string(),
             alias: Some("Robert".to_string()),
-            last_subnet: Some("192.168.1".to_string()),
         });
         s1.save_peer_records();
 
@@ -282,7 +221,6 @@ mod tests {
         // Aucun fichier sur le disque → pas de panique
         s.load_groups();
         s.load_messages();
-        s.load_networks();
         s.load_peer_records();
         assert!(s.groups.is_empty());
         assert!(s.messages.is_empty());

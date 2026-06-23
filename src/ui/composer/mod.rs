@@ -273,6 +273,9 @@ fn move_cursor_vertical(
     }
 }
 
+// Widget de saisie de bas niveau : état du texte/curseur/sélection et contexte
+// de rendu passés séparément ; un struct n'améliorerait pas la lisibilité.
+#[allow(clippy::too_many_arguments)]
 pub fn custom_composer_input(
     ui: &mut egui::Ui,
     input: &mut String,
@@ -362,8 +365,8 @@ pub fn custom_composer_input(
         }
     }
 
-    if response.drag_started() {
-        if selection_anchor.is_none() {
+    if response.drag_started()
+        && selection_anchor.is_none() {
             if let Some(pos) = response.interact_pointer_pos() {
                 let local = egui::pos2(
                     (pos.x - content_rect.left()).max(0.0),
@@ -374,7 +377,6 @@ pub fn custom_composer_input(
                 *cursor_char = drag_start_cursor;
             }
         }
-    }
 
     if response.dragged() {
         if let Some(pos) = response.interact_pointer_pos() {
@@ -437,20 +439,18 @@ pub fn custom_composer_input(
         let events = ui.input(|i| i.events.clone());
         for event in events {
             match event {
-                egui::Event::Text(t) => {
-                    if !t.contains('\n') && !t.contains('\r') {
+                egui::Event::Text(t)
+                    if !t.contains('\n') && !t.contains('\r') => {
                         replace_selection(input, cursor_char, selection_anchor, "");
                         insert_text_at_cursor(input, cursor_char, &t);
                         changed = true;
                     }
-                }
-                egui::Event::Ime(egui::ImeEvent::Commit(t)) => {
-                    if !t.contains('\n') && !t.contains('\r') && !t.is_empty() {
+                egui::Event::Ime(egui::ImeEvent::Commit(t))
+                    if !t.contains('\n') && !t.contains('\r') && !t.is_empty() => {
                         replace_selection(input, cursor_char, selection_anchor, "");
                         insert_text_at_cursor(input, cursor_char, &t);
                         changed = true;
                     }
-                }
                 egui::Event::Paste(t) => {
                     replace_selection(input, cursor_char, selection_anchor, "");
                     insert_text_at_cursor(input, cursor_char, &t.replace(['\r', '\n'], " "));
@@ -561,8 +561,8 @@ pub fn custom_composer_input(
                             clear_selection(selection_anchor);
                         }
                     }
-                    egui::Key::ArrowUp => {
-                        if !shortcode_menu_open {
+                    egui::Key::ArrowUp
+                        if !shortcode_menu_open => {
                             if modifiers.shift && selection_anchor.is_none() {
                                 *selection_anchor = Some(*cursor_char);
                             } else if !modifiers.shift {
@@ -580,9 +580,8 @@ pub fn custom_composer_input(
                                 clear_selection(selection_anchor);
                             }
                         }
-                    }
-                    egui::Key::ArrowDown => {
-                        if !shortcode_menu_open {
+                    egui::Key::ArrowDown
+                        if !shortcode_menu_open => {
                             if modifiers.shift && selection_anchor.is_none() {
                                 *selection_anchor = Some(*cursor_char);
                             } else if !modifiers.shift {
@@ -600,7 +599,6 @@ pub fn custom_composer_input(
                                 clear_selection(selection_anchor);
                             }
                         }
-                    }
                     egui::Key::Home => {
                         if modifiers.shift && selection_anchor.is_none() {
                             *selection_anchor = Some(*cursor_char);
