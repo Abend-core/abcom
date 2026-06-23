@@ -2,7 +2,10 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::mpsc::Receiver;
 
-use crate::message::{MessageAckRequest, ReadReceiptRequest, SendGroupRequest, SendRequest, TypingRequest};
+use crate::message::{
+    AvatarRequest, MessageAckRequest, ReadReceiptRequest, SendGroupRequest, SendRequest,
+    TypingRequest,
+};
 
 /// Expéditeur TCP pour les messages de chat
 pub async fn run_sender(mut rx: Receiver<SendRequest>) {
@@ -58,6 +61,21 @@ pub async fn run_sender_read_receipts(mut rx: Receiver<ReadReceiptRequest>) {
         tokio::spawn(async move {
             if let Ok(mut stream) = TcpStream::connect(req.to_addr).await {
                 if let Ok(data) = serde_json::to_vec(&req.receipt) {
+                    let _ = stream.write_all(&data).await;
+                    let _ = stream.flush().await;
+                    let _ = stream.shutdown().await;
+                }
+            }
+        });
+    }
+}
+
+/// Expéditeur TCP pour les annonces d'avatar (image de profil)
+pub async fn run_sender_avatar(mut rx: Receiver<AvatarRequest>) {
+    while let Some(req) = rx.recv().await {
+        tokio::spawn(async move {
+            if let Ok(mut stream) = TcpStream::connect(req.to_addr).await {
+                if let Ok(data) = serde_json::to_vec(&req.announce) {
                     let _ = stream.write_all(&data).await;
                     let _ = stream.flush().await;
                     let _ = stream.shutdown().await;
