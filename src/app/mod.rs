@@ -6,6 +6,7 @@ use crate::message::{ChatMessage, Group, PeerRecord};
 
 mod avatar;
 mod groups;
+mod media;
 mod messages;
 mod peers;
 mod persistence;
@@ -37,6 +38,7 @@ pub struct AppState {
     peer_records_path: PathBuf,
     avatar_path: PathBuf,
     peer_avatars_path: PathBuf,
+    media_dir: PathBuf,
 }
 
 impl AppState {
@@ -49,6 +51,7 @@ impl AppState {
         let peer_records_path = base.join("peer_records.json");
         let avatar_path = base.join("avatar.png");
         let peer_avatars_path = base.join("peer_avatars.json");
+        let media_dir = base.join("media");
 
         let mut state = Self {
             my_username: username,
@@ -69,6 +72,7 @@ impl AppState {
             peer_records_path,
             avatar_path,
             peer_avatars_path,
+            media_dir,
         };
 
         state.load_messages();
@@ -90,6 +94,7 @@ impl AppState {
         let peer_records_path = base.join("peer_records.json");
         let avatar_path = base.join("avatar.png");
         let peer_avatars_path = base.join("peer_avatars.json");
+        let media_dir = base.join("media");
         Self {
             my_username: username.to_string(),
             peers: Vec::new(),
@@ -109,6 +114,7 @@ impl AppState {
             peer_records_path,
             avatar_path,
             peer_avatars_path,
+            media_dir,
         }
     }
 }
