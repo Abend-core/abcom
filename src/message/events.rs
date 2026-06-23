@@ -2,6 +2,7 @@ use std::net::SocketAddr;
 
 use crate::transfer::TransferProgress;
 
+use super::avatar::AvatarAnnounce;
 use super::chat::ChatMessage;
 use super::group::GroupEvent;
 use super::receipts::{MessageAck, ReadReceipt};
@@ -18,5 +19,6 @@ pub enum AppEvent {
     GroupEventReceived(GroupEvent),
     ReadReceiptReceived(ReadReceipt),
     MessageAckReceived(MessageAck),
+    AvatarReceived(AvatarAnnounce),
     TransferUpdated(TransferProgress),
 }

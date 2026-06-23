@@ -1,9 +1,11 @@
+pub mod avatar;
 pub mod chat;
 pub mod events;
 pub mod group;
 pub mod network_types;
 pub mod receipts;
 
+pub use avatar::*;
 pub use chat::*;
 pub use events::*;
 pub use group::*;
