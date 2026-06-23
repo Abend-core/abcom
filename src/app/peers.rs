@@ -1,8 +1,6 @@
 use std::net::SocketAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::network::TCP_PORT;
-
 use super::AppState;
 
 /// Représentation d'un pair LAN
@@ -15,9 +13,9 @@ pub struct Peer {
 }
 
 impl AppState {
-    /// Ajoute ou met à jour un pair (adresse TCP déduite de l'IP + TCP_PORT)
+    /// Ajoute ou met à jour un pair. `addr` est l'adresse TCP de chat complète
+    /// (IP source + port annoncé lors de la découverte).
     pub fn add_peer(&mut self, username: String, addr: SocketAddr) {
-        let tcp_addr = SocketAddr::new(addr.ip(), TCP_PORT);
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -26,7 +24,7 @@ impl AppState {
         let network_id = self.current_network_id.clone();
         for peer in &mut self.peers {
             if peer.username == username {
-                peer.addr = tcp_addr;
+                peer.addr = addr;
                 peer.last_seen = now;
                 peer.online = true;
                 let _ = peer;
@@ -39,7 +37,7 @@ impl AppState {
         if let Some(ref id) = network_id {
             self.record_peer_on_network(&username, id);
         }
-        self.peers.push(Peer { username, addr: tcp_addr, last_seen: now, online: true });
+        self.peers.push(Peer { username, addr, last_seen: now, online: true });
     }
 
     /// Force la mise hors ligne de tous les pairs (après changement de réseau)
@@ -184,7 +182,6 @@ impl AppState {
 mod tests {
     use std::net::SocketAddr;
     use crate::app::{AppState, Peer};
-    use crate::network::TCP_PORT;
 
     fn state(username: &str) -> AppState {
         let mut s = AppState::new(username.to_string());
@@ -204,11 +201,12 @@ mod tests {
     #[test]
     fn test_add_peer_new() {
         let mut s = state("alice");
-        let addr: SocketAddr = "192.168.1.5:1234".parse().unwrap();
+        // L'adresse fournie (IP + port de chat annoncé) est stockée telle quelle
+        let addr: SocketAddr = "192.168.1.5:9010".parse().unwrap();
         s.add_peer("bob".to_string(), addr);
         assert_eq!(s.peers.len(), 1);
         assert_eq!(s.peers[0].username, "bob");
-        assert_eq!(s.peers[0].addr.port(), TCP_PORT);
+        assert_eq!(s.peers[0].addr, addr);
         assert!(s.peers[0].online);
     }
 

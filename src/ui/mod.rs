@@ -11,7 +11,7 @@ use crate::app::AppState;
 use crate::message::{
     AppEvent, MessageAckRequest, ReadReceiptRequest, SendGroupRequest, SendRequest, TypingRequest,
 };
-use crate::transfer::{TransferProgress, TransferRequest};
+use crate::transfer::{TransferDecision, TransferOffer, TransferProgress, TransferRequest};
 
 mod chat_panel;
 mod header;
@@ -49,6 +49,17 @@ pub(crate) enum ThemePreference {
 pub(crate) enum AboutTab {
     Credits,
     License,
+}
+
+/// Proposition de réception en attente d'une décision de l'utilisateur.
+pub(crate) struct PendingOffer {
+    pub(crate) transfer_id: String,
+    pub(crate) from: String,
+    pub(crate) label: String,
+    pub(crate) total_bytes: u64,
+    pub(crate) item_count: usize,
+    pub(crate) decision_tx: tokio::sync::oneshot::Sender<TransferDecision>,
+    pub(crate) received_at: std::time::Instant,
 }
 
 /// État de l'application UI
@@ -99,6 +110,13 @@ pub(crate) struct AbcomApp {
     /// 0 = none, 1 = pick files, 2 = pick folder (deferred to next frame to avoid AppKit conflict)
     pub(crate) pending_picker: u8,
     pub(crate) transfer_progress: std::collections::HashMap<String, TransferProgress>,
+    /// Transferts entrants en attente d'acceptation/refus.
+    pub(crate) offer_rx: mpsc::Receiver<TransferOffer>,
+    pub(crate) pending_offers: Vec<PendingOffer>,
+    /// Transferts masqués par l'utilisateur (croix de fermeture).
+    pub(crate) dismissed_transfers: std::collections::HashSet<String>,
+    /// transfer_id d'une offre acceptée en attente de choix du dossier (différé).
+    pub(crate) pending_accept: Option<String>,
     pub(crate) ui_language: UiLanguage,
     pub(crate) theme_preference: ThemePreference,
     pub(crate) system_dark_mode: Option<bool>,
@@ -116,6 +134,7 @@ impl AbcomApp {
         send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
         send_ack_tx: mpsc::Sender<MessageAckRequest>,
         send_transfer_tx: mpsc::Sender<TransferRequest>,
+        offer_rx: mpsc::Receiver<TransferOffer>,
     ) -> Self {
         Self {
             state,
@@ -126,6 +145,10 @@ impl AbcomApp {
             send_read_receipt_tx,
             send_ack_tx,
             send_transfer_tx,
+            offer_rx,
+            pending_offers: Vec::new(),
+            dismissed_transfers: std::collections::HashSet::new(),
+            pending_accept: None,
             input: String::new(),
             input_cursor_char: 0,
             input_selection_anchor: None,
@@ -209,6 +232,7 @@ impl eframe::App for AbcomApp {
 
         self.lazy_load_emoji(ctx);
         self.process_events();
+        self.process_transfer_offers();
         self.periodic_tasks();
 
         // Flash barre des tâches si message non lu
@@ -259,6 +283,26 @@ impl eframe::App for AbcomApp {
                 }
                 _ => {}
             }
+        }
+
+        // Choix du dossier de réception après acceptation d'un fichier (différé
+        // pour ne pas entrer en conflit avec la run-loop AppKit sur macOS).
+        if let Some(transfer_id) = self.pending_accept.take() {
+            let title = self.tr("Choisir le dossier de réception", "Choose destination folder");
+            if let Some(dir) = rfd::FileDialog::new().set_title(title).pick_folder() {
+                if let Some(pos) = self
+                    .pending_offers
+                    .iter()
+                    .position(|o| o.transfer_id == transfer_id)
+                {
+                    let offer = self.pending_offers.remove(pos);
+                    let _ = offer.decision_tx.send(TransferDecision {
+                        accept: true,
+                        dest_dir: Some(dir),
+                    });
+                }
+            }
+            // Si l'utilisateur annule le sélecteur, l'offre reste affichée.
         }
 
         self.show_header_bar(ctx);
@@ -315,6 +359,7 @@ pub fn run(
     send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
     send_ack_tx: mpsc::Sender<MessageAckRequest>,
     send_transfer_tx: mpsc::Sender<TransferRequest>,
+    offer_rx: mpsc::Receiver<TransferOffer>,
 ) -> anyhow::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Abcom")
@@ -343,6 +388,7 @@ pub fn run(
                 send_read_receipt_tx,
                 send_ack_tx,
                 send_transfer_tx,
+                offer_rx,
             )))
         }),
     )

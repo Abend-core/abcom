@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
 mod app;
+mod config;
 mod discovery;
 mod emoji_registry;
 mod message;
@@ -27,6 +28,7 @@ fn main() -> anyhow::Result<()> {
     let (send_read_receipt_tx, send_read_receipt_rx) = mpsc::channel::<message::ReadReceiptRequest>(256);
     let (send_ack_tx, send_ack_rx) = mpsc::channel::<message::MessageAckRequest>(256);
     let (send_transfer_tx, send_transfer_rx) = mpsc::channel::<transfer::TransferRequest>(64);
+    let (transfer_offer_tx, transfer_offer_rx) = mpsc::channel::<transfer::TransferOffer>(16);
 
     // Runtime tokio multi-thread — tourne en arrière-plan pendant qu'egui
     // occupe le thread principal.
@@ -41,7 +43,7 @@ fn main() -> anyhow::Result<()> {
     rt.spawn(network::run_sender_typing(send_typing_rx));
     rt.spawn(network::run_sender_read_receipts(send_read_receipt_rx));
     rt.spawn(network::run_sender_ack(send_ack_rx));
-    rt.spawn(transfer::run_service(event_tx.clone(), send_transfer_rx));
+    rt.spawn(transfer::run_service(event_tx.clone(), transfer_offer_tx, send_transfer_rx));
 
     ui::run(
         state,
@@ -52,6 +54,7 @@ fn main() -> anyhow::Result<()> {
         send_read_receipt_tx,
         send_ack_tx,
         send_transfer_tx,
+        transfer_offer_rx,
     )?;
 
     Ok(())

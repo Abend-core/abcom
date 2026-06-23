@@ -39,9 +39,7 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(username: String) -> Self {
-        let base = dirs::data_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join("abcom");
+        let base = crate::config::data_dir();
 
         let history_path = base.join("messages.json");
         let read_counts_path = base.join("read_counts.json");

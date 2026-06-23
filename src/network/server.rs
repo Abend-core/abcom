@@ -2,13 +2,12 @@ use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::mpsc::Sender;
 
+use crate::config;
 use crate::message::{AppEvent, ChatMessage, GroupEvent, MessageAck, ReadReceipt, TypingIndicator};
-
-use super::TCP_PORT;
 
 /// Serveur TCP : écoute les connexions entrantes et dispatche les événements
 pub async fn run_server(tx: Sender<AppEvent>) {
-    let listener = match TcpListener::bind(format!("0.0.0.0:{}", TCP_PORT)).await {
+    let listener = match TcpListener::bind(format!("0.0.0.0:{}", config::chat_port())).await {
         Ok(l) => l,
         Err(e) => {
             eprintln!("[network] Erreur de bind TCP: {}", e);

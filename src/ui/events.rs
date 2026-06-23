@@ -4,7 +4,7 @@ use crate::app::AppState;
 use crate::message::{AppEvent, GroupAction, MessageAck, MessageAckRequest, ReadReceipt, ReadReceiptRequest};
 use crate::transfer::TransferStatus;
 
-use super::{sound::play_notification_sound, AbcomApp};
+use super::{sound::play_notification_sound, AbcomApp, PendingOffer};
 
 impl AbcomApp {
     /// Chargement paresseux des textures emoji (nécessite le contexte egui)
@@ -191,6 +191,15 @@ impl AbcomApp {
                             ));
                             self.notification_time = std::time::Instant::now();
                         }
+                        TransferStatus::Rejected => {
+                            self.last_notification = Some(format!(
+                                "{}: {} ({})",
+                                self.tr("Transfert refusé", "Transfer declined"),
+                                label,
+                                peer
+                            ));
+                            self.notification_time = std::time::Instant::now();
+                        }
                         _ => {}
                     }
 
@@ -199,6 +208,36 @@ impl AbcomApp {
             }
         }
         s.clear_typing_if_old();
+    }
+
+    /// Récupère les propositions de réception de fichiers et purge celles
+    /// qui ont expiré (le récepteur les a alors auto-refusées côté réseau).
+    pub(crate) fn process_transfer_offers(&mut self) {
+        while let Ok(offer) = self.offer_rx.try_recv() {
+            self.last_notification = Some(format!(
+                "{} {}",
+                offer.from,
+                self.tr("vous envoie un fichier", "is sending you a file")
+            ));
+            self.notification_time = std::time::Instant::now();
+            self.has_unread = true;
+            if self.enable_sound_notifications {
+                play_notification_sound();
+            }
+            self.pending_offers.push(PendingOffer {
+                transfer_id: offer.transfer_id,
+                from: offer.from,
+                label: offer.label,
+                total_bytes: offer.total_bytes,
+                item_count: offer.item_count,
+                decision_tx: offer.decision_tx,
+                received_at: std::time::Instant::now(),
+            });
+        }
+
+        // Le récepteur auto-refuse au bout de 120 s ; on retire la carte avant.
+        self.pending_offers
+            .retain(|o| o.received_at.elapsed() < std::time::Duration::from_secs(115));
     }
 
     /// Tâches périodiques : nettoyage pairs, détection réseau, retry ACK
