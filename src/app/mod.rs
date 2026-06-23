@@ -4,6 +4,7 @@ use std::time::SystemTime;
 
 use crate::message::{ChatMessage, Group, PeerRecord};
 
+mod avatar;
 mod groups;
 mod messages;
 mod peers;
@@ -26,10 +27,16 @@ pub struct AppState {
     pub read_receipts: HashMap<u64, HashSet<String>>,
     pub pending_messages: HashMap<u64, PendingMessage>,
     pub peer_records: Vec<PeerRecord>,
+    /// Avatar local (octets PNG normalisés), `None` si non défini.
+    pub my_avatar: Option<Vec<u8>>,
+    /// Avatars des pairs, indexés par nom d'utilisateur.
+    pub peer_avatars: HashMap<String, Vec<u8>>,
     history_path: PathBuf,
     read_counts_path: PathBuf,
     groups_path: PathBuf,
     peer_records_path: PathBuf,
+    avatar_path: PathBuf,
+    peer_avatars_path: PathBuf,
 }
 
 impl AppState {
@@ -40,6 +47,8 @@ impl AppState {
         let read_counts_path = base.join("read_counts.json");
         let groups_path = base.join("groups.json");
         let peer_records_path = base.join("peer_records.json");
+        let avatar_path = base.join("avatar.png");
+        let peer_avatars_path = base.join("peer_avatars.json");
 
         let mut state = Self {
             my_username: username,
@@ -52,16 +61,22 @@ impl AppState {
             read_receipts: HashMap::new(),
             pending_messages: HashMap::new(),
             peer_records: Vec::new(),
+            my_avatar: None,
+            peer_avatars: HashMap::new(),
             history_path,
             read_counts_path,
             groups_path,
             peer_records_path,
+            avatar_path,
+            peer_avatars_path,
         };
 
         state.load_messages();
         state.load_read_counts();
         state.load_groups();
         state.load_peer_records();
+        state.load_avatar();
+        state.load_peer_avatars();
         state.restore_peers_from_history();
         state
     }
@@ -73,6 +88,8 @@ impl AppState {
         let read_counts_path = base.join("read_counts.json");
         let groups_path = base.join("groups.json");
         let peer_records_path = base.join("peer_records.json");
+        let avatar_path = base.join("avatar.png");
+        let peer_avatars_path = base.join("peer_avatars.json");
         Self {
             my_username: username.to_string(),
             peers: Vec::new(),
@@ -84,10 +101,14 @@ impl AppState {
             read_receipts: HashMap::new(),
             pending_messages: HashMap::new(),
             peer_records: Vec::new(),
+            my_avatar: None,
+            peer_avatars: HashMap::new(),
             history_path,
             read_counts_path,
             groups_path,
             peer_records_path,
+            avatar_path,
+            peer_avatars_path,
         }
     }
 }

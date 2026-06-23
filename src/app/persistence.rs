@@ -201,6 +201,7 @@ mod tests {
             from: "bob".to_string(),
             content: "coucou".to_string(),
             timestamp: "10:00".to_string(),
+            timestamp_epoch: None,
             to_user: Some("alice".to_string()),
         });
         s1.save_messages();

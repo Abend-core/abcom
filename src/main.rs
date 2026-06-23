@@ -27,6 +27,7 @@ fn main() -> anyhow::Result<()> {
     let (send_typing_tx, send_typing_rx) = mpsc::channel::<message::TypingRequest>(256);
     let (send_read_receipt_tx, send_read_receipt_rx) = mpsc::channel::<message::ReadReceiptRequest>(256);
     let (send_ack_tx, send_ack_rx) = mpsc::channel::<message::MessageAckRequest>(256);
+    let (send_avatar_tx, send_avatar_rx) = mpsc::channel::<message::AvatarRequest>(64);
     let (send_transfer_tx, send_transfer_rx) = mpsc::channel::<transfer::TransferRequest>(64);
     let (transfer_offer_tx, transfer_offer_rx) = mpsc::channel::<transfer::TransferOffer>(16);
 
@@ -43,6 +44,7 @@ fn main() -> anyhow::Result<()> {
     rt.spawn(network::run_sender_typing(send_typing_rx));
     rt.spawn(network::run_sender_read_receipts(send_read_receipt_rx));
     rt.spawn(network::run_sender_ack(send_ack_rx));
+    rt.spawn(network::run_sender_avatar(send_avatar_rx));
     rt.spawn(transfer::run_service(event_tx.clone(), transfer_offer_tx, send_transfer_rx));
 
     ui::run(
@@ -53,6 +55,7 @@ fn main() -> anyhow::Result<()> {
         send_typing_tx,
         send_read_receipt_tx,
         send_ack_tx,
+        send_avatar_tx,
         send_transfer_tx,
         transfer_offer_rx,
     )?;

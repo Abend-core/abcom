@@ -1,7 +1,10 @@
 use eframe::egui;
 
 use crate::app::AppState;
-use crate::message::{AppEvent, GroupAction, MessageAck, MessageAckRequest, ReadReceipt, ReadReceiptRequest};
+use crate::message::{
+    AppEvent, AvatarRequest, GroupAction, MessageAck, MessageAckRequest, ReadReceipt,
+    ReadReceiptRequest,
+};
 use crate::transfer::TransferStatus;
 
 use super::{sound::play_notification_sound, AbcomApp, PendingOffer};
@@ -109,11 +112,25 @@ impl AbcomApp {
                         }
                     }
                 }
-                AppEvent::PeerDiscovered { username, addr } => s.add_peer(username, addr),
+                AppEvent::PeerDiscovered { username, addr } => {
+                    s.add_peer(username.clone(), addr);
+                    // Première découverte (depuis le dernier envoi) : on partage
+                    // notre avatar pour qu'il s'affiche chez ce pair.
+                    if !self.avatar_sent_to.contains(&username) {
+                        if let Some(announce) = s.avatar_announce() {
+                            let request = AvatarRequest { to_addr: addr, announce };
+                            if self.send_avatar_tx.try_send(request).is_ok() {
+                                self.avatar_sent_to.insert(username);
+                            }
+                        }
+                    }
+                }
                 AppEvent::PeerDisconnected { username } => {
                     if let Some(peer) = s.peers.iter_mut().find(|p| p.username == username) {
                         peer.online = false;
                     }
+                    // Réémettre l'avatar à la prochaine reconnexion de ce pair.
+                    self.avatar_sent_to.remove(&username);
                 }
                 AppEvent::UserTyping(username) => s.set_user_typing(username),
                 AppEvent::UserStoppedTyping(_) => s.clear_typing_if_old(),
@@ -163,6 +180,12 @@ impl AbcomApp {
                 }
                 AppEvent::MessageAckReceived(ack) => {
                     s.mark_message_acked(ack.message_hash);
+                }
+                AppEvent::AvatarReceived(announce) => {
+                    let from = announce.from.clone();
+                    s.set_peer_avatar(announce.from, announce.png);
+                    // Forcer le rechargement de la texture mise en cache.
+                    self.avatar_textures.remove(&from);
                 }
                 AppEvent::TransferUpdated(progress) => {
                     let transfer_id = progress.transfer_id.clone();

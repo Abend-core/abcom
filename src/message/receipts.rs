@@ -120,6 +120,7 @@ mod tests {
             from: "alice".to_string(),
             content: "bonjour".to_string(),
             timestamp: "10:00".to_string(),
+            timestamp_epoch: None,
             to_user: None,
         };
         let json = serde_json::to_string(&chat).unwrap();
