@@ -15,11 +15,21 @@ pub struct PendingMessage {
 }
 
 impl AppState {
-    /// Calcule un hash de message pour identifier les accusés de lecture
+    /// Calcule un hash de message pour identifier les accusés de lecture.
+    ///
+    /// On y intègre l'instant Unix et l'identifiant du média (quand présents,
+    /// et conservés à l'identique côté émetteur et récepteur) afin d'éviter les
+    /// collisions entre messages au contenu identique ou vide (cas des médias).
     pub fn message_hash(msg: &ChatMessage) -> u64 {
-        let content = format!("{}:{}", msg.from, msg.content);
         let mut hasher = DefaultHasher::new();
-        content.hash(&mut hasher);
+        msg.from.hash(&mut hasher);
+        msg.content.hash(&mut hasher);
+        if let Some(epoch) = msg.timestamp_epoch {
+            epoch.hash(&mut hasher);
+        }
+        if let Some(media) = &msg.media {
+            media.id.hash(&mut hasher);
+        }
         hasher.finish()
     }
 
@@ -97,7 +107,7 @@ mod tests {
     }
 
     fn make_msg(from: &str, content: &str) -> ChatMessage {
-        ChatMessage { from: from.to_string(), content: content.to_string(), timestamp: "12:00".to_string(), timestamp_epoch: None, to_user: None }
+        ChatMessage { from: from.to_string(), content: content.to_string(), timestamp: "12:00".to_string(), timestamp_epoch: None, to_user: None, media: None }
     }
 
     #[test]

@@ -92,6 +92,7 @@ mod tests {
             timestamp: "12:00".to_string(),
             timestamp_epoch: None,
             to_user: to.map(|s| s.to_string()),
+            media: None,
         }
     }
 

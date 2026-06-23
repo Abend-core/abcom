@@ -203,6 +203,7 @@ mod tests {
             timestamp: "10:00".to_string(),
             timestamp_epoch: None,
             to_user: Some("alice".to_string()),
+            media: None,
         });
         s1.save_messages();
 
