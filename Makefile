@@ -1,4 +1,4 @@
-.PHONY: all build install uninstall run run-windows help clean test test-verbose test-module test-watch
+.PHONY: all build install uninstall run run2 rung run-multi run-windows help clean test test-verbose test-module test-watch
 
 export PATH := $(HOME)/.cargo/bin:$(PATH)
 CARGO := cargo
@@ -24,6 +24,18 @@ release:
 run:
 	$(CARGO) run --release
 
+## Lance 2 fenêtres locales pour tester la connexion P2P (chat 1-à-1)
+run2:
+	@bash scripts/run-multi.sh 2
+
+## Lance 3 fenêtres locales pour tester les groupes
+rung:
+	@bash scripts/run-multi.sh 3
+
+## Lance N fenêtres locales (ex: make run-multi N=4)
+run-multi:
+	@bash scripts/run-multi.sh $(or $(N),2)
+
 ## Lance l'application sur Windows depuis WSL
 run-windows:
 	$(CARGO) build --release --target x86_64-pc-windows-gnu
@@ -39,6 +51,9 @@ help:
 	@printf "  make build            - compile en mode développement\n"
 	@printf "  make release          - compile en mode release optimisé\n"
 	@printf "  make run              - lance l'application localement\n"
+	@printf "  make run2             - lance 2 fenêtres pour tester la connexion P2P\n"
+	@printf "  make rung             - lance 3 fenêtres pour tester les groupes\n"
+	@printf "  make run-multi N=4    - lance N fenêtres locales\n"
 	@printf "  make run-windows      - compile pour Windows depuis WSL et lance l'appli\n"
 	@printf "  make install          - installe binaire + raccourci + service systemd\n"
 	@printf "  make uninstall        - désinstalle le binaire et le service\n"

@@ -1,5 +1,7 @@
 use eframe::egui;
 use std::path::Path;
+#[cfg(test)]
+use std::path::PathBuf;
 
 use crate::app::AppState;
 use crate::message::{ChatMessage, SendRequest, TypingIndicator, TypingRequest};
