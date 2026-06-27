@@ -9,7 +9,7 @@ use crate::transfer::TransferRequest;
 
 use super::composer;
 use super::emoji_picker::emoji_shortcode_trigger;
-use super::{AbcomApp, Notification};
+use super::AbcomApp;
 
 const ACTION_BUTTON_SIZE: [f32; 2] = [34.0, 34.0];
 
@@ -255,14 +255,7 @@ fn send_current_message(
             });
         }
         if transfer_targets.is_empty() {
-            app.last_notification = Some(Notification::System(
-                app.tr(
-                    "Aucun destinataire en ligne pour le transfert",
-                    "No online recipient available for transfer",
-                )
-                .to_string(),
-            ));
-            app.notification_time = std::time::Instant::now();
+            eprintln!("[transfer] Aucun destinataire en ligne");
         }
     }
 
@@ -421,16 +414,7 @@ impl AbcomApp {
                                     ),
                                     false,
                                 );
-                                if aa_btn.clicked() {
-                                    self.last_notification = Some(Notification::System(
-                                        self.tr(
-                                            "Mise en forme bientôt disponible",
-                                            "Formatting coming soon",
-                                        )
-                                        .to_string(),
-                                    ));
-                                    self.notification_time = std::time::Instant::now();
-                                }
+                                aa_btn.clicked();
 
                                 let image_btn = action_button(
                                     ui,
@@ -440,11 +424,7 @@ impl AbcomApp {
                                     gif_soon_label,
                                     false,
                                 );
-                                if image_btn.clicked() {
-                                    self.last_notification =
-                                        Some(Notification::System(gif_soon_label.to_string()));
-                                    self.notification_time = std::time::Instant::now();
-                                }
+                                image_btn.clicked();
 
                                 let emoji_btn = if let Some((_, tex)) = self.emoji_textures.first()
                                 {
