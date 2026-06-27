@@ -124,7 +124,8 @@ fn chip_remove_button(ui: &mut egui::Ui) -> bool {
         p.line_segment([c + egui::vec2(-d, -d), c + egui::vec2(d, d)], stroke);
         p.line_segment([c + egui::vec2(d, -d), c + egui::vec2(-d, d)], stroke);
     }
-    resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand)
+        .clicked()
 }
 
 fn paint_plus_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
@@ -223,7 +224,8 @@ fn send_one_media(
     let targets = targets.to_vec();
 
     std::thread::spawn(move || {
-        if let Err(e) = prepare_and_stream(&state, &send_media_tx, &path, &my_name, &to_user, &targets)
+        if let Err(e) =
+            prepare_and_stream(&state, &send_media_tx, &path, &my_name, &to_user, &targets)
         {
             eprintln!("[ui] préparation média échouée ({}): {}", path.display(), e);
         }
@@ -262,7 +264,15 @@ fn prepare_and_stream(
         (MediaKind::File, None, None)
     };
 
-    let media = MediaAttachment { id, filename, kind, size_bytes, width, height };
+    let media = MediaAttachment {
+        id,
+        filename,
+        kind,
+        size_bytes,
+        url: None,
+        width,
+        height,
+    };
     let now = chrono::Local::now();
     let header = MediaStreamHeader {
         from: my_name.to_string(),
@@ -400,8 +410,9 @@ fn send_current_message(
 }
 
 impl AbcomApp {
-    /// Barre de saisie en bas de fenêtre. Retourne true si le bouton emoji a été cliqué.
-    pub(crate) fn show_input_bar(&mut self, ctx: &egui::Context) -> bool {
+    /// Barre de saisie en bas de fenêtre. Retourne `(emoji_cliqué, gif_cliqué)`
+    /// pour piloter l'ouverture des sélecteurs respectifs.
+    pub(crate) fn show_input_bar(&mut self, ctx: &egui::Context) -> (bool, bool) {
         let selected_peer_online = {
             let s = self.state.lock().unwrap();
             match &s.selected_conversation {
@@ -426,10 +437,11 @@ impl AbcomApp {
                         );
                     });
                 });
-            return false;
+            return (false, false);
         }
 
         let mut emoji_button_clicked = false;
+        let mut gif_button_clicked = false;
         let mut picker_action: Option<AttachmentMenuAction> = None;
         let typing_list = self.state.lock().unwrap().typing_users_list();
         let add_files_label = self.tr("Ajouter des fichiers", "Add files");
@@ -439,7 +451,7 @@ impl AbcomApp {
             .resizable(false)
             .show(ctx, |ui| {
                 ui.add_space(3.0);
-                let gif_soon_label = self.tr("GIF bientôt disponible", "GIF support coming soon");
+                let gif_label = self.tr("GIF", "GIF");
                 egui::Frame::default()
                     .fill(egui::Color32::from_rgb(66, 66, 69))
                     .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(96, 96, 100)))
@@ -547,15 +559,30 @@ impl AbcomApp {
                                 );
                                 aa_btn.clicked();
 
-                                let image_btn = action_button(
+                                let gif_btn = action_button(
                                     ui,
                                     egui::RichText::new("GIF")
                                         .size(10.5)
                                         .color(egui::Color32::from_rgb(244, 245, 247)),
-                                    gif_soon_label,
-                                    false,
+                                    gif_label,
+                                    self.show_gif_picker,
                                 );
-                                image_btn.clicked();
+                                if gif_btn.clicked() {
+                                    if crate::config::klipy_api_key().is_some() {
+                                        self.show_gif_picker = !self.show_gif_picker;
+                                        self.show_emoji_picker = false;
+                                        gif_button_clicked = true;
+                                    } else {
+                                        self.last_notification = Some(
+                                            self.tr(
+                                                "Clé API Klipy manquante (ABCOM_KLIPY_API_KEY)",
+                                                "Klipy API key missing (ABCOM_KLIPY_API_KEY)",
+                                            )
+                                            .to_string(),
+                                        );
+                                        self.notification_time = std::time::Instant::now();
+                                    }
+                                }
 
                                 let emoji_btn = if let Some((_, tex)) = self.emoji_textures.first()
                                 {
@@ -587,6 +614,7 @@ impl AbcomApp {
                                 };
                                 if emoji_btn.clicked() {
                                     self.show_emoji_picker = !self.show_emoji_picker;
+                                    self.show_gif_picker = false;
                                     emoji_button_clicked = true;
                                 }
 
@@ -803,7 +831,7 @@ impl AbcomApp {
             None => {}
         }
 
-        emoji_button_clicked
+        (emoji_button_clicked, gif_button_clicked)
     }
 }
 
