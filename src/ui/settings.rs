@@ -71,12 +71,6 @@ impl AbcomApp {
         let theme_dark_label = self.tr("Sombre", "Dark");
 
         // Onglet Crédits
-        let service_field = self.tr("Service", "Service");
-        let description_field = self.tr("Description", "Description");
-        let version_field = self.tr("Version", "Version");
-        let developers_field = self.tr("Développeurs", "Developers");
-        let copyright_field = self.tr("Copyright", "Copyright");
-        let license_field = self.tr("Licence", "License");
         let description_text = self.tr(
             "Messagerie pair-à-pair locale : découverte automatique des pairs, conversations, groupes, alias de contacts et rendu Markdown natif.",
             "Local peer-to-peer messaging: automatic peer discovery, conversations, groups, contact aliases, and native Markdown rendering.",
@@ -84,6 +78,18 @@ impl AbcomApp {
         let warranty_text = self.tr(
             "Logiciel distribué sans garantie. Voir la licence AGPL v3 pour les détails.",
             "Software distributed without warranty. See the AGPL v3 license for details.",
+        );
+        let klipy_role = self.tr(
+            "GIF animés, mèmes statiques et stickers dans le sélecteur de contenu. Accès via la variable d'environnement ABCOM_KLIPY_API_KEY (clé API à obtenir sur klipy.com → Partner Panel).",
+            "Animated GIFs, static memes, and stickers in the content picker. Access via the ABCOM_KLIPY_API_KEY environment variable (API key available at klipy.com → Partner Panel).",
+        );
+        let openmoji_role = self.tr(
+            "Jeu d'emojis PNG 72×72 utilisé dans le picker et l'affichage inline des messages.",
+            "PNG 72×72 emoji set used in the emoji picker and inline message rendering.",
+        );
+        let inter_role = self.tr(
+            "Police d'écriture en gras utilisée pour les noms d'auteur dans les messages.",
+            "Bold typeface used for author names in messages.",
         );
 
         // Taille fixe (celle, maximale, de l'onglet Licence) pour que la fenêtre
@@ -194,25 +200,136 @@ impl AbcomApp {
                             });
                     }
                     SettingsTab::Credits => {
-                        ui.label(egui::RichText::new(service_name).heading().strong());
-                        ui.add_space(8.0);
-                        ui.label(
-                            egui::RichText::new(format!("{}: {}", service_field, service_name))
-                                .strong(),
-                        );
-                        ui.label(format!("{}: {}", description_field, description_text));
-                        ui.label(format!("{}: {}", version_field, version));
-                        ui.label(format!(
-                            "{}: Hugo Lagouardat Massiroles, Rudy Alves",
-                            developers_field
-                        ));
-                        ui.label(format!("{}: Abnd © 2026", copyright_field));
-                        ui.label(format!(
-                            "{}: GNU Affero General Public License v3",
-                            license_field
-                        ));
-                        ui.add_space(6.0);
-                        ui.label(egui::RichText::new(warranty_text).small().weak());
+                        egui::ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .show(ui, |ui| {
+                                // ── Abcom ────────────────────────────────────
+                                ui.label(egui::RichText::new(service_name).strong().heading());
+                                ui.add_space(4.0);
+                                egui::Grid::new("credits_abcom")
+                                    .num_columns(2)
+                                    .spacing([12.0, 4.0])
+                                    .show(ui, |ui| {
+                                        let lbl = |ui: &mut egui::Ui, t: &str| {
+                                            ui.label(egui::RichText::new(t).strong());
+                                        };
+                                        lbl(ui, self.tr("Version", "Version"));
+                                        ui.label(version);
+                                        ui.end_row();
+                                        lbl(ui, self.tr("Description", "Description"));
+                                        ui.add(
+                                            egui::Label::new(description_text)
+                                                .wrap_mode(egui::TextWrapMode::Wrap),
+                                        );
+                                        ui.end_row();
+                                        lbl(ui, self.tr("Développeurs", "Developers"));
+                                        ui.label("Hugo Lagouardat Massiroles, Rudy Alves");
+                                        ui.end_row();
+                                        lbl(ui, self.tr("Copyright", "Copyright"));
+                                        ui.label("Abnd © 2026");
+                                        ui.end_row();
+                                        lbl(ui, self.tr("Licence", "License"));
+                                        ui.label("GNU Affero General Public License v3");
+                                        ui.end_row();
+                                    });
+                                ui.add_space(2.0);
+                                ui.label(egui::RichText::new(warranty_text).small().weak());
+
+                                ui.add_space(14.0);
+                                ui.separator();
+                                ui.add_space(8.0);
+
+                                // ── Klipy ────────────────────────────────────
+                                ui.label(egui::RichText::new("Klipy").strong().heading());
+                                ui.add_space(4.0);
+                                egui::Grid::new("credits_klipy")
+                                    .num_columns(2)
+                                    .spacing([12.0, 4.0])
+                                    .show(ui, |ui| {
+                                        let lbl = |ui: &mut egui::Ui, t: &str| {
+                                            ui.label(egui::RichText::new(t).strong());
+                                        };
+                                        lbl(ui, self.tr("Fournisseur", "Provider"));
+                                        ui.label("KLIPY (klipy.com)");
+                                        ui.end_row();
+                                        lbl(ui, self.tr("Rôle", "Role"));
+                                        ui.add(
+                                            egui::Label::new(klipy_role)
+                                                .wrap_mode(egui::TextWrapMode::Wrap),
+                                        );
+                                        ui.end_row();
+                                        lbl(ui, self.tr("Licence", "License"));
+                                        ui.label("Klipy API Terms of Service");
+                                        ui.end_row();
+                                        lbl(ui, self.tr("Attribution", "Attribution"));
+                                        ui.label("© KLIPY — Powered by KLIPY");
+                                        ui.end_row();
+                                    });
+
+                                ui.add_space(14.0);
+                                ui.separator();
+                                ui.add_space(8.0);
+
+                                // ── OpenEmoji ────────────────────────────────
+                                ui.label(egui::RichText::new("OpenEmoji").strong().heading());
+                                ui.add_space(4.0);
+                                egui::Grid::new("credits_openmoji")
+                                    .num_columns(2)
+                                    .spacing([12.0, 4.0])
+                                    .show(ui, |ui| {
+                                        let lbl = |ui: &mut egui::Ui, t: &str| {
+                                            ui.label(egui::RichText::new(t).strong());
+                                        };
+                                        lbl(ui, self.tr("Source", "Source"));
+                                        ui.label("OpenEmoji (openmoji.org)");
+                                        ui.end_row();
+                                        lbl(ui, self.tr("Rôle", "Role"));
+                                        ui.add(
+                                            egui::Label::new(openmoji_role)
+                                                .wrap_mode(egui::TextWrapMode::Wrap),
+                                        );
+                                        ui.end_row();
+                                        lbl(ui, self.tr("Licence", "License"));
+                                        ui.label("CC BY 4.0");
+                                        ui.end_row();
+                                        lbl(ui, self.tr("Auteurs", "Authors"));
+                                        ui.label("HfG Schwäbisch Gmünd & contributeurs OpenEmoji");
+                                        ui.end_row();
+                                    });
+
+                                ui.add_space(14.0);
+                                ui.separator();
+                                ui.add_space(8.0);
+
+                                // ── Inter ────────────────────────────────────
+                                ui.label(
+                                    egui::RichText::new("Inter (police d'écriture)")
+                                        .strong()
+                                        .heading(),
+                                );
+                                ui.add_space(4.0);
+                                egui::Grid::new("credits_inter")
+                                    .num_columns(2)
+                                    .spacing([12.0, 4.0])
+                                    .show(ui, |ui| {
+                                        let lbl = |ui: &mut egui::Ui, t: &str| {
+                                            ui.label(egui::RichText::new(t).strong());
+                                        };
+                                        lbl(ui, self.tr("Auteur", "Author"));
+                                        ui.label("Rasmus Andersson");
+                                        ui.end_row();
+                                        lbl(ui, self.tr("Rôle", "Role"));
+                                        ui.add(
+                                            egui::Label::new(inter_role)
+                                                .wrap_mode(egui::TextWrapMode::Wrap),
+                                        );
+                                        ui.end_row();
+                                        lbl(ui, self.tr("Licence", "License"));
+                                        ui.label("SIL Open Font License v1.1");
+                                        ui.end_row();
+                                    });
+                                ui.add_space(8.0);
+                            });
                     }
                     SettingsTab::License => {
                         ui.label(
