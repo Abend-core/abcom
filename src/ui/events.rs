@@ -1,11 +1,11 @@
 use eframe::egui;
 
+use super::{sound::play_notification_sound, AbcomApp};
 use crate::app::AppState;
 use crate::message::{
     AppEvent, AvatarRequest, ChatMessage, GroupAction, MessageAck, MessageAckRequest, ReadReceipt,
     ReadReceiptRequest,
 };
-use super::{sound::play_notification_sound, AbcomApp};
 
 impl AbcomApp {
     /// Chargement paresseux des textures emoji (nécessite le contexte egui)
@@ -69,7 +69,10 @@ impl AbcomApp {
                                 message_hash: msg_hash,
                                 timestamp: chrono::Local::now().format("%H:%M").to_string(),
                             };
-                            let ack_req = MessageAckRequest { to_addr: peer.addr, ack };
+                            let ack_req = MessageAckRequest {
+                                to_addr: peer.addr,
+                                ack,
+                            };
 
                             // ReadReceipt uniquement si la conv est déjà ouverte + fenêtre focalisée
                             let already_reading = self.window_focused
@@ -116,7 +119,10 @@ impl AbcomApp {
                     // notre avatar pour qu'il s'affiche chez ce pair.
                     if !self.avatar_sent_to.contains(&username) {
                         if let Some(announce) = s.avatar_announce() {
-                            let request = AvatarRequest { to_addr: addr, announce };
+                            let request = AvatarRequest {
+                                to_addr: addr,
+                                announce,
+                            };
                             if self.send_avatar_tx.try_send(request).is_ok() {
                                 self.avatar_sent_to.insert(username);
                             }
