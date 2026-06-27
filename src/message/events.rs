@@ -11,8 +11,13 @@ use super::receipts::{MessageAck, ReadReceipt};
 #[derive(Clone, Debug)]
 pub enum AppEvent {
     MessageReceived(ChatMessage),
-    PeerDiscovered { username: String, addr: SocketAddr },
-    PeerDisconnected { username: String },
+    PeerDiscovered {
+        username: String,
+        addr: SocketAddr,
+    },
+    PeerDisconnected {
+        username: String,
+    },
     UserTyping(String),
     #[allow(dead_code)]
     UserStoppedTyping(String),

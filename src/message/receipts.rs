@@ -57,14 +57,16 @@ pub enum NetworkMessage {
 
 #[cfg(test)]
 mod tests {
-    use super::{TypingIndicator, ReadReceipt, MessageAck, NetworkMessage};
-    use crate::message::{ChatMessage, GroupEvent, GroupAction};
+    use super::{MessageAck, NetworkMessage, ReadReceipt, TypingIndicator};
+    use crate::message::{ChatMessage, GroupAction, GroupEvent};
 
     // ── TypingIndicator ─────────────────────────────────────────────────────
 
     #[test]
     fn typing_indicator_round_trip() {
-        let t = TypingIndicator { from: "alice".to_string() };
+        let t = TypingIndicator {
+            from: "alice".to_string(),
+        };
         let json = serde_json::to_string(&t).unwrap();
         let decoded: TypingIndicator = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.from, "alice");
@@ -90,7 +92,12 @@ mod tests {
 
     #[test]
     fn read_receipt_hash_preserves_zero() {
-        let r = ReadReceipt { from: "a".to_string(), to: "b".to_string(), message_hash: 0, timestamp: "".to_string() };
+        let r = ReadReceipt {
+            from: "a".to_string(),
+            to: "b".to_string(),
+            message_hash: 0,
+            timestamp: "".to_string(),
+        };
         let json = serde_json::to_string(&r).unwrap();
         let decoded: ReadReceipt = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.message_hash, 0);
@@ -134,7 +141,9 @@ mod tests {
     #[test]
     fn network_message_dispatches_group_event() {
         let event = GroupEvent {
-            action: GroupAction::Delete { group_name: "Team".to_string() },
+            action: GroupAction::Delete {
+                group_name: "Team".to_string(),
+            },
         };
         let json = serde_json::to_string(&event).unwrap();
         let nm: NetworkMessage = serde_json::from_str(&json).unwrap();

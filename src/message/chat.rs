@@ -52,7 +52,10 @@ mod tests {
     fn serialize_broadcast_omits_to_user() {
         let m = msg("alice", "bonjour", None);
         let json = serde_json::to_string(&m).unwrap();
-        assert!(!json.contains("to_user"), "to_user doit être absent quand None");
+        assert!(
+            !json.contains("to_user"),
+            "to_user doit être absent quand None"
+        );
     }
 
     #[test]
@@ -112,7 +115,10 @@ mod tests {
         let decoded: ChatMessage = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.timestamp_epoch, Some(1_750_000_000));
 
-        let without = ChatMessage { timestamp_epoch: None, ..with };
+        let without = ChatMessage {
+            timestamp_epoch: None,
+            ..with
+        };
         let json = serde_json::to_string(&without).unwrap();
         assert!(!json.contains("timestamp_epoch"));
     }

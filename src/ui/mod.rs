@@ -14,13 +14,13 @@ use crate::transfer::{TransferDecision, TransferOffer, TransferProgress, Transfe
 
 mod avatar;
 mod chat_panel;
-mod settings;
 pub mod composer;
 mod emoji_picker;
 mod events;
 mod group_modal;
 mod input_bar;
 mod markdown;
+mod settings;
 mod sidebar;
 mod sound;
 
@@ -235,11 +235,17 @@ impl AbcomApp {
     pub(crate) fn send_read_receipts_for_peer(&mut self, peer_name: &str) {
         let s = self.state.lock().unwrap();
         let my_name = s.my_username.clone();
-        let peer_addr = s.peers.iter().find(|p| p.username == peer_name).map(|p| p.addr);
+        let peer_addr = s
+            .peers
+            .iter()
+            .find(|p| p.username == peer_name)
+            .map(|p| p.addr);
         let Some(addr) = peer_addr else { return };
 
         let now = chrono::Local::now().format("%H:%M").to_string();
-        let receipts: Vec<_> = s.messages.iter()
+        let receipts: Vec<_> = s
+            .messages
+            .iter()
             .filter(|m| m.from == peer_name && m.to_user.as_deref() == Some(my_name.as_str()))
             .map(|m| ReadReceiptRequest {
                 to_addr: addr,
@@ -291,7 +297,8 @@ impl eframe::App for AbcomApp {
             );
             match kind {
                 1 => {
-                    if let Some(paths) = rfd::FileDialog::new().set_title(files_title).pick_files() {
+                    if let Some(paths) = rfd::FileDialog::new().set_title(files_title).pick_files()
+                    {
                         for p in paths {
                             if !self.pending_attachments.contains(&p) {
                                 self.pending_attachments.push(p);
@@ -302,7 +309,8 @@ impl eframe::App for AbcomApp {
                     }
                 }
                 2 => {
-                    if let Some(path) = rfd::FileDialog::new().set_title(folder_title).pick_folder() {
+                    if let Some(path) = rfd::FileDialog::new().set_title(folder_title).pick_folder()
+                    {
                         if !self.pending_attachments.contains(&path) {
                             self.pending_attachments.push(path);
                         }
@@ -320,10 +328,7 @@ impl eframe::App for AbcomApp {
             self.pending_avatar_pick = false;
             let (pick_title, error_msg) = (
                 self.tr("Choisir une image de profil", "Choose a profile picture"),
-                self.tr(
-                    "Image de profil invalide",
-                    "Invalid profile picture",
-                ),
+                self.tr("Image de profil invalide", "Invalid profile picture"),
             );
             if let Some(path) = rfd::FileDialog::new()
                 .set_title(pick_title)
@@ -349,7 +354,10 @@ impl eframe::App for AbcomApp {
         // Choix du dossier de réception après acceptation d'un fichier (différé
         // pour ne pas entrer en conflit avec la run-loop AppKit sur macOS).
         if let Some(transfer_id) = self.pending_accept.take() {
-            let title = self.tr("Choisir le dossier de réception", "Choose destination folder");
+            let title = self.tr(
+                "Choisir le dossier de réception",
+                "Choose destination folder",
+            );
             if let Some(dir) = rfd::FileDialog::new().set_title(title).pick_folder() {
                 if let Some(pos) = self
                     .pending_offers
@@ -392,9 +400,10 @@ fn build_fonts() -> egui::FontDefinitions {
             "../../assets/fonts/Inter-Bold.ttf"
         ))),
     );
-    fonts
-        .families
-        .insert(egui::FontFamily::Name(BOLD_FAMILY.into()), vec!["inter-bold".to_owned()]);
+    fonts.families.insert(
+        egui::FontFamily::Name(BOLD_FAMILY.into()),
+        vec!["inter-bold".to_owned()],
+    );
     fonts
 }
 

@@ -57,17 +57,32 @@ async fn handle_incoming(stream: TcpStream, tx: Sender<AppEvent>) {
     }
 
     if buf.len() > MAX_PACKET_SIZE as usize {
-        eprintln!("[network] Paquet trop volumineux ({} bytes), ignoré", buf.len());
+        eprintln!(
+            "[network] Paquet trop volumineux ({} bytes), ignoré",
+            buf.len()
+        );
         return;
     }
 
     match serde_json::from_slice::<NetworkPacket>(&buf) {
-        Ok(NetworkPacket::Chat(msg))         => { let _ = tx.send(AppEvent::MessageReceived(msg)).await; }
-        Ok(NetworkPacket::Group(event))      => { let _ = tx.send(AppEvent::GroupEventReceived(event)).await; }
-        Ok(NetworkPacket::Typing(indicator)) => { let _ = tx.send(AppEvent::UserTyping(indicator.from)).await; }
-        Ok(NetworkPacket::ReadReceipt(r))    => { let _ = tx.send(AppEvent::ReadReceiptReceived(r)).await; }
-        Ok(NetworkPacket::Ack(ack))          => { let _ = tx.send(AppEvent::MessageAckReceived(ack)).await; }
-        Ok(NetworkPacket::Avatar(announce))  => { let _ = tx.send(AppEvent::AvatarReceived(announce)).await; }
+        Ok(NetworkPacket::Chat(msg)) => {
+            let _ = tx.send(AppEvent::MessageReceived(msg)).await;
+        }
+        Ok(NetworkPacket::Group(event)) => {
+            let _ = tx.send(AppEvent::GroupEventReceived(event)).await;
+        }
+        Ok(NetworkPacket::Typing(indicator)) => {
+            let _ = tx.send(AppEvent::UserTyping(indicator.from)).await;
+        }
+        Ok(NetworkPacket::ReadReceipt(r)) => {
+            let _ = tx.send(AppEvent::ReadReceiptReceived(r)).await;
+        }
+        Ok(NetworkPacket::Ack(ack)) => {
+            let _ = tx.send(AppEvent::MessageAckReceived(ack)).await;
+        }
+        Ok(NetworkPacket::Avatar(announce)) => {
+            let _ = tx.send(AppEvent::AvatarReceived(announce)).await;
+        }
         Err(_) => eprintln!("[network] Paquet entrant non reconnu ({} bytes)", buf.len()),
     }
 }
@@ -80,9 +95,7 @@ mod tests {
     use tokio::net::{TcpListener, TcpStream};
     use tokio::sync::mpsc;
 
-    use crate::message::{
-        AppEvent, ChatMessage, MessageAck, NetworkPacket, ReadReceipt,
-    };
+    use crate::message::{AppEvent, ChatMessage, MessageAck, NetworkPacket, ReadReceipt};
 
     async fn dispatch(packet: NetworkPacket) -> Option<AppEvent> {
         let (tx, mut rx) = mpsc::channel(4);
@@ -95,7 +108,10 @@ mod tests {
         });
 
         let mut client = TcpStream::connect(addr).await.unwrap();
-        client.write_all(&serde_json::to_vec(&packet).unwrap()).await.unwrap();
+        client
+            .write_all(&serde_json::to_vec(&packet).unwrap())
+            .await
+            .unwrap();
         client.shutdown().await.unwrap();
 
         tokio::time::timeout(Duration::from_secs(2), rx.recv())

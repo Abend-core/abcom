@@ -1,8 +1,8 @@
 use std::net::SocketAddr;
 use std::time::SystemTime;
 
-use crate::message::ChatMessage;
 use super::AppState;
+use crate::message::ChatMessage;
 
 /// Message en attente d'ACK
 #[derive(Clone, Debug)]
@@ -54,16 +54,22 @@ impl AppState {
     }
 
     pub fn get_read_count(&self, message_hash: u64) -> usize {
-        self.read_receipts.get(&message_hash).map(|r| r.len()).unwrap_or(0)
+        self.read_receipts
+            .get(&message_hash)
+            .map(|r| r.len())
+            .unwrap_or(0)
     }
 
     /// Marque un message comme envoyé (en attente d'ACK)
     pub fn mark_message_sent(&mut self, message_hash: u64, to_addr: SocketAddr) {
-        self.pending_messages.insert(message_hash, PendingMessage {
-            to_addr,
-            last_retry: SystemTime::now(),
-            retry_count: 0,
-        });
+        self.pending_messages.insert(
+            message_hash,
+            PendingMessage {
+                to_addr,
+                last_retry: SystemTime::now(),
+                retry_count: 0,
+            },
+        );
     }
 
     pub fn mark_message_acked(&mut self, message_hash: u64) {
@@ -99,10 +105,10 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
-    use std::net::SocketAddr;
-    use std::time::SystemTime;
     use crate::app::AppState;
     use crate::message::ChatMessage;
+    use std::net::SocketAddr;
+    use std::time::SystemTime;
 
     fn state() -> AppState {
         let mut s = AppState::new("alice".to_string());
@@ -112,7 +118,13 @@ mod tests {
     }
 
     fn make_msg(from: &str, content: &str) -> ChatMessage {
-        ChatMessage { from: from.to_string(), content: content.to_string(), timestamp: "12:00".to_string(), timestamp_epoch: None, to_user: None }
+        ChatMessage {
+            from: from.to_string(),
+            content: content.to_string(),
+            timestamp: "12:00".to_string(),
+            timestamp_epoch: None,
+            to_user: None,
+        }
     }
 
     #[test]
@@ -163,7 +175,10 @@ mod tests {
             timestamp_epoch: Some(1_000),
             to_user: None,
         };
-        let m2 = ChatMessage { timestamp_epoch: Some(2_000), ..m1.clone() };
+        let m2 = ChatMessage {
+            timestamp_epoch: Some(2_000),
+            ..m1.clone()
+        };
         assert_ne!(AppState::message_hash(&m1), AppState::message_hash(&m2));
     }
 

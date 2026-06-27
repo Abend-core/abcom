@@ -1,11 +1,13 @@
-use crate::message::ChatMessage;
 use super::AppState;
+use crate::message::ChatMessage;
 
 impl AppState {
     pub fn add_message(&mut self, msg: ChatMessage) {
-        let incoming_from_selected = self.selected_conversation.as_ref().map(|u| {
-            msg.from == *u && msg.to_user == Some(self.my_username.clone())
-        }).unwrap_or(false);
+        let incoming_from_selected = self
+            .selected_conversation
+            .as_ref()
+            .map(|u| msg.from == *u && msg.to_user == Some(self.my_username.clone()))
+            .unwrap_or(false);
 
         self.messages.push(msg.clone());
         if incoming_from_selected {
@@ -18,9 +20,11 @@ impl AppState {
     }
 
     pub fn mark_conversation_read(&mut self, peer_username: &str) {
-        let count = self.messages.iter().filter(|m| {
-            m.from == peer_username && m.to_user == Some(self.my_username.clone())
-        }).count();
+        let count = self
+            .messages
+            .iter()
+            .filter(|m| m.from == peer_username && m.to_user == Some(self.my_username.clone()))
+            .count();
         self.read_counts.insert(peer_username.to_string(), count);
         self.save_read_counts();
     }
@@ -28,11 +32,19 @@ impl AppState {
     /// Messages de la conversation sélectionnée
     pub fn get_conversation_messages(&self) -> Vec<&ChatMessage> {
         match &self.selected_conversation {
-            None => self.messages.iter().filter(|m| m.to_user.is_none()).collect(),
-            Some(username) => self.messages.iter().filter(|m| {
-                (m.from == *username && m.to_user == Some(self.my_username.clone()))
-                    || (m.from == self.my_username && m.to_user == Some(username.clone()))
-            }).collect(),
+            None => self
+                .messages
+                .iter()
+                .filter(|m| m.to_user.is_none())
+                .collect(),
+            Some(username) => self
+                .messages
+                .iter()
+                .filter(|m| {
+                    (m.from == *username && m.to_user == Some(self.my_username.clone()))
+                        || (m.from == self.my_username && m.to_user == Some(username.clone()))
+                })
+                .collect(),
         }
     }
 
@@ -49,9 +61,11 @@ impl AppState {
         if self.selected_conversation.as_ref() == Some(&peer_username.to_string()) {
             return 0;
         }
-        let total = self.messages.iter().filter(|m| {
-            m.from == peer_username && m.to_user == Some(self.my_username.clone())
-        }).count();
+        let total = self
+            .messages
+            .iter()
+            .filter(|m| m.from == peer_username && m.to_user == Some(self.my_username.clone()))
+            .count();
         let read = *self.read_counts.get(peer_username).unwrap_or(&0);
         total.saturating_sub(read)
     }

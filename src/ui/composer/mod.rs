@@ -365,18 +365,17 @@ pub fn custom_composer_input(
         }
     }
 
-    if response.drag_started()
-        && selection_anchor.is_none() {
-            if let Some(pos) = response.interact_pointer_pos() {
-                let local = egui::pos2(
-                    (pos.x - content_rect.left()).max(0.0),
-                    (pos.y - content_rect.top()).max(0.0),
-                );
-                let drag_start_cursor = cursor_from_point(&caret_points, local);
-                *selection_anchor = Some(drag_start_cursor);
-                *cursor_char = drag_start_cursor;
-            }
+    if response.drag_started() && selection_anchor.is_none() {
+        if let Some(pos) = response.interact_pointer_pos() {
+            let local = egui::pos2(
+                (pos.x - content_rect.left()).max(0.0),
+                (pos.y - content_rect.top()).max(0.0),
+            );
+            let drag_start_cursor = cursor_from_point(&caret_points, local);
+            *selection_anchor = Some(drag_start_cursor);
+            *cursor_char = drag_start_cursor;
         }
+    }
 
     if response.dragged() {
         if let Some(pos) = response.interact_pointer_pos() {
@@ -439,18 +438,18 @@ pub fn custom_composer_input(
         let events = ui.input(|i| i.events.clone());
         for event in events {
             match event {
-                egui::Event::Text(t)
-                    if !t.contains('\n') && !t.contains('\r') => {
-                        replace_selection(input, cursor_char, selection_anchor, "");
-                        insert_text_at_cursor(input, cursor_char, &t);
-                        changed = true;
-                    }
+                egui::Event::Text(t) if !t.contains('\n') && !t.contains('\r') => {
+                    replace_selection(input, cursor_char, selection_anchor, "");
+                    insert_text_at_cursor(input, cursor_char, &t);
+                    changed = true;
+                }
                 egui::Event::Ime(egui::ImeEvent::Commit(t))
-                    if !t.contains('\n') && !t.contains('\r') && !t.is_empty() => {
-                        replace_selection(input, cursor_char, selection_anchor, "");
-                        insert_text_at_cursor(input, cursor_char, &t);
-                        changed = true;
-                    }
+                    if !t.contains('\n') && !t.contains('\r') && !t.is_empty() =>
+                {
+                    replace_selection(input, cursor_char, selection_anchor, "");
+                    insert_text_at_cursor(input, cursor_char, &t);
+                    changed = true;
+                }
                 egui::Event::Paste(t) => {
                     replace_selection(input, cursor_char, selection_anchor, "");
                     insert_text_at_cursor(input, cursor_char, &t.replace(['\r', '\n'], " "));
@@ -561,44 +560,42 @@ pub fn custom_composer_input(
                             clear_selection(selection_anchor);
                         }
                     }
-                    egui::Key::ArrowUp
-                        if !shortcode_menu_open => {
-                            if modifiers.shift && selection_anchor.is_none() {
-                                *selection_anchor = Some(*cursor_char);
-                            } else if !modifiers.shift {
-                                clear_selection(selection_anchor);
-                            }
-                            let points = composer_caret_positions(
-                                ui,
-                                input,
-                                emoji_map,
-                                18.0,
-                                content_rect.width().max(20.0),
-                            );
-                            move_cursor_vertical(&points, cursor_char, -1, line_height);
-                            if selection_range(*selection_anchor, *cursor_char).is_none() {
-                                clear_selection(selection_anchor);
-                            }
+                    egui::Key::ArrowUp if !shortcode_menu_open => {
+                        if modifiers.shift && selection_anchor.is_none() {
+                            *selection_anchor = Some(*cursor_char);
+                        } else if !modifiers.shift {
+                            clear_selection(selection_anchor);
                         }
-                    egui::Key::ArrowDown
-                        if !shortcode_menu_open => {
-                            if modifiers.shift && selection_anchor.is_none() {
-                                *selection_anchor = Some(*cursor_char);
-                            } else if !modifiers.shift {
-                                clear_selection(selection_anchor);
-                            }
-                            let points = composer_caret_positions(
-                                ui,
-                                input,
-                                emoji_map,
-                                18.0,
-                                content_rect.width().max(20.0),
-                            );
-                            move_cursor_vertical(&points, cursor_char, 1, line_height);
-                            if selection_range(*selection_anchor, *cursor_char).is_none() {
-                                clear_selection(selection_anchor);
-                            }
+                        let points = composer_caret_positions(
+                            ui,
+                            input,
+                            emoji_map,
+                            18.0,
+                            content_rect.width().max(20.0),
+                        );
+                        move_cursor_vertical(&points, cursor_char, -1, line_height);
+                        if selection_range(*selection_anchor, *cursor_char).is_none() {
+                            clear_selection(selection_anchor);
                         }
+                    }
+                    egui::Key::ArrowDown if !shortcode_menu_open => {
+                        if modifiers.shift && selection_anchor.is_none() {
+                            *selection_anchor = Some(*cursor_char);
+                        } else if !modifiers.shift {
+                            clear_selection(selection_anchor);
+                        }
+                        let points = composer_caret_positions(
+                            ui,
+                            input,
+                            emoji_map,
+                            18.0,
+                            content_rect.width().max(20.0),
+                        );
+                        move_cursor_vertical(&points, cursor_char, 1, line_height);
+                        if selection_range(*selection_anchor, *cursor_char).is_none() {
+                            clear_selection(selection_anchor);
+                        }
+                    }
                     egui::Key::Home => {
                         if modifiers.shift && selection_anchor.is_none() {
                             *selection_anchor = Some(*cursor_char);

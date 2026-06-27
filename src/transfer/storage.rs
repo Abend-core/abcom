@@ -149,14 +149,10 @@ fn unique_root_name(candidate: String, used: &mut HashSet<String>) -> String {
 
 fn join_relative(root_name: &str, suffix: &Path) -> String {
     let mut parts = vec![root_name.to_string()];
-    parts.extend(
-        suffix
-            .components()
-            .filter_map(|component| match component {
-                Component::Normal(value) => Some(value.to_string_lossy().into_owned()),
-                _ => None,
-            }),
-    );
+    parts.extend(suffix.components().filter_map(|component| match component {
+        Component::Normal(value) => Some(value.to_string_lossy().into_owned()),
+        _ => None,
+    }));
     parts.join("/")
 }
 
@@ -208,7 +204,8 @@ mod tests {
             .manifest
             .entries
             .iter()
-            .any(|entry| entry.relative_path == "docs" && entry.kind == super::TransferEntryKind::Directory));
+            .any(|entry| entry.relative_path == "docs"
+                && entry.kind == super::TransferEntryKind::Directory));
         assert!(prepared
             .manifest
             .entries

@@ -1,5 +1,5 @@
-use std::time::SystemTime;
 use super::AppState;
+use std::time::SystemTime;
 
 impl AppState {
     pub fn set_user_typing(&mut self, username: String) {
@@ -22,8 +22,8 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
-    use std::time::{SystemTime, Duration};
     use crate::app::AppState;
+    use std::time::{Duration, SystemTime};
 
     fn state() -> AppState {
         let mut s = AppState::new("alice".to_string());

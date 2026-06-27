@@ -54,7 +54,11 @@ fn rasterize_svg(data: &[u8]) -> anyhow::Result<image::DynamicImage> {
     let (width, height) = (size.width().max(1), size.height().max(1));
     let mut pixmap = resvg::tiny_skia::Pixmap::new(width, height)
         .ok_or_else(|| anyhow::anyhow!("dimensions SVG invalides"))?;
-    resvg::render(&tree, resvg::tiny_skia::Transform::identity(), &mut pixmap.as_mut());
+    resvg::render(
+        &tree,
+        resvg::tiny_skia::Transform::identity(),
+        &mut pixmap.as_mut(),
+    );
     let buffer = image::RgbaImage::from_raw(width, height, pixmap.take())
         .ok_or_else(|| anyhow::anyhow!("conversion du SVG impossible"))?;
     Ok(image::DynamicImage::ImageRgba8(buffer))
@@ -97,8 +101,7 @@ pub(crate) fn show_avatar(
             );
         }
         None => {
-            let (rect, _) =
-                ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+            let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
             if !ui.is_rect_visible(rect) {
                 return;
             }
@@ -155,7 +158,10 @@ impl AbcomApp {
     pub(crate) fn broadcast_my_avatar(&mut self) {
         let (my_name, png) = {
             let s = self.state.lock().unwrap();
-            (s.my_username.clone(), s.my_avatar.clone().unwrap_or_default())
+            (
+                s.my_username.clone(),
+                s.my_avatar.clone().unwrap_or_default(),
+            )
         };
         let announce = AvatarAnnounce { from: my_name, png };
         self.send_avatar_announce(announce);
