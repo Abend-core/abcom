@@ -1,10 +1,9 @@
 use std::net::SocketAddr;
 
-use crate::transfer::TransferProgress;
-
 use super::avatar::AvatarAnnounce;
 use super::chat::ChatMessage;
 use super::group::GroupEvent;
+use super::media::{MediaProgress, MediaStreamHeader};
 use super::receipts::{MessageAck, ReadReceipt};
 
 /// Événements réseau envoyés vers l'UI
@@ -25,5 +24,8 @@ pub enum AppEvent {
     ReadReceiptReceived(ReadReceipt),
     MessageAckReceived(MessageAck),
     AvatarReceived(AvatarAnnounce),
-    TransferUpdated(TransferProgress),
+    /// Début de réception d'un média : on crée le message (carte + progression).
+    MediaIncoming(MediaStreamHeader),
+    /// Progression d'un transfert média (émission ou réception).
+    MediaProgressed(MediaProgress),
 }

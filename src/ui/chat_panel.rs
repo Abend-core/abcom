@@ -3,7 +3,6 @@ use eframe::egui;
 
 use crate::app::AppState;
 use crate::message::ChatMessage;
-use crate::transfer::{TransferDecision, TransferDirection, TransferStatus};
 
 use super::{AbcomApp, UiLanguage};
 
@@ -45,32 +44,12 @@ fn peer_color(username: &str) -> egui::Color32 {
 }
 
 const MONTHS_FR: [&str; 12] = [
-    "janvier",
-    "février",
-    "mars",
-    "avril",
-    "mai",
-    "juin",
-    "juillet",
-    "août",
-    "septembre",
-    "octobre",
-    "novembre",
-    "décembre",
+    "janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août",
+    "septembre", "octobre", "novembre", "décembre",
 ];
 const MONTHS_EN: [&str; 12] = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
+    "January", "February", "March", "April", "May", "June", "July", "August",
+    "September", "October", "November", "December",
 ];
 
 /// Jour local d'un message à partir de son instant Unix (`None` si absent).
@@ -85,10 +64,7 @@ fn message_day(msg: &ChatMessage) -> Option<NaiveDate> {
 /// Heure d'en-tête au format 24 h, dérivée de l'instant Unix si présent,
 /// sinon repli sur la chaîne `timestamp` (anciens messages / pairs).
 fn header_time(msg: &ChatMessage) -> String {
-    match msg
-        .timestamp_epoch
-        .and_then(|e| Local.timestamp_opt(e as i64, 0).single())
-    {
+    match msg.timestamp_epoch.and_then(|e| Local.timestamp_opt(e as i64, 0).single()) {
         Some(dt) => dt.format("%H:%M").to_string(),
         None => msg.timestamp.clone(),
     }
@@ -159,17 +135,11 @@ fn render_day_divider(ui: &mut egui::Ui, label: &str) {
     let right_start = mid_x + text_w / 2.0 + gap;
     let stroke = egui::Stroke::new(1.0, line_color);
     painter.line_segment(
-        [
-            egui::pos2(rect.left(), center_y),
-            egui::pos2(left_end, center_y),
-        ],
+        [egui::pos2(rect.left(), center_y), egui::pos2(left_end, center_y)],
         stroke,
     );
     painter.line_segment(
-        [
-            egui::pos2(right_start, center_y),
-            egui::pos2(rect.right(), center_y),
-        ],
+        [egui::pos2(right_start, center_y), egui::pos2(rect.right(), center_y)],
         stroke,
     );
     painter.galley(
@@ -209,17 +179,24 @@ fn render_message_header(
 
 /// Rend le corps d'un message (texte Markdown puis média éventuel) et renvoie
 /// l'action déclenchée sur le média, le cas échéant.
+#[allow(clippy::too_many_arguments)]
 fn render_message_body(
     ui: &mut egui::Ui,
     msg: &ChatMessage,
     emoji_map: &std::collections::HashMap<String, usize>,
     emoji_textures: &[(String, egui::TextureHandle)],
     media_textures: &std::collections::HashMap<String, Option<egui::TextureHandle>>,
+    media_progress: &std::collections::HashMap<String, crate::message::MediaProgress>,
 ) -> Option<super::media::MediaAction> {
     if !msg.content.is_empty() {
         super::markdown::render_message_markdown(ui, &msg.content, emoji_map, emoji_textures);
     }
     if let Some(media) = &msg.media {
+        // Pendant le transfert : barre de progression au lieu de la carte.
+        if let Some(progress) = media_progress.get(&media.id) {
+            super::media::render_media_progress(ui, media, progress);
+            return None;
+        }
         let texture = media_textures.get(&media.id).and_then(|t| t.as_ref());
         return super::media::render_media_block(ui, media, texture);
     }
@@ -332,10 +309,10 @@ impl AbcomApp {
                             && ui
                                 .button(self.tr("🗑 Effacer l'historique", "🗑 Clear history"))
                                 .clicked()
-                        {
-                            self.state.lock().unwrap().clear_conversation_history();
-                            ui.close_menu();
-                        }
+                            {
+                                self.state.lock().unwrap().clear_conversation_history();
+                                ui.close_menu();
+                            }
                     });
                 });
             });
@@ -348,7 +325,7 @@ impl AbcomApp {
                     (
                         s.selected_conversation
                             .clone()
-                            .unwrap_or_else(|| self.tr("Tous", "All").to_string()),
+                                .unwrap_or_else(|| self.tr("Tous", "All").to_string()),
                         s.my_username.clone(),
                         s.selected_conversation.clone(),
                         s.peers.clone(),
@@ -375,15 +352,17 @@ impl AbcomApp {
                                 ui.label(&peer.username);
                             }
                             if peers.is_empty() {
-                                ui.label(
-                                    self.tr(
-                                        "Aucun participant connecté",
-                                        "No connected participant",
-                                    ),
-                                );
+                                ui.label(self.tr(
+                                    "Aucun participant connecté",
+                                    "No connected participant",
+                                ));
                             }
                         } else {
-                            ui.label(format!("{} ({})", my_name2, self.tr("vous", "you")));
+                            ui.label(format!(
+                                "{} ({})",
+                                my_name2,
+                                self.tr("vous", "you")
+                            ));
                             if let Some(peer) = sel_conv {
                                 ui.label(&peer);
                             }
@@ -500,7 +479,9 @@ impl AbcomApp {
                     let today = Local::now().date_naive();
                     // Vue multi-personnes (groupe `#…` ou « Tous ») : chaque pair
                     // reçoit une couleur distincte ; en 1-à-1 on garde le bleu.
-                    let multi_person = selected_conv.as_deref().is_none_or(|c| c.starts_with('#'));
+                    let multi_person = selected_conv
+                        .as_deref()
+                        .is_none_or(|c| c.starts_with('#'));
                     let mut last_from: Option<&str> = None;
                     let mut last_epoch: Option<u64> = None;
                     let mut last_day: Option<NaiveDate> = None;
@@ -557,19 +538,14 @@ impl AbcomApp {
                                 super::avatar::show_avatar(ui, avatar, display, AVATAR_SIZE);
                                 ui.add_space(AVATAR_GUTTER);
                                 ui.vertical(|ui| {
-                                    render_message_header(
-                                        ui,
-                                        display,
-                                        &header_time(msg),
-                                        name_color,
-                                        receipt,
-                                    );
+                                    render_message_header(ui, display, &header_time(msg), name_color, receipt);
                                     if let Some(action) = render_message_body(
                                         ui,
                                         msg,
                                         &self.emoji_map,
                                         &self.emoji_textures,
                                         &media_textures,
+                                    &self.media_progress,
                                     ) {
                                         apply_media_action(
                                             action,
@@ -591,6 +567,7 @@ impl AbcomApp {
                                         &self.emoji_map,
                                         &self.emoji_textures,
                                         &media_textures,
+                                    &self.media_progress,
                                     ) {
                                         apply_media_action(
                                             action,
@@ -609,8 +586,8 @@ impl AbcomApp {
                         }
                     }
 
-                    // Transferts et propositions de fichiers, intégrés au fil
-                    self.render_transfer_cards(ui, &selected_conv);
+                    // Offres de médias volumineux (> 1 Go) à accepter/refuser.
+                    self.render_media_offers(ui);
                 });
 
             // Application des actions médias collectées pendant le rendu.
@@ -623,31 +600,15 @@ impl AbcomApp {
         });
     }
 
-    /// Rend, dans le fil de la conversation, les propositions de réception en
-    /// attente puis la progression des transferts liés à cette conversation.
-    /// Affichées en vue globale (« Tous ») ou dans la conversation du pair.
-    fn render_transfer_cards(&mut self, ui: &mut egui::Ui, selected_conv: &Option<String>) {
-        // ── Propositions de réception (Accepter / Refuser) ──────────────────
-        let offers: Vec<(String, String, String, u64, usize)> = self
-            .pending_offers
-            .iter()
-            .filter(|o| {
-                selected_conv.is_none() || selected_conv.as_deref() == Some(o.from.as_str())
-            })
-            .map(|o| {
-                (
-                    o.transfer_id.clone(),
-                    o.from.clone(),
-                    o.label.clone(),
-                    o.total_bytes,
-                    o.item_count,
-                )
-            })
-            .collect();
+    /// Bandeaux d'acceptation des médias volumineux (> 1 Go) reçus. Accepter →
+    /// le pair streame alors le média ; Refuser → l'envoi est abandonné.
+    fn render_media_offers(&mut self, ui: &mut egui::Ui) {
+        if self.pending_media_offers.is_empty() {
+            return;
+        }
+        let mut decided: Option<(usize, bool)> = None;
 
-        let mut accept_id: Option<String> = None;
-        let mut refuse_id: Option<String> = None;
-        for (transfer_id, from, label, total, count) in &offers {
+        for (index, offer) in self.pending_media_offers.iter().enumerate() {
             ui.add_space(6.0);
             egui::Frame::group(ui.style())
                 .fill(egui::Color32::from_rgb(48, 52, 60))
@@ -656,119 +617,56 @@ impl AbcomApp {
                     ui.label(
                         egui::RichText::new(format!(
                             "{} {}",
-                            from,
-                            self.tr("vous envoie un fichier", "is sending you a file")
+                            offer.from,
+                            self.tr("souhaite vous envoyer un fichier", "wants to send you a file")
                         ))
                         .strong(),
                     );
-                    let detail = if *count > 1 {
-                        format!(
-                            "{} ({}, {} {})",
-                            label,
-                            format_bytes(*total),
-                            count,
-                            self.tr("éléments", "items")
-                        )
-                    } else {
-                        format!("{} ({})", label, format_bytes(*total))
-                    };
-                    ui.label(egui::RichText::new(detail).small());
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} ({})",
+                            offer.filename,
+                            format_bytes(offer.size_bytes)
+                        ))
+                        .small(),
+                    );
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         if ui.button(self.tr("Refuser", "Decline")).clicked() {
-                            refuse_id = Some(transfer_id.clone());
+                            decided = Some((index, false));
                         }
                         if ui.button(self.tr("Accepter", "Accept")).clicked() {
-                            accept_id = Some(transfer_id.clone());
+                            decided = Some((index, true));
                         }
                     });
                 });
         }
-        if let Some(id) = accept_id {
-            // Le choix du dossier est différé d'une frame (conflit AppKit macOS).
-            self.pending_accept = Some(id);
-        }
-        if let Some(id) = refuse_id {
-            if let Some(pos) = self.pending_offers.iter().position(|o| o.transfer_id == id) {
-                let offer = self.pending_offers.remove(pos);
-                let _ = offer.decision_tx.send(TransferDecision {
-                    accept: false,
-                    dest_dir: None,
-                });
-            }
-        }
 
-        // ── Progression des transferts ──────────────────────────────────────
-        let mut transfers: Vec<_> = self
-            .transfer_progress
-            .values()
-            .filter(|t| !self.dismissed_transfers.contains(&t.transfer_id))
-            .filter(|t| {
-                selected_conv.is_none() || selected_conv.as_deref() == Some(t.peer.as_str())
-            })
-            .cloned()
-            .collect();
-        transfers.sort_by(|a, b| a.transfer_id.cmp(&b.transfer_id));
+        if let Some((index, accept)) = decided {
+            let offer = self.pending_media_offers.remove(index);
+            let _ = offer.decision_tx.send(accept);
+        }
+    }
 
-        let mut dismiss_id: Option<String> = None;
-        for t in &transfers {
-            ui.add_space(6.0);
-            egui::Frame::group(ui.style()).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    let dir = match t.direction {
-                        TransferDirection::Upload => self.tr("Envoi", "Sent"),
-                        TransferDirection::Download => self.tr("Réception", "Received"),
-                    };
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "{} · {} ({})",
-                            dir,
-                            t.label,
-                            format_bytes(t.total_bytes)
-                        ))
-                        .strong(),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if close_button(ui) {
-                            dismiss_id = Some(t.transfer_id.clone());
-                        }
-                        let status = match t.status {
-                            TransferStatus::Queued => self.tr("En attente", "Queued"),
-                            TransferStatus::Running => self.tr("En cours", "Running"),
-                            TransferStatus::Completed => self.tr("Terminé", "Done"),
-                            TransferStatus::Failed => self.tr("Échec", "Failed"),
-                            TransferStatus::Rejected => self.tr("Refusé", "Declined"),
-                        };
-                        ui.label(egui::RichText::new(status).small());
-                    });
-                });
-                if t.status == TransferStatus::Running && t.total_bytes > 0 {
-                    let ratio = (t.bytes_done as f32 / t.total_bytes as f32).clamp(0.0, 1.0);
-                    ui.add(
-                        egui::ProgressBar::new(ratio)
-                            .show_percentage()
-                            .desired_width(ui.available_width()),
-                    );
-                    if let Some(path) = &t.current_path {
-                        ui.label(
-                            egui::RichText::new(path)
-                                .small()
-                                .color(egui::Color32::from_gray(150)),
+
+    /// Popup de notification en haut à droite
+    pub(crate) fn show_notification(&mut self, ctx: &egui::Context) {
+        if let Some(notif) = &self.last_notification {
+            if self.notification_time.elapsed().as_secs_f32() < 3.0 {
+                egui::Window::new(self.tr("Notification", "Notification"))
+                    .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 10.0))
+                    .resizable(false)
+                    .collapsible(false)
+                    .title_bar(false)
+                    .show(ctx, |ui| {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(255, 200, 100),
+                            egui::RichText::new(notif).text_style(egui::TextStyle::Body),
                         );
-                    }
-                }
-                if !t.detail.is_empty() {
-                    ui.label(
-                        egui::RichText::new(&t.detail)
-                            .small()
-                            .color(egui::Color32::from_gray(160)),
-                    );
-                }
-            });
-        }
-        if let Some(id) = dismiss_id {
-            self.dismissed_transfers.insert(id);
+                    });
+            } else {
+                self.last_notification = None;
+            }
         }
     }
 }
@@ -790,25 +688,6 @@ pub(crate) fn format_bytes(bytes: u64) -> String {
     }
 }
 
-/// Petite croix de fermeture peinte (pas de glyphe, rendu fiable). Renvoie `true` au clic.
-fn close_button(ui: &mut egui::Ui) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::click());
-    if ui.is_rect_visible(rect) {
-        let color = if resp.hovered() {
-            egui::Color32::from_rgb(230, 120, 120)
-        } else {
-            egui::Color32::from_gray(150)
-        };
-        let stroke = egui::Stroke::new(1.5, color);
-        let p = ui.painter();
-        let c = rect.center();
-        let d = 3.5;
-        p.line_segment([c + egui::vec2(-d, -d), c + egui::vec2(d, d)], stroke);
-        p.line_segment([c + egui::vec2(d, -d), c + egui::vec2(-d, d)], stroke);
-    }
-    resp.clicked()
-}
-
 /// Dessine une ou deux coches selon le statut de lecture du message.
 /// `read = false` → une coche grise (envoyé) ; `read = true` → deux coches bleues (lu).
 /// Affiche l'indicateur de statut d'un message :
@@ -825,7 +704,7 @@ fn show_receipt(ui: &mut egui::Ui, delivered: bool, read: bool) {
     let color = if read {
         egui::Color32::from_rgb(80, 180, 255) // bleu = lu
     } else {
-        egui::Color32::from_gray(160) // gris = envoyé ou livré
+        egui::Color32::from_gray(160)          // gris = envoyé ou livré
     };
     let stroke = egui::Stroke::new(1.5, color);
     let p = ui.painter();
@@ -833,10 +712,7 @@ fn show_receipt(ui: &mut egui::Ui, delivered: bool, read: bool) {
     let draw_tick = |ox: f32| {
         let base = rect.left_top() + egui::vec2(ox, 4.0);
         p.line_segment([base, base + egui::vec2(2.5, 3.0)], stroke);
-        p.line_segment(
-            [base + egui::vec2(2.5, 3.0), base + egui::vec2(8.0, -1.5)],
-            stroke,
-        );
+        p.line_segment([base + egui::vec2(2.5, 3.0), base + egui::vec2(8.0, -1.5)], stroke);
     };
 
     draw_tick(0.0);
@@ -853,24 +729,12 @@ mod tests {
 
     #[test]
     fn group_breaks_on_author_change() {
-        assert!(starts_new_group(
-            Some("alice"),
-            Some(100),
-            "bob",
-            Some(110),
-            false
-        ));
+        assert!(starts_new_group(Some("alice"), Some(100), "bob", Some(110), false));
     }
 
     #[test]
     fn group_breaks_on_day_change() {
-        assert!(starts_new_group(
-            Some("alice"),
-            Some(100),
-            "alice",
-            Some(110),
-            true
-        ));
+        assert!(starts_new_group(Some("alice"), Some(100), "alice", Some(110), true));
     }
 
     #[test]
@@ -905,35 +769,17 @@ mod tests {
     fn divider_labels_today_and_yesterday() {
         let today = NaiveDate::from_ymd_opt(2026, 5, 20).unwrap();
         let yesterday = NaiveDate::from_ymd_opt(2026, 5, 19).unwrap();
-        assert_eq!(
-            day_divider_label(today, today, UiLanguage::French),
-            "Aujourd'hui"
-        );
-        assert_eq!(
-            day_divider_label(today, today, UiLanguage::English),
-            "Today"
-        );
-        assert_eq!(
-            day_divider_label(yesterday, today, UiLanguage::French),
-            "Hier"
-        );
-        assert_eq!(
-            day_divider_label(yesterday, today, UiLanguage::English),
-            "Yesterday"
-        );
+        assert_eq!(day_divider_label(today, today, UiLanguage::French), "Aujourd'hui");
+        assert_eq!(day_divider_label(today, today, UiLanguage::English), "Today");
+        assert_eq!(day_divider_label(yesterday, today, UiLanguage::French), "Hier");
+        assert_eq!(day_divider_label(yesterday, today, UiLanguage::English), "Yesterday");
     }
 
     #[test]
     fn divider_labels_full_date_localized() {
         let today = NaiveDate::from_ymd_opt(2026, 6, 23).unwrap();
         let date = NaiveDate::from_ymd_opt(2026, 5, 18).unwrap();
-        assert_eq!(
-            day_divider_label(date, today, UiLanguage::French),
-            "18 mai 2026"
-        );
-        assert_eq!(
-            day_divider_label(date, today, UiLanguage::English),
-            "May 18, 2026"
-        );
+        assert_eq!(day_divider_label(date, today, UiLanguage::French), "18 mai 2026");
+        assert_eq!(day_divider_label(date, today, UiLanguage::English), "May 18, 2026");
     }
 }

@@ -3,9 +3,13 @@ use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
 
+use std::sync::{Arc, Mutex};
+
 use crate::app::AppState;
-use crate::message::{ChatMessage, MediaAttachment, MediaKind, SendRequest, TypingIndicator, TypingRequest};
-use crate::transfer::TransferRequest;
+use crate::message::{
+    ChatMessage, MediaAttachment, MediaKind, MediaSendJob, MediaStreamHeader, SendRequest,
+    TypingIndicator, TypingRequest,
+};
 
 use super::composer;
 use super::emoji_picker::emoji_shortcode_trigger;
@@ -13,9 +17,10 @@ use super::AbcomApp;
 
 const ACTION_BUTTON_SIZE: [f32; 2] = [34.0, 34.0];
 
-/// Taille maximale d'un fichier envoyé en média inline (1 Go). Au-delà, le
-/// fichier passe par le système de transfert avec demande d'acceptation.
-const INLINE_MEDIA_MAX_BYTES: u64 = 1024 * 1024 * 1024;
+/// Au-delà de cette taille (1 Go), l'envoi d'un média demande l'accord du
+/// destinataire avant transfert. En dessous, l'envoi est automatique. Dans les
+/// deux cas, c'est le même chemin (streaming par morceaux).
+const MEDIA_ACK_THRESHOLD: u64 = 1024 * 1024 * 1024;
 
 enum AttachmentMenuAction {
     AddFiles,
@@ -180,105 +185,92 @@ fn attachment_menu_popup(
     .inner
 }
 
-/// Identifiant unique de média (sert de nom de fichier en cache, extension
-/// d'origine conservée). Préfixé par un horodatage µs pour garantir l'unicité.
-fn media_id(filename: &str) -> String {
-    let micros = chrono::Utc::now().timestamp_micros();
-    let safe: String = filename
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
-        .collect();
-    format!("{micros}-{safe}")
-}
-
-/// Envoie un fichier comme message média : lecture des octets, construction du
-/// `MediaAttachment`, mise en cache locale (historique allégé) et envoi réseau.
-fn send_media_message(
-    app: &mut AbcomApp,
+/// Envoie un fichier (ou un dossier zippé) comme média, par streaming. Tout le
+/// travail lourd (zip, copie locale dans `media/<id>`, lecture) se fait dans un
+/// thread dédié pour ne jamais geler l'UI, même pour plusieurs Go.
+fn send_one_media(
+    app: &AbcomApp,
     path: &Path,
     my_name: &str,
-    selected_peer_name: &Option<String>,
-    selected_addr: Option<std::net::SocketAddr>,
-    all_peers: &[crate::app::Peer],
+    to_user: &Option<String>,
+    targets: &[(String, std::net::SocketAddr)],
 ) {
-    let filename = path
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("fichier")
-        .to_string();
+    let state = app.state.clone();
+    let send_media_tx = app.send_media_tx.clone();
+    let path = path.to_path_buf();
+    let my_name = my_name.to_string();
+    let to_user = to_user.clone();
+    let targets = targets.to_vec();
 
-    let data = match std::fs::read(path) {
-        Ok(data) => data,
-        Err(e) => {
-            eprintln!("[ui] Lecture du média échouée ({}): {}", filename, e);
-            app.last_notification =
-                Some(app.tr("Lecture du fichier impossible", "Could not read file").to_string());
-            app.notification_time = std::time::Instant::now();
-            return;
+    std::thread::spawn(move || {
+        if let Err(e) = prepare_and_stream(&state, &send_media_tx, &path, &my_name, &to_user, &targets)
+        {
+            eprintln!("[ui] préparation média échouée ({}): {}", path.display(), e);
         }
-    };
+    });
+}
 
-    let is_image = MediaAttachment::is_image_filename(&filename);
-    let (kind, width, height) = if is_image {
-        let dims = image::image_dimensions(path).ok();
+/// Prépare un média dans `media/<id>` (copie d'un fichier ou zip d'un dossier),
+/// l'ajoute à notre historique, puis met en file un envoi vers chaque pair.
+fn prepare_and_stream(
+    state: &Arc<Mutex<AppState>>,
+    send_media_tx: &tokio::sync::mpsc::Sender<MediaSendJob>,
+    path: &Path,
+    my_name: &str,
+    to_user: &Option<String>,
+    targets: &[(String, std::net::SocketAddr)],
+) -> std::io::Result<()> {
+    let is_dir = path.is_dir();
+    let filename = super::media::media_display_name(path);
+    let id = super::media::media_id(&filename);
+
+    let dest = state.lock().unwrap().media_path(&id);
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if is_dir {
+        crate::archive::zip_dir_to_path(path, &dest)?;
+    } else {
+        std::fs::copy(path, &dest)?;
+    }
+
+    let size_bytes = std::fs::metadata(&dest)?.len();
+    let (kind, width, height) = if !is_dir && MediaAttachment::is_image_filename(&filename) {
+        let dims = image::image_dimensions(&dest).ok();
         (MediaKind::Image, dims.map(|d| d.0), dims.map(|d| d.1))
     } else {
         (MediaKind::File, None, None)
     };
 
-    let attachment = MediaAttachment {
-        id: media_id(&filename),
-        filename,
-        kind,
-        size_bytes: data.len() as u64,
-        width,
-        height,
-        data: Some(data),
-    };
-
+    let media = MediaAttachment { id, filename, kind, size_bytes, width, height };
     let now = chrono::Local::now();
-    let msg = ChatMessage {
+    let header = MediaStreamHeader {
         from: my_name.to_string(),
-        content: String::new(),
+        to_user: to_user.clone(),
         timestamp: now.format("%H:%M").to_string(),
         timestamp_epoch: Some(now.timestamp() as u64),
-        to_user: selected_peer_name.clone(),
-        media: Some(attachment),
+        media: media.clone(),
+        requires_ack: size_bytes > MEDIA_ACK_THRESHOLD,
     };
 
-    // Cache local + historique allégé (octets retirés), suivi de livraison.
-    {
-        let msg_hash = AppState::message_hash(&msg);
-        let mut s = app.state.lock().unwrap();
-        if let Some(media) = &msg.media {
-            s.store_media(media);
-        }
-        let mut local = msg.clone();
-        if let Some(media) = local.media.as_mut() {
-            media.data = None;
-        }
-        s.add_message(local);
-        if let Some(peer_name) = selected_peer_name {
-            if !peer_name.starts_with('#') {
-                let addr = s.peers.iter().find(|p| p.username == *peer_name).map(|p| p.addr);
-                if let Some(addr) = addr {
-                    s.mark_message_sent(msg_hash, addr);
-                }
-            }
-        }
-    }
+    // Notre propre copie du message (la carte apparaît, avec progression).
+    state.lock().unwrap().add_message(ChatMessage {
+        from: my_name.to_string(),
+        content: String::new(),
+        timestamp: header.timestamp.clone(),
+        timestamp_epoch: header.timestamp_epoch,
+        to_user: to_user.clone(),
+        media: Some(media),
+    });
 
-    // Envoi réseau avec les octets.
-    if let Some(addr) = selected_addr {
-        let _ = app.send_tx.try_send(SendRequest { to_addr: addr, message: msg });
-    } else {
-        for peer in all_peers {
-            let _ = app.send_tx.try_send(SendRequest {
-                to_addr: peer.addr,
-                message: msg.clone(),
-            });
-        }
+    for (_, addr) in targets {
+        let _ = send_media_tx.try_send(MediaSendJob {
+            to_addr: *addr,
+            source_path: dest.clone(),
+            header: header.clone(),
+        });
     }
+    Ok(())
 }
 
 fn send_current_message(
@@ -341,7 +333,12 @@ fn send_current_message(
                 message: msg,
             });
         } else {
-            for peer in all_peers {
+            // Diffusion : uniquement aux pairs en ligne et joignables. On ignore
+            // les pairs hors-ligne restaurés depuis l'historique (adresse nulle).
+            for peer in all_peers
+                .iter()
+                .filter(|p| p.online && !p.addr.ip().is_unspecified())
+            {
                 let _ = app.send_tx.try_send(SendRequest {
                     to_addr: peer.addr,
                     message: msg.clone(),
@@ -351,39 +348,24 @@ fn send_current_message(
     }
 
     if has_attachments {
-        // Fichiers ≤ 1 Go → message média inline ; dossiers et fichiers
-        // > 1 Go → système de transfert avec demande d'acceptation.
-        let mut transfer_paths = Vec::new();
-        for path in app.pending_attachments.clone() {
-            let inline_eligible = path.is_file()
-                && std::fs::metadata(&path)
-                    .map(|m| m.len() <= INLINE_MEDIA_MAX_BYTES)
-                    .unwrap_or(false);
-            if inline_eligible {
-                send_media_message(app, &path, &my_name, &selected_peer_name, selected_addr, all_peers);
-            } else {
-                transfer_paths.push(path);
-            }
-        }
+        // Chemin unique pour tout fichier ou dossier : streaming par morceaux.
+        let targets: Vec<(String, std::net::SocketAddr)> = transfer_targets
+            .iter()
+            .map(|t| (t.username.clone(), t.addr))
+            .collect();
 
-        if !transfer_paths.is_empty() {
-            for target in &transfer_targets {
-                let _ = app.send_transfer_tx.try_send(TransferRequest {
-                    from: my_name.clone(),
-                    recipient: target.username.clone(),
-                    to_addr: target.addr,
-                    paths: transfer_paths.clone(),
-                });
-            }
-            if transfer_targets.is_empty() {
-                app.last_notification = Some(
-                    app.tr(
-                        "Aucun destinataire en ligne pour le transfert",
-                        "No online recipient available for transfer",
-                    )
-                    .to_string(),
-                );
-                app.notification_time = std::time::Instant::now();
+        if targets.is_empty() {
+            app.last_notification = Some(
+                app.tr(
+                    "Aucun destinataire en ligne pour l'envoi",
+                    "No online recipient available",
+                )
+                .to_string(),
+            );
+            app.notification_time = std::time::Instant::now();
+        } else {
+            for path in app.pending_attachments.clone() {
+                send_one_media(app, &path, &my_name, &selected_peer_name, &targets);
             }
         }
     }
