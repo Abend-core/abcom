@@ -9,7 +9,7 @@ Il donne une vue d'ensemble de l'état du développement en cours.
 
 | Feature | Branche | Description | Responsable | Statut |
 |---|---|---|---|---|
-| Gestion des médias | `feature/gestion-medias` | Fichiers ≤ 1 Go envoyés comme messages média (vignette image / carte fichier), visionneuse plein écran et téléchargement ; > 1 Go via le transfert | — | ✅ prête (PR vers dev) |
+| Gestion des médias | `feature/gestion-medias` | Chemin unique : fichiers et dossiers (zippés) envoyés comme messages média par **streaming par morceaux** (disque à disque, sans charger en RAM, quelle que soit la taille), avec barre de progression. ≤ 1 Go sans question ; > 1 Go avec bandeau d'acceptation puis même chemin. Vignette image / carte fichier, visionneuse plein écran, téléchargement. Remplace l'ancien système de transfert. | — | ✅ prête (PR vers dev) |
 
 ---
 
