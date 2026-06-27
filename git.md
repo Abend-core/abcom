@@ -98,44 +98,32 @@ test(app): étendre la couverture à 111 tests unitaires
 
 ## Workflow type
 
-```bash
-# 1. Toujours partir de dev à jour
-git checkout dev && git pull
+Le workflow est entièrement géré par l'agent IA. Le développeur n'a pas besoin d'aller sur GitHub.
 
-# 2. Créer la branche feature
-git checkout -b feature/ma-feature
-
-# 3. Pour chaque sous-tâche : créer une branche task
-git checkout -b task/ma-tache
-# ... travail, commits atomiques ...
-git checkout feature/ma-feature
-git merge task/ma-tache
-git branch -d task/ma-tache
-
-# 4. Mettre à jour AVANCEMENT.md sur dev avant de merger
-git checkout dev
-# éditer AVANCEMENT.md pour marquer la feature comme terminée
-git checkout feature/ma-feature
-
-# 5. PR feature → dev sur GitHub
-git push origin feature/ma-feature
-# Ouvrir la PR sur GitHub
-
-# 6. Après merge de la PR, nettoyer
-git branch -d feature/ma-feature
 ```
+1. Agent : git checkout dev && git pull
+2. Agent : git checkout -b feature/ma-feature
+3. Agent : travail, commits atomiques
+4. Agent : git push origin feature/ma-feature
+5. Agent : gh pr create ... (crée la PR via gh CLI)
+6. Agent : gh pr merge ... (merge la PR dans dev)
+7. Agent : met à jour AVANCEMENT.md sur dev
+```
+
+Le développeur donne les instructions, l'agent fait tout le reste.
 
 ---
 
 ## Règles pour les agents IA
 
-- Toujours partir de `dev`, jamais de `main` directement
+- Toujours partir de `dev` à jour, jamais de `main` directement
 - Créer une branche `feature/` ou `task/` selon la portée
 - Ne jamais push sur `main` ou `dev` directement
-- Vérifier `cargo check` avant tout commit
-- Ne jamais utiliser `--no-verify` ou `--force` sans accord explicite
+- Vérifier `cargo test` avant tout commit
+- Ne jamais utiliser `--no-verify` ou `--force` sans accord explicite de l'utilisateur
 - Pas de `Co-Authored-By` dans les messages de commit
-- Mettre à jour `AVANCEMENT.md` sur `dev` à chaque début et fin de feature
+- Mettre à jour `AVANCEMENT.md` sur `dev` après chaque merge de feature
+- Utiliser `gh pr create` puis `gh pr merge` — ne jamais demander à l'utilisateur d'aller sur GitHub
 
 ---
 
