@@ -80,12 +80,12 @@ impl AbcomApp {
             "Software distributed without warranty. See the AGPL v3 license for details.",
         );
         let klipy_role = self.tr(
-            "GIF animés, mèmes statiques et stickers dans le sélecteur de contenu. Accès via la variable d'environnement ABCOM_KLIPY_API_KEY (clé API à obtenir sur klipy.com → Partner Panel).",
-            "Animated GIFs, static memes, and stickers in the content picker. Access via the ABCOM_KLIPY_API_KEY environment variable (API key available at klipy.com → Partner Panel).",
+            "GIF animés, mèmes statiques et stickers dans le sélecteur de contenu.",
+            "Animated GIFs, static memes, and stickers in the content picker.",
         );
         let openmoji_role = self.tr(
-            "Jeu d'emojis PNG 72×72 utilisé dans le picker et l'affichage inline des messages.",
-            "PNG 72×72 emoji set used in the emoji picker and inline message rendering.",
+            "Jeu d'emojis utilisé dans le picker et l'affichage inline des messages.",
+            "Emoji set used in the emoji picker and inline message rendering.",
         );
         let inter_role = self.tr(
             "Police d'écriture en gras utilisée pour les noms d'auteur dans les messages.",
