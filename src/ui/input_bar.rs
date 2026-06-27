@@ -9,7 +9,7 @@ use crate::transfer::TransferRequest;
 
 use super::composer;
 use super::emoji_picker::emoji_shortcode_trigger;
-use super::AbcomApp;
+use super::{AbcomApp, Notification};
 
 const ACTION_BUTTON_SIZE: [f32; 2] = [34.0, 34.0];
 
@@ -255,13 +255,13 @@ fn send_current_message(
             });
         }
         if transfer_targets.is_empty() {
-            app.last_notification = Some(
+            app.last_notification = Some(Notification::System(
                 app.tr(
                     "Aucun destinataire en ligne pour le transfert",
                     "No online recipient available for transfer",
                 )
                 .to_string(),
-            );
+            ));
             app.notification_time = std::time::Instant::now();
         }
     }
@@ -422,13 +422,13 @@ impl AbcomApp {
                                     false,
                                 );
                                 if aa_btn.clicked() {
-                                    self.last_notification = Some(
+                                    self.last_notification = Some(Notification::System(
                                         self.tr(
                                             "Mise en forme bientôt disponible",
                                             "Formatting coming soon",
                                         )
                                         .to_string(),
-                                    );
+                                    ));
                                     self.notification_time = std::time::Instant::now();
                                 }
 
@@ -441,7 +441,8 @@ impl AbcomApp {
                                     false,
                                 );
                                 if image_btn.clicked() {
-                                    self.last_notification = Some(gif_soon_label.to_string());
+                                    self.last_notification =
+                                        Some(Notification::System(gif_soon_label.to_string()));
                                     self.notification_time = std::time::Instant::now();
                                 }
 

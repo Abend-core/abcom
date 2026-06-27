@@ -46,6 +46,18 @@ pub(crate) enum SettingsTab {
     License,
 }
 
+/// Contenu d'une notification toast.
+pub(crate) enum Notification {
+    /// Message reçu : auteur, canal optionnel ("Tous" si broadcast), contenu brut.
+    Message {
+        from: String,
+        channel: Option<String>,
+        content: String,
+    },
+    /// Notification système (transfert, erreur, info UI).
+    System(String),
+}
+
 /// Proposition de réception en attente d'une décision de l'utilisateur.
 pub(crate) struct PendingOffer {
     pub(crate) transfer_id: String,
@@ -77,7 +89,7 @@ pub(crate) struct AbcomApp {
     pub(crate) show_emoji_picker: bool,
     pub(crate) show_participants: bool,
     pub(crate) enable_sound_notifications: bool,
-    pub(crate) last_notification: Option<String>,
+    pub(crate) last_notification: Option<Notification>,
     pub(crate) notification_time: std::time::Instant,
     pub(crate) has_unread: bool,
     pub(crate) window_focused: bool,
@@ -304,7 +316,8 @@ impl eframe::App for AbcomApp {
                                 self.pending_attachments.push(p);
                             }
                         }
-                        self.last_notification = Some(files_added.to_string());
+                        self.last_notification =
+                            Some(Notification::System(files_added.to_string()));
                         self.notification_time = std::time::Instant::now();
                     }
                 }
@@ -314,7 +327,8 @@ impl eframe::App for AbcomApp {
                         if !self.pending_attachments.contains(&path) {
                             self.pending_attachments.push(path);
                         }
-                        self.last_notification = Some(folder_added.to_string());
+                        self.last_notification =
+                            Some(Notification::System(folder_added.to_string()));
                         self.notification_time = std::time::Instant::now();
                     }
                 }
@@ -344,7 +358,7 @@ impl eframe::App for AbcomApp {
                     }
                     Err(e) => {
                         eprintln!("[ui] Avatar non chargé : {}", e);
-                        self.last_notification = Some(error_msg.to_string());
+                        self.last_notification = Some(Notification::System(error_msg.to_string()));
                         self.notification_time = std::time::Instant::now();
                     }
                 }
