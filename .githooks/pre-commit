@@ -1,2 +1,3 @@
 #!/bin/sh
 cargo fmt --check || { printf '\n[hook] Formate d'\''abord avec : cargo fmt\n\n'; exit 1; }
+cargo clippy -- -D warnings 2>&1 | grep "^error" && { printf '\n[hook] Corrige les warnings clippy avant de commiter.\n\n'; exit 1; } || true
