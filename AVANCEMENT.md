@@ -9,7 +9,7 @@ Il donne une vue d'ensemble de l'état du développement en cours.
 
 | Feature | Branche | Description | Responsable | Statut |
 |---|---|---|---|---|
-| Gestion des médias | `feature/gestion-medias` | Chemin unique : fichiers et dossiers (zippés) envoyés comme messages média par **streaming par morceaux** (disque à disque, sans charger en RAM, quelle que soit la taille), avec barre de progression. ≤ 1 Go sans question ; > 1 Go avec bandeau d'acceptation puis même chemin. Vignette image / carte fichier, visionneuse plein écran, téléchargement. Remplace l'ancien système de transfert. | — | ✅ prête (PR vers dev) |
+| — | — | — | — | — |
 
 ---
 
@@ -17,6 +17,7 @@ Il donne une vue d'ensemble de l'état du développement en cours.
 
 | Feature | Branche | Description | Mergé le |
 |---|---|---|---|
+| Gestion des médias | `feature/gestion-medias` | Streaming par morceaux, vignette/visionneuse, acceptation > 1 Go, remplace l'ancien transfert | 2026-06-27 |
 | Correctif accusés de réception | `feature/fix-receipts` | NetworkPacket taggé + logique ✓/✓✓ gris/✓✓ bleu | 2026-06-23 |
 | Nettoyage racine du projet | `feature/root-cleanup` | Suppression .old.md, dist/, specification/, réorganisation | 2026-06-23 |
 | Règles Git & docs projet | `feature/project-docs` | git.md, CHANGELOG.md, AVANCEMENT.md | 2026-06-23 |
