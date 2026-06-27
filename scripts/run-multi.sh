@@ -19,15 +19,26 @@ BIN="$(pwd)/target/release/abcom"
 
 echo ""
 PIDS=()
-for i in $(seq 1 "$N"); do
-    name="${NAMES[$((i-1))]:-user$i}"
-    log="/tmp/abcom-${name}.log"
-    ABCOM_INSTANCE="$i" setsid "$BIN" "$name" </dev/null >"$log" 2>&1 &
-    PIDS+=("$!")
-    echo "Instance '$name' lancée  (PID ${PIDS[-1]}, log: $log)"
-    sleep 0.3
-done
 
-echo ""
-echo "$N fenêtre(s) détachée(s) du terminal — elles apparaissent dans la barre des tâches."
-echo "Pour tout arrêter : kill ${PIDS[*]}"
+if [[ "$(uname)" == "Darwin" ]]; then
+    for i in $(seq 1 "$N"); do
+        name="${NAMES[$((i-1))]:-user$i}"
+        osascript -e "tell application \"Terminal\" to do script \"ABCOM_INSTANCE=$i '$BIN' '$name'\"" > /dev/null
+        echo "Instance '$name' lancée dans un nouvel onglet Terminal"
+        sleep 0.3
+    done
+    echo ""
+    echo "$N fenêtre(s) Terminal ouvertes."
+else
+    for i in $(seq 1 "$N"); do
+        name="${NAMES[$((i-1))]:-user$i}"
+        log="/tmp/abcom-${name}.log"
+        ABCOM_INSTANCE="$i" setsid "$BIN" "$name" </dev/null >"$log" 2>&1 &
+        PIDS+=("$!")
+        echo "Instance '$name' lancée  (PID ${PIDS[-1]}, log: $log)"
+        sleep 0.3
+    done
+    echo ""
+    echo "$N fenêtre(s) détachée(s) du terminal — elles apparaissent dans la barre des tâches."
+    echo "Pour tout arrêter : kill ${PIDS[*]}"
+fi
