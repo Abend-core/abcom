@@ -6,7 +6,7 @@ use std::path::Path;
 
 use eframe::egui;
 
-use crate::message::{extension_lower, MediaAttachment, MediaKind, MediaProgress};
+use crate::message::{extension_lower, ChatMessage, MediaAttachment, MediaKind, MediaProgress};
 
 use super::chat_panel::format_bytes;
 use super::AbcomApp;
@@ -26,6 +26,24 @@ pub(crate) fn media_display_name(path: &Path) -> String {
             .and_then(|n| n.to_str())
             .unwrap_or("fichier")
             .to_string()
+    }
+}
+
+/// Message « fichier refusé » ajouté au fil, attribué à l'expéditeur du média
+/// (visible à l'identique chez l'émetteur et le destinataire).
+pub(crate) fn refused_media_message(
+    sender: &str,
+    filename: &str,
+    to_user: Option<String>,
+) -> ChatMessage {
+    let now = chrono::Local::now();
+    ChatMessage {
+        from: sender.to_string(),
+        content: format!("Fichier refusé : {filename}"),
+        timestamp: now.format("%H:%M").to_string(),
+        timestamp_epoch: Some(now.timestamp() as u64),
+        to_user,
+        media: None,
     }
 }
 
@@ -79,18 +97,29 @@ pub(crate) fn render_media_progress(
         .inner_margin(egui::Margin::symmetric(12, 10))
         .show(ui, |ui| {
             ui.set_width(width);
+            if progress.waiting {
+                // En attente de l'acceptation du destinataire (média > 1 Go).
+                ui.label(
+                    egui::RichText::new(format!(
+                        "⏳ En attente d'envoi : {}",
+                        elide(&media.filename, 32)
+                    ))
+                    .strong(),
+                );
+                ui.label(
+                    egui::RichText::new(format_bytes(progress.total))
+                        .small()
+                        .color(egui::Color32::from_gray(150)),
+                );
+                return;
+            }
             ui.label(egui::RichText::new(elide(&media.filename, 38)).strong());
             ui.add_space(6.0);
-            ui.add(
-                egui::ProgressBar::new(ratio)
-                    .desired_width(width)
-                    .corner_radius(4.0)
-                    .text(egui::RichText::new(format!("{percent} %")).small()),
-            );
+            ui.add(egui::ProgressBar::new(ratio).desired_width(width).corner_radius(4.0));
             ui.add_space(4.0);
             ui.label(
                 egui::RichText::new(format!(
-                    "{} / {}",
+                    "{percent} %  |  {} / {}",
                     format_bytes(progress.done),
                     format_bytes(progress.total)
                 ))
@@ -380,7 +409,36 @@ fn unique_destination(dir: &std::path::Path, filename: &str) -> std::path::PathB
 
 #[cfg(test)]
 mod tests {
-    use super::unique_destination;
+    use super::{media_display_name, media_id, refused_media_message, unique_destination};
+
+    #[test]
+    fn display_name_of_file_and_folder() {
+        let dir = std::env::temp_dir().join(format!("abcom_dn_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("rapport.pdf");
+        std::fs::write(&file, b"x").unwrap();
+        assert_eq!(media_display_name(&file), "rapport.pdf");
+        assert_eq!(media_display_name(&dir), format!("{}.zip", dir.file_name().unwrap().to_str().unwrap()));
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn media_id_sanitizes_and_keeps_extension() {
+        let id = media_id("mon dossier/é@.png");
+        assert!(id.contains('-'), "préfixe horodaté attendu");
+        assert!(id.ends_with(".png"), "extension conservée");
+        // Aucun caractère problématique de chemin n'est conservé.
+        assert!(!id.contains('/') && !id.contains(' ') && !id.contains('@'));
+    }
+
+    #[test]
+    fn refused_message_is_attributed_to_sender() {
+        let msg = refused_media_message("bob", "photo.zip", Some("ellis".to_string()));
+        assert_eq!(msg.from, "bob");
+        assert!(msg.content.contains("photo.zip"));
+        assert!(msg.media.is_none());
+        assert_eq!(msg.to_user.as_deref(), Some("ellis"));
+    }
 
     #[test]
     fn unique_destination_keeps_free_name() {

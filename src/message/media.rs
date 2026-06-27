@@ -81,6 +81,8 @@ pub struct MediaProgress {
     pub id: String,
     pub done: u64,
     pub total: u64,
+    /// En attente de l'acceptation du destinataire (émetteur, média > 1 Go).
+    pub waiting: bool,
     /// Transfert terminé avec succès.
     pub finished: bool,
     /// Transfert interrompu (erreur réseau ou refus côté distant).

@@ -214,17 +214,11 @@ impl AbcomApp {
                 AppEvent::MediaProgressed(progress) => {
                     let id = progress.id.clone();
                     if progress.failed {
+                        // Refus ou erreur : on retire la carte, le message et le
+                        // fichier (côté émetteur comme destinataire).
                         self.media_progress.remove(&id);
                         self.media_textures.remove(&id);
-                        // Réception interrompue : retirer le message et son fichier
-                        // partiel. (Côté émetteur, le message local est conservé.)
-                        let is_incoming = s.messages.iter().any(|m| {
-                            m.from != s.my_username
-                                && m.media.as_ref().is_some_and(|x| x.id == id)
-                        });
-                        if is_incoming {
-                            s.remove_media_message(&id);
-                        }
+                        s.remove_media_message(&id);
                         self.last_notification = Some(
                             self.tr("Transfert média interrompu", "Media transfer interrupted")
                                 .to_string(),
@@ -237,6 +231,18 @@ impl AbcomApp {
                     } else {
                         self.media_progress.insert(id, progress);
                     }
+                }
+                AppEvent::MediaDeclined(header) => {
+                    // Côté émetteur : on retire la carte « en attente » et on
+                    // annote le fil que le fichier a été refusé.
+                    self.media_progress.remove(&header.media.id);
+                    self.media_textures.remove(&header.media.id);
+                    s.remove_media_message(&header.media.id);
+                    s.add_message(super::media::refused_media_message(
+                        &header.from,
+                        &header.media.filename,
+                        header.to_user.clone(),
+                    ));
                 }
             }
         }
