@@ -17,11 +17,24 @@ pub struct GroupEvent {
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum GroupAction {
-    Create { group: Group },
-    AddMember { group_name: String, username: String },
-    RemoveMember { group_name: String, username: String },
-    Rename { group_name: String, new_name: String },
-    Delete { group_name: String },
+    Create {
+        group: Group,
+    },
+    AddMember {
+        group_name: String,
+        username: String,
+    },
+    RemoveMember {
+        group_name: String,
+        username: String,
+    },
+    Rename {
+        group_name: String,
+        new_name: String,
+    },
+    Delete {
+        group_name: String,
+    },
 }
 
 #[cfg(test)]
@@ -75,7 +88,10 @@ mod tests {
         let json = serde_json::to_string(&event).unwrap();
         let decoded: GroupEvent = serde_json::from_str(&json).unwrap();
         match decoded.action {
-            GroupAction::AddMember { group_name, username } => {
+            GroupAction::AddMember {
+                group_name,
+                username,
+            } => {
                 assert_eq!(group_name, "Team");
                 assert_eq!(username, "bob");
             }
@@ -94,7 +110,10 @@ mod tests {
         let json = serde_json::to_string(&event).unwrap();
         let decoded: GroupEvent = serde_json::from_str(&json).unwrap();
         match decoded.action {
-            GroupAction::RemoveMember { group_name, username } => {
+            GroupAction::RemoveMember {
+                group_name,
+                username,
+            } => {
                 assert_eq!(group_name, "Team");
                 assert_eq!(username, "charlie");
             }
@@ -113,7 +132,10 @@ mod tests {
         let json = serde_json::to_string(&event).unwrap();
         let decoded: GroupEvent = serde_json::from_str(&json).unwrap();
         match decoded.action {
-            GroupAction::Rename { group_name, new_name } => {
+            GroupAction::Rename {
+                group_name,
+                new_name,
+            } => {
                 assert_eq!(group_name, "OldName");
                 assert_eq!(new_name, "NewName");
             }
@@ -124,7 +146,9 @@ mod tests {
     #[test]
     fn action_delete_round_trip() {
         let event = GroupEvent {
-            action: GroupAction::Delete { group_name: "OldTeam".to_string() },
+            action: GroupAction::Delete {
+                group_name: "OldTeam".to_string(),
+            },
         };
         let json = serde_json::to_string(&event).unwrap();
         let decoded: GroupEvent = serde_json::from_str(&json).unwrap();

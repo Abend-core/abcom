@@ -45,12 +45,32 @@ fn peer_color(username: &str) -> egui::Color32 {
 }
 
 const MONTHS_FR: [&str; 12] = [
-    "janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août",
-    "septembre", "octobre", "novembre", "décembre",
+    "janvier",
+    "février",
+    "mars",
+    "avril",
+    "mai",
+    "juin",
+    "juillet",
+    "août",
+    "septembre",
+    "octobre",
+    "novembre",
+    "décembre",
 ];
 const MONTHS_EN: [&str; 12] = [
-    "January", "February", "March", "April", "May", "June", "July", "August",
-    "September", "October", "November", "December",
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
 ];
 
 /// Jour local d'un message à partir de son instant Unix (`None` si absent).
@@ -65,7 +85,10 @@ fn message_day(msg: &ChatMessage) -> Option<NaiveDate> {
 /// Heure d'en-tête au format 24 h, dérivée de l'instant Unix si présent,
 /// sinon repli sur la chaîne `timestamp` (anciens messages / pairs).
 fn header_time(msg: &ChatMessage) -> String {
-    match msg.timestamp_epoch.and_then(|e| Local.timestamp_opt(e as i64, 0).single()) {
+    match msg
+        .timestamp_epoch
+        .and_then(|e| Local.timestamp_opt(e as i64, 0).single())
+    {
         Some(dt) => dt.format("%H:%M").to_string(),
         None => msg.timestamp.clone(),
     }
@@ -136,11 +159,17 @@ fn render_day_divider(ui: &mut egui::Ui, label: &str) {
     let right_start = mid_x + text_w / 2.0 + gap;
     let stroke = egui::Stroke::new(1.0, line_color);
     painter.line_segment(
-        [egui::pos2(rect.left(), center_y), egui::pos2(left_end, center_y)],
+        [
+            egui::pos2(rect.left(), center_y),
+            egui::pos2(left_end, center_y),
+        ],
         stroke,
     );
     painter.line_segment(
-        [egui::pos2(right_start, center_y), egui::pos2(rect.right(), center_y)],
+        [
+            egui::pos2(right_start, center_y),
+            egui::pos2(rect.right(), center_y),
+        ],
         stroke,
     );
     painter.galley(
@@ -267,10 +296,10 @@ impl AbcomApp {
                             && ui
                                 .button(self.tr("🗑 Effacer l'historique", "🗑 Clear history"))
                                 .clicked()
-                            {
-                                self.state.lock().unwrap().clear_conversation_history();
-                                ui.close_menu();
-                            }
+                        {
+                            self.state.lock().unwrap().clear_conversation_history();
+                            ui.close_menu();
+                        }
                     });
                 });
             });
@@ -283,7 +312,7 @@ impl AbcomApp {
                     (
                         s.selected_conversation
                             .clone()
-                                .unwrap_or_else(|| self.tr("Tous", "All").to_string()),
+                            .unwrap_or_else(|| self.tr("Tous", "All").to_string()),
                         s.my_username.clone(),
                         s.selected_conversation.clone(),
                         s.peers.clone(),
@@ -310,17 +339,15 @@ impl AbcomApp {
                                 ui.label(&peer.username);
                             }
                             if peers.is_empty() {
-                                ui.label(self.tr(
-                                    "Aucun participant connecté",
-                                    "No connected participant",
-                                ));
+                                ui.label(
+                                    self.tr(
+                                        "Aucun participant connecté",
+                                        "No connected participant",
+                                    ),
+                                );
                             }
                         } else {
-                            ui.label(format!(
-                                "{} ({})",
-                                my_name2,
-                                self.tr("vous", "you")
-                            ));
+                            ui.label(format!("{} ({})", my_name2, self.tr("vous", "you")));
                             if let Some(peer) = sel_conv {
                                 ui.label(&peer);
                             }
@@ -419,9 +446,7 @@ impl AbcomApp {
                     let today = Local::now().date_naive();
                     // Vue multi-personnes (groupe `#…` ou « Tous ») : chaque pair
                     // reçoit une couleur distincte ; en 1-à-1 on garde le bleu.
-                    let multi_person = selected_conv
-                        .as_deref()
-                        .is_none_or(|c| c.starts_with('#'));
+                    let multi_person = selected_conv.as_deref().is_none_or(|c| c.starts_with('#'));
                     let mut last_from: Option<&str> = None;
                     let mut last_epoch: Option<u64> = None;
                     let mut last_day: Option<NaiveDate> = None;
@@ -478,7 +503,13 @@ impl AbcomApp {
                                 super::avatar::show_avatar(ui, avatar, display, AVATAR_SIZE);
                                 ui.add_space(AVATAR_GUTTER);
                                 ui.vertical(|ui| {
-                                    render_message_header(ui, display, &header_time(msg), name_color, receipt);
+                                    render_message_header(
+                                        ui,
+                                        display,
+                                        &header_time(msg),
+                                        name_color,
+                                        receipt,
+                                    );
                                     super::markdown::render_message_markdown(
                                         ui,
                                         &msg.content,
@@ -522,7 +553,9 @@ impl AbcomApp {
         let offers: Vec<(String, String, String, u64, usize)> = self
             .pending_offers
             .iter()
-            .filter(|o| selected_conv.is_none() || selected_conv.as_deref() == Some(o.from.as_str()))
+            .filter(|o| {
+                selected_conv.is_none() || selected_conv.as_deref() == Some(o.from.as_str())
+            })
             .map(|o| {
                 (
                     o.transfer_id.clone(),
@@ -580,7 +613,10 @@ impl AbcomApp {
         if let Some(id) = refuse_id {
             if let Some(pos) = self.pending_offers.iter().position(|o| o.transfer_id == id) {
                 let offer = self.pending_offers.remove(pos);
-                let _ = offer.decision_tx.send(TransferDecision { accept: false, dest_dir: None });
+                let _ = offer.decision_tx.send(TransferDecision {
+                    accept: false,
+                    dest_dir: None,
+                });
             }
         }
 
@@ -589,7 +625,9 @@ impl AbcomApp {
             .transfer_progress
             .values()
             .filter(|t| !self.dismissed_transfers.contains(&t.transfer_id))
-            .filter(|t| selected_conv.is_none() || selected_conv.as_deref() == Some(t.peer.as_str()))
+            .filter(|t| {
+                selected_conv.is_none() || selected_conv.as_deref() == Some(t.peer.as_str())
+            })
             .cloned()
             .collect();
         transfers.sort_by(|a, b| a.transfer_id.cmp(&b.transfer_id));
@@ -730,7 +768,7 @@ fn show_receipt(ui: &mut egui::Ui, delivered: bool, read: bool) {
     let color = if read {
         egui::Color32::from_rgb(80, 180, 255) // bleu = lu
     } else {
-        egui::Color32::from_gray(160)          // gris = envoyé ou livré
+        egui::Color32::from_gray(160) // gris = envoyé ou livré
     };
     let stroke = egui::Stroke::new(1.5, color);
     let p = ui.painter();
@@ -738,7 +776,10 @@ fn show_receipt(ui: &mut egui::Ui, delivered: bool, read: bool) {
     let draw_tick = |ox: f32| {
         let base = rect.left_top() + egui::vec2(ox, 4.0);
         p.line_segment([base, base + egui::vec2(2.5, 3.0)], stroke);
-        p.line_segment([base + egui::vec2(2.5, 3.0), base + egui::vec2(8.0, -1.5)], stroke);
+        p.line_segment(
+            [base + egui::vec2(2.5, 3.0), base + egui::vec2(8.0, -1.5)],
+            stroke,
+        );
     };
 
     draw_tick(0.0);
@@ -755,12 +796,24 @@ mod tests {
 
     #[test]
     fn group_breaks_on_author_change() {
-        assert!(starts_new_group(Some("alice"), Some(100), "bob", Some(110), false));
+        assert!(starts_new_group(
+            Some("alice"),
+            Some(100),
+            "bob",
+            Some(110),
+            false
+        ));
     }
 
     #[test]
     fn group_breaks_on_day_change() {
-        assert!(starts_new_group(Some("alice"), Some(100), "alice", Some(110), true));
+        assert!(starts_new_group(
+            Some("alice"),
+            Some(100),
+            "alice",
+            Some(110),
+            true
+        ));
     }
 
     #[test]
@@ -795,17 +848,35 @@ mod tests {
     fn divider_labels_today_and_yesterday() {
         let today = NaiveDate::from_ymd_opt(2026, 5, 20).unwrap();
         let yesterday = NaiveDate::from_ymd_opt(2026, 5, 19).unwrap();
-        assert_eq!(day_divider_label(today, today, UiLanguage::French), "Aujourd'hui");
-        assert_eq!(day_divider_label(today, today, UiLanguage::English), "Today");
-        assert_eq!(day_divider_label(yesterday, today, UiLanguage::French), "Hier");
-        assert_eq!(day_divider_label(yesterday, today, UiLanguage::English), "Yesterday");
+        assert_eq!(
+            day_divider_label(today, today, UiLanguage::French),
+            "Aujourd'hui"
+        );
+        assert_eq!(
+            day_divider_label(today, today, UiLanguage::English),
+            "Today"
+        );
+        assert_eq!(
+            day_divider_label(yesterday, today, UiLanguage::French),
+            "Hier"
+        );
+        assert_eq!(
+            day_divider_label(yesterday, today, UiLanguage::English),
+            "Yesterday"
+        );
     }
 
     #[test]
     fn divider_labels_full_date_localized() {
         let today = NaiveDate::from_ymd_opt(2026, 6, 23).unwrap();
         let date = NaiveDate::from_ymd_opt(2026, 5, 18).unwrap();
-        assert_eq!(day_divider_label(date, today, UiLanguage::French), "18 mai 2026");
-        assert_eq!(day_divider_label(date, today, UiLanguage::English), "May 18, 2026");
+        assert_eq!(
+            day_divider_label(date, today, UiLanguage::French),
+            "18 mai 2026"
+        );
+        assert_eq!(
+            day_divider_label(date, today, UiLanguage::English),
+            "May 18, 2026"
+        );
     }
 }

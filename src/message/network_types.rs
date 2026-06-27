@@ -23,7 +23,7 @@ fn default_chat_port() -> u16 {
 
 #[cfg(test)]
 mod tests {
-    use super::{PeerRecord, DiscoveryPacket};
+    use super::{DiscoveryPacket, PeerRecord};
 
     #[test]
     fn peer_record_round_trip_with_alias() {
@@ -39,7 +39,10 @@ mod tests {
 
     #[test]
     fn peer_record_round_trip_no_alias() {
-        let r = PeerRecord { username: "charlie".to_string(), alias: None };
+        let r = PeerRecord {
+            username: "charlie".to_string(),
+            alias: None,
+        };
         let json = serde_json::to_string(&r).unwrap();
         let decoded: PeerRecord = serde_json::from_str(&json).unwrap();
         assert!(decoded.alias.is_none());
@@ -47,7 +50,10 @@ mod tests {
 
     #[test]
     fn discovery_packet_round_trip() {
-        let p = DiscoveryPacket { username: "alice".to_string(), port: 9010 };
+        let p = DiscoveryPacket {
+            username: "alice".to_string(),
+            port: 9010,
+        };
         let json = serde_json::to_string(&p).unwrap();
         let decoded: DiscoveryPacket = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.username, "alice");

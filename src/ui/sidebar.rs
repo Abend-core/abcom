@@ -260,15 +260,12 @@ impl AbcomApp {
                         ui.label(
                             egui::RichText::new(format!("{}: {}", you_label, my_name)).small(),
                         );
-                        ui.with_layout(
-                            egui::Layout::right_to_left(egui::Align::Center),
-                            |ui| {
-                                if gear_button(ui).on_hover_text(settings_tip).clicked() {
-                                    self.settings_tab = super::SettingsTab::General;
-                                    self.show_settings = true;
-                                }
-                            },
-                        );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if gear_button(ui).on_hover_text(settings_tip).clicked() {
+                                self.settings_tab = super::SettingsTab::General;
+                                self.show_settings = true;
+                            }
+                        });
                     });
                 });
             });
