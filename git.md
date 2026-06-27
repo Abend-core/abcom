@@ -114,6 +114,16 @@ Le développeur donne les instructions, l'agent fait tout le reste.
 
 ---
 
+## Setup (une fois après le clone)
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Active le hook pre-commit partagé (`.githooks/pre-commit`) qui bloque tout commit si `cargo fmt` détecte un problème de formatage.
+
+---
+
 ## Règles pour les agents IA
 
 - Toujours partir de `dev` à jour, jamais de `main` directement
