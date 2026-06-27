@@ -47,6 +47,15 @@ pub(crate) enum SettingsTab {
     License,
 }
 
+/// Onglet actif du sélecteur de contenu Klipy (GIF / Mèmes / Stickers).
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum GifPickerTab {
+    #[default]
+    Gif,
+    Meme,
+    Sticker,
+}
+
 /// État de l'application UI
 pub(crate) struct AbcomApp {
     pub(crate) state: Arc<Mutex<AppState>>,
@@ -65,13 +74,19 @@ pub(crate) struct AbcomApp {
     pub(crate) input_scroll_lines: f32,
     pub(crate) show_attachment_menu: bool,
     pub(crate) show_emoji_picker: bool,
-    /// Sélecteur de GIF ouvert (style Discord).
+    /// Sélecteur de contenu Klipy ouvert (GIF, Mèmes, Stickers).
     pub(crate) show_gif_picker: bool,
-    /// Texte courant de la barre de recherche du sélecteur de GIF.
+    /// Onglet actif du sélecteur Klipy.
+    pub(crate) gif_picker_tab: GifPickerTab,
+    /// Texte courant de la barre de recherche du sélecteur.
     pub(crate) gif_query: String,
-    /// Flux de GIF (tendances/recherche) partagé avec les callbacks Klipy.
+    /// Feed GIF — tendances et recherche Klipy /gifs/*.
     pub(crate) gif_feed: crate::klipy::GifFeed,
-    /// Dernière frappe dans la recherche GIF (anti-rebond avant requête).
+    /// Feed Mèmes — tendances et recherche Klipy /static-memes/*.
+    pub(crate) meme_feed: crate::klipy::GifFeed,
+    /// Feed Stickers — tendances et recherche Klipy /stickers/*.
+    pub(crate) sticker_feed: crate::klipy::GifFeed,
+    /// Dernière frappe dans la recherche (anti-rebond avant requête).
     pub(crate) gif_last_input: std::time::Instant,
     pub(crate) show_participants: bool,
     pub(crate) enable_sound_notifications: bool,
@@ -159,8 +174,11 @@ impl AbcomApp {
             show_attachment_menu: false,
             show_emoji_picker: false,
             show_gif_picker: false,
+            gif_picker_tab: GifPickerTab::Gif,
             gif_query: String::new(),
-            gif_feed: crate::klipy::GifFeed::new(),
+            gif_feed: crate::klipy::GifFeed::new(crate::klipy::ContentKind::Gif),
+            meme_feed: crate::klipy::GifFeed::new(crate::klipy::ContentKind::Meme),
+            sticker_feed: crate::klipy::GifFeed::new(crate::klipy::ContentKind::Sticker),
             gif_last_input: std::time::Instant::now(),
             show_participants: false,
             enable_sound_notifications: true,
