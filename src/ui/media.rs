@@ -2,9 +2,11 @@
 //! téléchargeable, visionneuse plein écran et téléchargement vers le dossier
 //! Téléchargements du système.
 
+use std::path::Path;
+
 use eframe::egui;
 
-use crate::message::{MediaAttachment, MediaKind};
+use crate::message::{extension_lower, MediaAttachment, MediaKind, MediaProgress};
 
 use super::chat_panel::format_bytes;
 use super::AbcomApp;
@@ -13,6 +15,30 @@ use super::AbcomApp;
 const THUMB_MAX_WIDTH: f32 = 320.0;
 /// Hauteur maximale d'une vignette d'image dans le fil.
 const THUMB_MAX_HEIGHT: f32 = 260.0;
+
+/// Nom affiché/transmis pour un média : nom du fichier, ou `dossier.zip`.
+pub(crate) fn media_display_name(path: &Path) -> String {
+    if path.is_dir() {
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("dossier");
+        format!("{name}.zip")
+    } else {
+        path.file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("fichier")
+            .to_string()
+    }
+}
+
+/// Identifiant unique de média (sert de nom de fichier en cache, extension
+/// conservée). Préfixé par un horodatage µs pour garantir l'unicité.
+pub(crate) fn media_id(filename: &str) -> String {
+    let micros = chrono::Utc::now().timestamp_micros();
+    let safe: String = filename
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
+        .collect();
+    format!("{micros}-{safe}")
+}
 
 /// Action déclenchée par l'utilisateur sur un média du fil.
 pub(crate) enum MediaAction {
@@ -31,6 +57,47 @@ fn fitted_width(texture: &egui::TextureHandle, max_w: f32, max_h: f32) -> f32 {
     }
     let aspect = size.x / size.y;
     max_w.min(max_h * aspect).min(size.x)
+}
+
+/// Carte de transfert média en cours : nom, taille et barre de progression.
+pub(crate) fn render_media_progress(
+    ui: &mut egui::Ui,
+    media: &MediaAttachment,
+    progress: &MediaProgress,
+) {
+    let width = FILE_CARD_WIDTH.min(ui.available_width());
+    let ratio = if progress.total > 0 {
+        (progress.done as f32 / progress.total as f32).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let percent = (ratio * 100.0).round() as u32;
+    egui::Frame::default()
+        .fill(egui::Color32::from_rgb(43, 45, 49))
+        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 63, 68)))
+        .corner_radius(egui::CornerRadius::same(10))
+        .inner_margin(egui::Margin::symmetric(12, 10))
+        .show(ui, |ui| {
+            ui.set_width(width);
+            ui.label(egui::RichText::new(elide(&media.filename, 38)).strong());
+            ui.add_space(6.0);
+            ui.add(
+                egui::ProgressBar::new(ratio)
+                    .desired_width(width)
+                    .corner_radius(4.0)
+                    .text(egui::RichText::new(format!("{percent} %")).small()),
+            );
+            ui.add_space(4.0);
+            ui.label(
+                egui::RichText::new(format!(
+                    "{} / {}",
+                    format_bytes(progress.done),
+                    format_bytes(progress.total)
+                ))
+                .small()
+                .color(egui::Color32::from_gray(150)),
+            );
+        });
 }
 
 /// Rend un média dans le fil et renvoie l'action utilisateur éventuelle.
@@ -60,29 +127,109 @@ pub(crate) fn render_media_block(
     }
 }
 
-/// Carte d'un fichier non-image (ou image indisponible) : nom, taille, bouton.
+/// Largeur de la carte fichier dans le fil (façon Discord).
+const FILE_CARD_WIDTH: f32 = 380.0;
+
+/// Carte d'un fichier non-image (ou image indisponible), façon Discord : badge
+/// d'extension coloré, nom mis en valeur, taille, et bouton de téléchargement.
 fn file_card(ui: &mut egui::Ui, media: &MediaAttachment) -> Option<MediaAction> {
     let mut action = None;
-    egui::Frame::group(ui.style())
-        .fill(egui::Color32::from_rgb(48, 52, 60))
-        .corner_radius(egui::CornerRadius::same(8))
+    let width = FILE_CARD_WIDTH.min(ui.available_width());
+    egui::Frame::default()
+        .fill(egui::Color32::from_rgb(43, 45, 49))
+        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 63, 68)))
+        .corner_radius(egui::CornerRadius::same(10))
+        .inner_margin(egui::Margin::symmetric(12, 10))
         .show(ui, |ui| {
+            ui.set_width(width);
             ui.horizontal(|ui| {
-                ui.label(egui::RichText::new("📄").size(22.0));
+                ui.spacing_mut().item_spacing.x = 10.0;
+                let extension = extension_lower(&media.filename).unwrap_or_default();
+                file_badge(ui, &extension);
                 ui.vertical(|ui| {
-                    ui.label(egui::RichText::new(&media.filename).strong());
+                    ui.add_space(2.0);
+                    ui.label(
+                        egui::RichText::new(elide(&media.filename, 38))
+                            .color(egui::Color32::from_rgb(120, 170, 255))
+                            .strong(),
+                    );
                     ui.label(
                         egui::RichText::new(format_bytes(media.size_bytes))
                             .small()
-                            .weak(),
+                            .color(egui::Color32::from_gray(150)),
                     );
                 });
-                if ui.button("⬇").on_hover_text("Télécharger").clicked() {
-                    action = Some(MediaAction::Download);
-                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if download_button(ui) {
+                        action = Some(MediaAction::Download);
+                    }
+                });
             });
         });
     action
+}
+
+/// Badge carré coloré portant l'extension du fichier (ou une icône générique).
+fn file_badge(ui: &mut egui::Ui, extension: &str) {
+    let size = 40.0;
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let painter = ui.painter();
+    painter.rect_filled(
+        rect,
+        egui::CornerRadius::same(8),
+        egui::Color32::from_rgb(88, 101, 242),
+    );
+    let label: String = extension.chars().take(4).collect::<String>().to_uppercase();
+    let text = if label.is_empty() { "FILE".to_string() } else { label };
+    painter.text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        text,
+        egui::FontId::proportional(11.0),
+        egui::Color32::WHITE,
+    );
+}
+
+/// Bouton de téléchargement peint (flèche vers un bac). Renvoie `true` au clic.
+fn download_button(ui: &mut egui::Ui) -> bool {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(30.0, 30.0), egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let hovered = response.hovered();
+        let painter = ui.painter();
+        if hovered {
+            painter.rect_filled(
+                rect,
+                egui::CornerRadius::same(6),
+                egui::Color32::from_rgb(60, 63, 68),
+            );
+        }
+        let color = if hovered {
+            egui::Color32::WHITE
+        } else {
+            egui::Color32::from_gray(190)
+        };
+        let stroke = egui::Stroke::new(1.7, color);
+        let c = rect.center();
+        // Flèche : tige verticale + pointe.
+        painter.line_segment([c + egui::vec2(0.0, -6.0), c + egui::vec2(0.0, 3.0)], stroke);
+        painter.line_segment([c + egui::vec2(-4.0, -1.0), c + egui::vec2(0.0, 3.0)], stroke);
+        painter.line_segment([c + egui::vec2(4.0, -1.0), c + egui::vec2(0.0, 3.0)], stroke);
+        // Bac de réception.
+        painter.line_segment([c + egui::vec2(-6.0, 7.0), c + egui::vec2(6.0, 7.0)], stroke);
+    }
+    response.on_hover_text("Télécharger").clicked()
+}
+
+/// Raccourcit un texte trop long avec une ellipse finale.
+fn elide(text: &str, max_chars: usize) -> String {
+    if text.chars().count() <= max_chars {
+        return text.to_string();
+    }
+    let kept: String = text.chars().take(max_chars.saturating_sub(1)).collect();
+    format!("{kept}…")
 }
 
 impl AbcomApp {

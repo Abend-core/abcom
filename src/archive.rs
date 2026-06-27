@@ -4,38 +4,27 @@
 //! proprement par le destinataire), ce qui permet de le traiter exactement
 //! comme un fichier dans le chemin média.
 
-use std::io::{Cursor, Read, Write};
+use std::io::{Read, Write};
 use std::path::Path;
 
 use walkdir::WalkDir;
 
-/// Taille d'un chemin : longueur du fichier, ou somme récursive pour un dossier.
-pub fn payload_size(path: &Path) -> u64 {
-    if path.is_dir() {
-        dir_size(path)
-    } else {
-        std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+/// Compresse un dossier en archive ZIP directement dans un fichier (streamé,
+/// sans charger l'archive en mémoire — adapté aux gros dossiers).
+pub fn zip_dir_to_path(root: &Path, dest: &Path) -> std::io::Result<()> {
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
     }
+    let mut file = std::fs::File::create(dest)?;
+    zip_dir_into(root, &mut file)
 }
 
-/// Somme récursive de la taille des fichiers d'un dossier.
-pub fn dir_size(root: &Path) -> u64 {
-    WalkDir::new(root)
-        .into_iter()
-        .filter_map(Result::ok)
-        .filter(|e| e.file_type().is_file())
-        .filter_map(|e| e.metadata().ok())
-        .map(|m| m.len())
-        .sum()
-}
-
-/// Compresse un dossier en archive ZIP en mémoire. Les chemins internes sont
-/// relatifs au dossier parent, de sorte que l'archive contienne le dossier
+/// Écrit l'archive ZIP d'un dossier dans un flux quelconque. Les chemins internes
+/// sont relatifs au dossier parent, de sorte que l'archive contienne le dossier
 /// lui-même (`mon_dossier/...`).
-pub fn zip_dir(root: &Path) -> std::io::Result<Vec<u8>> {
+fn zip_dir_into<W: Write + std::io::Seek>(root: &Path, writer: W) -> std::io::Result<()> {
     let base = root.parent().unwrap_or(root);
-    let mut buffer = Cursor::new(Vec::new());
-    let mut writer = zip::ZipWriter::new(&mut buffer);
+    let mut writer = zip::ZipWriter::new(writer);
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
 
@@ -68,7 +57,7 @@ pub fn zip_dir(root: &Path) -> std::io::Result<Vec<u8>> {
     }
 
     writer.finish().map_err(zip_to_io)?;
-    Ok(buffer.into_inner())
+    Ok(())
 }
 
 fn zip_to_io(err: zip::result::ZipError) -> std::io::Error {
@@ -77,7 +66,7 @@ fn zip_to_io(err: zip::result::ZipError) -> std::io::Error {
 
 #[cfg(test)]
 mod tests {
-    use super::{dir_size, payload_size, zip_dir};
+    use super::zip_dir_to_path;
 
     fn temp_dir(label: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("abcom_arch_{}_{}", label, std::process::id()));
@@ -86,37 +75,18 @@ mod tests {
     }
 
     #[test]
-    fn dir_size_sums_files() {
-        let dir = temp_dir("size");
-        std::fs::write(dir.join("a.txt"), b"hello").unwrap();
-        std::fs::create_dir_all(dir.join("sub")).unwrap();
-        std::fs::write(dir.join("sub/b.txt"), b"world!").unwrap();
-        assert_eq!(dir_size(&dir), 11);
-        assert_eq!(payload_size(&dir), 11);
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn payload_size_of_file() {
-        let dir = temp_dir("fsize");
-        let file = dir.join("f.bin");
-        std::fs::write(&file, vec![0u8; 42]).unwrap();
-        assert_eq!(payload_size(&file), 42);
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn zip_dir_contains_entries() {
+    fn zip_dir_to_path_contains_entries() {
         let dir = temp_dir("zip");
         let folder = dir.join("projet");
         std::fs::create_dir_all(folder.join("src")).unwrap();
         std::fs::write(folder.join("README.md"), b"# titre").unwrap();
         std::fs::write(folder.join("src/main.rs"), b"fn main() {}").unwrap();
 
-        let bytes = zip_dir(&folder).unwrap();
-        let reader = std::io::Cursor::new(bytes);
-        let mut archive = zip::ZipArchive::new(reader).unwrap();
+        let archive_path = dir.join("projet.zip");
+        zip_dir_to_path(&folder, &archive_path).unwrap();
 
+        let file = std::fs::File::open(&archive_path).unwrap();
+        let mut archive = zip::ZipArchive::new(file).unwrap();
         let names: Vec<String> = (0..archive.len())
             .map(|i| archive.by_index(i).unwrap().name().to_string())
             .collect();

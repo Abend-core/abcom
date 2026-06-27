@@ -7,10 +7,9 @@ use tokio::sync::mpsc;
 
 use crate::app::AppState;
 use crate::message::{
-    AppEvent, AvatarRequest, MessageAckRequest, ReadReceipt, ReadReceiptRequest, SendGroupRequest,
-    SendRequest, TypingRequest,
+    AppEvent, AvatarRequest, MediaProgress, MediaSendJob, MediaStreamOffer, MessageAckRequest,
+    ReadReceipt, ReadReceiptRequest, SendGroupRequest, SendRequest, TypingRequest,
 };
-use crate::transfer::{TransferDecision, TransferOffer, TransferProgress, TransferRequest};
 
 mod avatar;
 mod chat_panel;
@@ -47,17 +46,6 @@ pub(crate) enum SettingsTab {
     License,
 }
 
-/// Proposition de réception en attente d'une décision de l'utilisateur.
-pub(crate) struct PendingOffer {
-    pub(crate) transfer_id: String,
-    pub(crate) from: String,
-    pub(crate) label: String,
-    pub(crate) total_bytes: u64,
-    pub(crate) item_count: usize,
-    pub(crate) decision_tx: tokio::sync::oneshot::Sender<TransferDecision>,
-    pub(crate) received_at: std::time::Instant,
-}
-
 /// État de l'application UI
 pub(crate) struct AbcomApp {
     pub(crate) state: Arc<Mutex<AppState>>,
@@ -68,7 +56,7 @@ pub(crate) struct AbcomApp {
     pub(crate) send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
     pub(crate) send_ack_tx: mpsc::Sender<MessageAckRequest>,
     pub(crate) send_avatar_tx: mpsc::Sender<AvatarRequest>,
-    pub(crate) send_transfer_tx: mpsc::Sender<TransferRequest>,
+    pub(crate) send_media_tx: mpsc::Sender<MediaSendJob>,
     pub(crate) input: String,
     pub(crate) input_cursor_char: usize,
     pub(crate) input_selection_anchor: Option<usize>,
@@ -103,14 +91,6 @@ pub(crate) struct AbcomApp {
     pub(crate) pending_attachments: Vec<PathBuf>,
     /// 0 = none, 1 = pick files, 2 = pick folder (deferred to next frame to avoid AppKit conflict)
     pub(crate) pending_picker: u8,
-    pub(crate) transfer_progress: std::collections::HashMap<String, TransferProgress>,
-    /// Transferts entrants en attente d'acceptation/refus.
-    pub(crate) offer_rx: mpsc::Receiver<TransferOffer>,
-    pub(crate) pending_offers: Vec<PendingOffer>,
-    /// Transferts masqués par l'utilisateur (croix de fermeture).
-    pub(crate) dismissed_transfers: std::collections::HashSet<String>,
-    /// transfer_id d'une offre acceptée en attente de choix du dossier (différé).
-    pub(crate) pending_accept: Option<String>,
     pub(crate) ui_language: UiLanguage,
     pub(crate) theme_preference: ThemePreference,
     pub(crate) system_dark_mode: Option<bool>,
@@ -126,6 +106,12 @@ pub(crate) struct AbcomApp {
     pub(crate) media_textures: std::collections::HashMap<String, Option<egui::TextureHandle>>,
     /// Identifiant du média affiché en grand dans la visionneuse (None = fermée).
     pub(crate) media_viewer: Option<String>,
+    /// Réception des offres de médias volumineux (> 1 Go) à accepter/refuser.
+    pub(crate) media_offer_rx: mpsc::Receiver<MediaStreamOffer>,
+    /// Offres de médias volumineux en attente de décision (bandeau).
+    pub(crate) pending_media_offers: Vec<MediaStreamOffer>,
+    /// Progression des transferts média en cours, par identifiant.
+    pub(crate) media_progress: std::collections::HashMap<String, MediaProgress>,
 }
 
 impl AbcomApp {
@@ -140,8 +126,8 @@ impl AbcomApp {
         send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
         send_ack_tx: mpsc::Sender<MessageAckRequest>,
         send_avatar_tx: mpsc::Sender<AvatarRequest>,
-        send_transfer_tx: mpsc::Sender<TransferRequest>,
-        offer_rx: mpsc::Receiver<TransferOffer>,
+        send_media_tx: mpsc::Sender<MediaSendJob>,
+        media_offer_rx: mpsc::Receiver<MediaStreamOffer>,
     ) -> Self {
         Self {
             state,
@@ -152,11 +138,10 @@ impl AbcomApp {
             send_read_receipt_tx,
             send_ack_tx,
             send_avatar_tx,
-            send_transfer_tx,
-            offer_rx,
-            pending_offers: Vec::new(),
-            dismissed_transfers: std::collections::HashSet::new(),
-            pending_accept: None,
+            send_media_tx,
+            media_offer_rx,
+            pending_media_offers: Vec::new(),
+            media_progress: std::collections::HashMap::new(),
             input: String::new(),
             input_cursor_char: 0,
             input_selection_anchor: None,
@@ -189,7 +174,6 @@ impl AbcomApp {
             drafts: std::collections::HashMap::new(),
             pending_attachments: Vec::new(),
             pending_picker: 0,
-            transfer_progress: std::collections::HashMap::new(),
             ui_language: UiLanguage::French,
             theme_preference: ThemePreference::System,
             system_dark_mode: None,
@@ -273,7 +257,7 @@ impl eframe::App for AbcomApp {
 
         self.lazy_load_emoji(ctx);
         self.process_events();
-        self.process_transfer_offers();
+        self.process_media_offers();
         self.periodic_tasks();
 
         // Flash barre des tâches si message non lu — réinitialisé une seule fois
@@ -353,26 +337,6 @@ impl eframe::App for AbcomApp {
             }
         }
 
-        // Choix du dossier de réception après acceptation d'un fichier (différé
-        // pour ne pas entrer en conflit avec la run-loop AppKit sur macOS).
-        if let Some(transfer_id) = self.pending_accept.take() {
-            let title = self.tr("Choisir le dossier de réception", "Choose destination folder");
-            if let Some(dir) = rfd::FileDialog::new().set_title(title).pick_folder() {
-                if let Some(pos) = self
-                    .pending_offers
-                    .iter()
-                    .position(|o| o.transfer_id == transfer_id)
-                {
-                    let offer = self.pending_offers.remove(pos);
-                    let _ = offer.decision_tx.send(TransferDecision {
-                        accept: true,
-                        dest_dir: Some(dir),
-                    });
-                }
-            }
-            // Si l'utilisateur annule le sélecteur, l'offre reste affichée.
-        }
-
         self.show_sidebar_panel(ctx);
         let emoji_btn_clicked = self.show_input_bar(ctx);
         self.show_notification(ctx);
@@ -450,8 +414,8 @@ pub fn run(
     send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
     send_ack_tx: mpsc::Sender<MessageAckRequest>,
     send_avatar_tx: mpsc::Sender<AvatarRequest>,
-    send_transfer_tx: mpsc::Sender<TransferRequest>,
-    offer_rx: mpsc::Receiver<TransferOffer>,
+    send_media_tx: mpsc::Sender<MediaSendJob>,
+    media_offer_rx: mpsc::Receiver<MediaStreamOffer>,
 ) -> anyhow::Result<()> {
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Abcom")
@@ -481,8 +445,8 @@ pub fn run(
                 send_read_receipt_tx,
                 send_ack_tx,
                 send_avatar_tx,
-                send_transfer_tx,
-                offer_rx,
+                send_media_tx,
+                media_offer_rx,
             )))
         }),
     )

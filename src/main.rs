@@ -8,7 +8,6 @@ mod discovery;
 mod emoji_registry;
 mod message;
 mod network;
-mod transfer;
 mod ui;
 
 fn main() -> anyhow::Result<()> {
@@ -29,13 +28,10 @@ fn main() -> anyhow::Result<()> {
     let (send_read_receipt_tx, send_read_receipt_rx) = mpsc::channel::<message::ReadReceiptRequest>(256);
     let (send_ack_tx, send_ack_rx) = mpsc::channel::<message::MessageAckRequest>(256);
     let (send_avatar_tx, send_avatar_rx) = mpsc::channel::<message::AvatarRequest>(64);
-    let (send_packet_tx, send_packet_rx) =
-        mpsc::channel::<(std::net::SocketAddr, message::NetworkPacket)>(64);
-    // Le système de transfert reste à l'écoute des pairs hérités ; l'envoi passe
-    // désormais entièrement par les messages média (le tx est donc conservé en
-    // vie pour alimenter le service, mais n'est plus utilisé côté UI).
-    let (_send_transfer_tx, send_transfer_rx) = mpsc::channel::<transfer::TransferRequest>(64);
-    let (transfer_offer_tx, transfer_offer_rx) = mpsc::channel::<transfer::TransferOffer>(16);
+    let (send_media_tx, send_media_rx) = mpsc::channel::<message::MediaSendJob>(64);
+    let (media_offer_tx, media_offer_rx) = mpsc::channel::<message::MediaStreamOffer>(16);
+
+    let media_dir = config::data_dir().join("media");
 
     // Runtime tokio multi-thread — tourne en arrière-plan pendant qu'egui
     // occupe le thread principal.
@@ -51,8 +47,8 @@ fn main() -> anyhow::Result<()> {
     rt.spawn(network::run_sender_read_receipts(send_read_receipt_rx));
     rt.spawn(network::run_sender_ack(send_ack_rx));
     rt.spawn(network::run_sender_avatar(send_avatar_rx));
-    rt.spawn(network::run_sender_packet(send_packet_rx));
-    rt.spawn(transfer::run_service(event_tx.clone(), transfer_offer_tx, send_transfer_rx));
+    rt.spawn(network::run_media_sender(send_media_rx, event_tx.clone()));
+    rt.spawn(network::run_media_server(event_tx.clone(), media_offer_tx, media_dir));
 
     ui::run(
         state,
@@ -63,8 +59,8 @@ fn main() -> anyhow::Result<()> {
         send_read_receipt_tx,
         send_ack_tx,
         send_avatar_tx,
-        send_packet_tx,
-        transfer_offer_rx,
+        send_media_tx,
+        media_offer_rx,
     )?;
 
     Ok(())

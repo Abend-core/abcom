@@ -3,7 +3,6 @@ use eframe::egui;
 
 use crate::app::AppState;
 use crate::message::ChatMessage;
-use crate::transfer::{TransferDecision, TransferDirection, TransferStatus};
 
 use super::{AbcomApp, UiLanguage};
 
@@ -180,17 +179,24 @@ fn render_message_header(
 
 /// Rend le corps d'un message (texte Markdown puis média éventuel) et renvoie
 /// l'action déclenchée sur le média, le cas échéant.
+#[allow(clippy::too_many_arguments)]
 fn render_message_body(
     ui: &mut egui::Ui,
     msg: &ChatMessage,
     emoji_map: &std::collections::HashMap<String, usize>,
     emoji_textures: &[(String, egui::TextureHandle)],
     media_textures: &std::collections::HashMap<String, Option<egui::TextureHandle>>,
+    media_progress: &std::collections::HashMap<String, crate::message::MediaProgress>,
 ) -> Option<super::media::MediaAction> {
     if !msg.content.is_empty() {
         super::markdown::render_message_markdown(ui, &msg.content, emoji_map, emoji_textures);
     }
     if let Some(media) = &msg.media {
+        // Pendant le transfert : barre de progression au lieu de la carte.
+        if let Some(progress) = media_progress.get(&media.id) {
+            super::media::render_media_progress(ui, media, progress);
+            return None;
+        }
         let texture = media_textures.get(&media.id).and_then(|t| t.as_ref());
         return super::media::render_media_block(ui, media, texture);
     }
@@ -539,6 +545,7 @@ impl AbcomApp {
                                         &self.emoji_map,
                                         &self.emoji_textures,
                                         &media_textures,
+                                    &self.media_progress,
                                     ) {
                                         apply_media_action(
                                             action,
@@ -560,6 +567,7 @@ impl AbcomApp {
                                         &self.emoji_map,
                                         &self.emoji_textures,
                                         &media_textures,
+                                    &self.media_progress,
                                     ) {
                                         apply_media_action(
                                             action,
@@ -578,8 +586,8 @@ impl AbcomApp {
                         }
                     }
 
-                    // Transferts et propositions de fichiers, intégrés au fil
-                    self.render_transfer_cards(ui, &selected_conv);
+                    // Offres de médias volumineux (> 1 Go) à accepter/refuser.
+                    self.render_media_offers(ui);
                 });
 
             // Application des actions médias collectées pendant le rendu.
@@ -592,29 +600,15 @@ impl AbcomApp {
         });
     }
 
-    /// Rend, dans le fil de la conversation, les propositions de réception en
-    /// attente puis la progression des transferts liés à cette conversation.
-    /// Affichées en vue globale (« Tous ») ou dans la conversation du pair.
-    fn render_transfer_cards(&mut self, ui: &mut egui::Ui, selected_conv: &Option<String>) {
-        // ── Propositions de réception (Accepter / Refuser) ──────────────────
-        let offers: Vec<(String, String, String, u64, usize)> = self
-            .pending_offers
-            .iter()
-            .filter(|o| selected_conv.is_none() || selected_conv.as_deref() == Some(o.from.as_str()))
-            .map(|o| {
-                (
-                    o.transfer_id.clone(),
-                    o.from.clone(),
-                    o.label.clone(),
-                    o.total_bytes,
-                    o.item_count,
-                )
-            })
-            .collect();
+    /// Bandeaux d'acceptation des médias volumineux (> 1 Go) reçus. Accepter →
+    /// le pair streame alors le média ; Refuser → l'envoi est abandonné.
+    fn render_media_offers(&mut self, ui: &mut egui::Ui) {
+        if self.pending_media_offers.is_empty() {
+            return;
+        }
+        let mut decided: Option<(usize, bool)> = None;
 
-        let mut accept_id: Option<String> = None;
-        let mut refuse_id: Option<String> = None;
-        for (transfer_id, from, label, total, count) in &offers {
+        for (index, offer) in self.pending_media_offers.iter().enumerate() {
             ui.add_space(6.0);
             egui::Frame::group(ui.style())
                 .fill(egui::Color32::from_rgb(48, 52, 60))
@@ -623,116 +617,37 @@ impl AbcomApp {
                     ui.label(
                         egui::RichText::new(format!(
                             "{} {}",
-                            from,
-                            self.tr("vous envoie un fichier", "is sending you a file")
+                            offer.from,
+                            self.tr("souhaite vous envoyer un fichier", "wants to send you a file")
                         ))
                         .strong(),
                     );
-                    let detail = if *count > 1 {
-                        format!(
-                            "{} ({}, {} {})",
-                            label,
-                            format_bytes(*total),
-                            count,
-                            self.tr("éléments", "items")
-                        )
-                    } else {
-                        format!("{} ({})", label, format_bytes(*total))
-                    };
-                    ui.label(egui::RichText::new(detail).small());
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{} ({})",
+                            offer.filename,
+                            format_bytes(offer.size_bytes)
+                        ))
+                        .small(),
+                    );
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
                         if ui.button(self.tr("Refuser", "Decline")).clicked() {
-                            refuse_id = Some(transfer_id.clone());
+                            decided = Some((index, false));
                         }
                         if ui.button(self.tr("Accepter", "Accept")).clicked() {
-                            accept_id = Some(transfer_id.clone());
+                            decided = Some((index, true));
                         }
                     });
                 });
         }
-        if let Some(id) = accept_id {
-            // Le choix du dossier est différé d'une frame (conflit AppKit macOS).
-            self.pending_accept = Some(id);
-        }
-        if let Some(id) = refuse_id {
-            if let Some(pos) = self.pending_offers.iter().position(|o| o.transfer_id == id) {
-                let offer = self.pending_offers.remove(pos);
-                let _ = offer.decision_tx.send(TransferDecision { accept: false, dest_dir: None });
-            }
-        }
 
-        // ── Progression des transferts ──────────────────────────────────────
-        let mut transfers: Vec<_> = self
-            .transfer_progress
-            .values()
-            .filter(|t| !self.dismissed_transfers.contains(&t.transfer_id))
-            .filter(|t| selected_conv.is_none() || selected_conv.as_deref() == Some(t.peer.as_str()))
-            .cloned()
-            .collect();
-        transfers.sort_by(|a, b| a.transfer_id.cmp(&b.transfer_id));
-
-        let mut dismiss_id: Option<String> = None;
-        for t in &transfers {
-            ui.add_space(6.0);
-            egui::Frame::group(ui.style()).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    let dir = match t.direction {
-                        TransferDirection::Upload => self.tr("Envoi", "Sent"),
-                        TransferDirection::Download => self.tr("Réception", "Received"),
-                    };
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "{} · {} ({})",
-                            dir,
-                            t.label,
-                            format_bytes(t.total_bytes)
-                        ))
-                        .strong(),
-                    );
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if close_button(ui) {
-                            dismiss_id = Some(t.transfer_id.clone());
-                        }
-                        let status = match t.status {
-                            TransferStatus::Queued => self.tr("En attente", "Queued"),
-                            TransferStatus::Running => self.tr("En cours", "Running"),
-                            TransferStatus::Completed => self.tr("Terminé", "Done"),
-                            TransferStatus::Failed => self.tr("Échec", "Failed"),
-                            TransferStatus::Rejected => self.tr("Refusé", "Declined"),
-                        };
-                        ui.label(egui::RichText::new(status).small());
-                    });
-                });
-                if t.status == TransferStatus::Running && t.total_bytes > 0 {
-                    let ratio = (t.bytes_done as f32 / t.total_bytes as f32).clamp(0.0, 1.0);
-                    ui.add(
-                        egui::ProgressBar::new(ratio)
-                            .show_percentage()
-                            .desired_width(ui.available_width()),
-                    );
-                    if let Some(path) = &t.current_path {
-                        ui.label(
-                            egui::RichText::new(path)
-                                .small()
-                                .color(egui::Color32::from_gray(150)),
-                        );
-                    }
-                }
-                if !t.detail.is_empty() {
-                    ui.label(
-                        egui::RichText::new(&t.detail)
-                            .small()
-                            .color(egui::Color32::from_gray(160)),
-                    );
-                }
-            });
-        }
-        if let Some(id) = dismiss_id {
-            self.dismissed_transfers.insert(id);
+        if let Some((index, accept)) = decided {
+            let offer = self.pending_media_offers.remove(index);
+            let _ = offer.decision_tx.send(accept);
         }
     }
+
 
     /// Popup de notification en haut à droite
     pub(crate) fn show_notification(&mut self, ctx: &egui::Context) {
@@ -771,25 +686,6 @@ pub(crate) fn format_bytes(bytes: u64) -> String {
     } else {
         format!("{} o", bytes)
     }
-}
-
-/// Petite croix de fermeture peinte (pas de glyphe, rendu fiable). Renvoie `true` au clic.
-fn close_button(ui: &mut egui::Ui) -> bool {
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(14.0, 14.0), egui::Sense::click());
-    if ui.is_rect_visible(rect) {
-        let color = if resp.hovered() {
-            egui::Color32::from_rgb(230, 120, 120)
-        } else {
-            egui::Color32::from_gray(150)
-        };
-        let stroke = egui::Stroke::new(1.5, color);
-        let p = ui.painter();
-        let c = rect.center();
-        let d = 3.5;
-        p.line_segment([c + egui::vec2(-d, -d), c + egui::vec2(d, d)], stroke);
-        p.line_segment([c + egui::vec2(d, -d), c + egui::vec2(-d, d)], stroke);
-    }
-    resp.clicked()
 }
 
 /// Dessine une ou deux coches selon le statut de lecture du message.
