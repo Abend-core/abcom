@@ -12,9 +12,14 @@ const BROADCAST_INTERVAL: u64 = 3; // Envoyer un broadcast chaque 3 secondes
 const DISCOVERY_TIMEOUT: u64 = 6; // Un peer est inactif après 6 secondes d'inactivité (détection rapide changement réseau)
 const CLEANUP_INTERVAL: u64 = 2; // Vérifier les timeouts chaque 2 secondes
 
-/// Crée le socket UDP de découverte avec SO_REUSEADDR/REUSEPORT, ce qui permet
-/// à plusieurs instances locales de partager le même port de broadcast et donc
-/// de se découvrir entre elles sur une seule machine.
+/// Groupe multicast de découverte (adresse administrativement scoupée).
+const MULTICAST_GROUP: std::net::Ipv4Addr = std::net::Ipv4Addr::new(239, 255, 42, 98);
+
+/// Crée le socket UDP de découverte. On combine SO_REUSEADDR/REUSEPORT et un
+/// groupe multicast avec loopback activé : ainsi plusieurs instances sur une
+/// même machine se découvrent (le broadcast `255.255.255.255` n'est pas rebouclé
+/// localement sur macOS), tout en restant visibles sur le LAN. Le broadcast est
+/// conservé en complément pour la compatibilité.
 fn bind_discovery_socket() -> std::io::Result<UdpSocket> {
     use socket2::{Domain, Protocol, Socket, Type};
 
@@ -29,6 +34,15 @@ fn bind_discovery_socket() -> std::io::Result<UdpSocket> {
         .parse()
         .expect("adresse de découverte valide");
     socket.bind(&addr.into())?;
+
+    // Découverte locale fiable via l'interface loopback (toujours routable, même
+    // hors-ligne) : on rejoint le groupe multicast sur loopback, on y route le
+    // trafic multicast sortant et on active le rebouclage local. La découverte
+    // LAN, elle, reste assurée par le broadcast quand une route existe.
+    let loopback = std::net::Ipv4Addr::LOCALHOST;
+    socket.join_multicast_v4(&MULTICAST_GROUP, &loopback)?;
+    let _ = socket.set_multicast_if_v4(&loopback);
+    socket.set_multicast_loop_v4(true)?;
 
     UdpSocket::from_std(socket.into())
 }
@@ -50,6 +64,9 @@ pub async fn run(username: String, tx: Sender<AppEvent>) {
         port: config::chat_port(),
     };
     let data = serde_json::to_vec(&packet).unwrap_or_default();
+    // On annonce à la fois en multicast (local + LAN, rebouclé) et en broadcast
+    // (compatibilité avec d'anciens pairs).
+    let multicast_addr = format!("{}:{}", MULTICAST_GROUP, config::DISCOVERY_PORT);
     let broadcast_addr = format!("255.255.255.255:{}", config::DISCOVERY_PORT);
 
     let mut tick_broadcast = interval(Duration::from_secs(BROADCAST_INTERVAL));
@@ -62,6 +79,8 @@ pub async fn run(username: String, tx: Sender<AppEvent>) {
     loop {
         tokio::select! {
             _ = tick_broadcast.tick() => {
+                // Multicast (local fiable) + broadcast (LAN, best-effort).
+                let _ = socket.send_to(&data, &multicast_addr).await;
                 let _ = socket.send_to(&data, &broadcast_addr).await;
             }
             _ = tick_cleanup.tick() => {
