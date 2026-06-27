@@ -1,10 +1,12 @@
-//! Client de l'API Klipy (GIF) — recherche, tendances et pagination.
+//! Client de l'API Klipy (GIF + Mèmes) — recherche, tendances et pagination.
 //!
 //! Le transport choisi est « URL uniquement » : on ne télécharge jamais les
-//! octets du GIF. Le sélecteur affiche la variante **WebP xs** (vignette) et le
+//! octets. Le sélecteur affiche les variantes **WebP sm/xs** (vignettes) et le
 //! message transporte l'URL de la variante **WebP hd** (affichage dans le fil).
 //! Les requêtes JSON partent via [`ehttp::fetch`] (non bloquant, callback sur un
 //! thread dédié) ; le rendu animé est assuré par les loaders `egui_extras`.
+//!
+//! GIF et Mèmes sont chargés en parallèle et **entrelacés** dans l'affichage.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -12,18 +14,18 @@ use std::sync::{Arc, Mutex};
 use serde::Deserialize;
 
 const BASE: &str = "https://api.klipy.com/api/v1";
-/// Nombre de GIF demandés par page (min 8, max 50 côté Klipy).
-const PER_PAGE: u32 = 24;
+/// Nombre d'items demandés par page et par type (min 8, max 50 côté Klipy).
+const PER_PAGE: u32 = 16;
 /// Filtre de contenu par défaut (g / pg / pg-13 / r).
 const RATING: &str = "pg-13";
 
-/// Un GIF prêt à afficher : vignette (xs webp) et version pleine (hd webp).
+/// Un GIF ou mème prêt à afficher : vignette (sm/xs webp) et version pleine (hd webp).
 #[derive(Clone, Debug)]
 pub struct GifItem {
     pub id: String,
-    /// URL de la vignette animée (WebP xs) affichée dans le sélecteur.
+    /// URL de la vignette animée affichée dans le sélecteur.
     pub preview_url: String,
-    /// URL de la version pleine (WebP hd) envoyée dans le message.
+    /// URL de la version pleine envoyée dans le message.
     pub full_url: String,
     pub width: Option<u32>,
     pub height: Option<u32>,
@@ -49,8 +51,6 @@ struct KlipyData {
 struct KlipyGif {
     #[serde(default)]
     id: serde_json::Value,
-    /// Objet indexé par taille (`xs`/`sm`/`md`/`hd`). La clé est `file` mais on
-    /// accepte aussi `files` par tolérance.
     #[serde(default, alias = "files")]
     file: HashMap<String, SizeVariant>,
 }
@@ -74,9 +74,7 @@ struct FileMeta {
 
 impl KlipyGif {
     fn to_item(&self) -> Option<GifItem> {
-        // Vignette : on privilégie `md` (net même en grille), repli vers le bas.
         let preview = variant(&self.file, &["sm", "xs", "md", "hd"])?;
-        // Affichage dans le fil : qualité maximale (hd).
         let full = variant(&self.file, &["hd", "md", "sm", "xs"])?;
         let id = value_to_string(&self.id).unwrap_or_else(|| full.url.clone());
         Some(GifItem {
@@ -141,6 +139,17 @@ fn search_url(key: &str, locale: &str, query: &str, page: u32) -> String {
     )
 }
 
+fn meme_trending_url(key: &str, locale: &str, page: u32) -> String {
+    format!("{BASE}/{key}/memes/trending?page={page}&per_page={PER_PAGE}&rating={RATING}&locale={locale}")
+}
+
+fn meme_search_url(key: &str, locale: &str, query: &str, page: u32) -> String {
+    format!(
+        "{BASE}/{key}/memes/search?q={}&page={page}&per_page={PER_PAGE}&rating={RATING}&locale={locale}",
+        percent_encode(query)
+    )
+}
+
 /// Encodage minimal pour le paramètre `q` (espaces et caractères non sûrs).
 fn percent_encode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
@@ -155,7 +164,43 @@ fn percent_encode(s: &str) -> String {
     out
 }
 
-// ─── État partagé du flux de GIF ────────────────────────────────────────────
+/// Entrelace deux slices en alternance (a[0], b[0], a[1], b[1], …),
+/// puis ajoute le reste de la plus longue.
+fn interleave(a: &[GifItem], b: &[GifItem]) -> Vec<GifItem> {
+    let mut out = Vec::with_capacity(a.len() + b.len());
+    let mut ai = a.iter();
+    let mut bi = b.iter();
+    loop {
+        match (ai.next(), bi.next()) {
+            (Some(x), Some(y)) => {
+                out.push(x.clone());
+                out.push(y.clone());
+            }
+            (Some(x), None) => {
+                out.push(x.clone());
+                out.extend(ai.cloned());
+                break;
+            }
+            (None, Some(y)) => {
+                out.push(y.clone());
+                out.extend(bi.cloned());
+                break;
+            }
+            (None, None) => break,
+        }
+    }
+    out
+}
+
+// ─── Discriminant interne GIF vs Mème ───────────────────────────────────────
+
+#[derive(Clone, Copy)]
+enum Kind {
+    Gif,
+    Meme,
+}
+
+// ─── État partagé du flux de GIF + Mèmes ────────────────────────────────────
 
 #[derive(Clone, PartialEq, Default)]
 pub enum GifStatus {
@@ -168,17 +213,37 @@ pub enum GifStatus {
 
 #[derive(Default)]
 pub struct GifFeedState {
-    pub items: Vec<GifItem>,
+    /// Items bruts du endpoint GIF.
+    pub gif_raw: Vec<GifItem>,
+    /// Items bruts du endpoint Mème.
+    pub meme_raw: Vec<GifItem>,
     pub status: GifStatus,
     /// Requête courante ; vide = tendances.
     pub query: String,
-    pub page: u32,
-    pub has_next: bool,
-    /// Compteur de génération : ignore les réponses d'une requête périmée.
+    pub gif_page: u32,
+    pub meme_page: u32,
+    pub gif_has_next: bool,
+    pub meme_has_next: bool,
+    /// Session courante : incrémentée à chaque nouvelle recherche/tendance.
+    /// Les callbacks d'une session précédente sont ignorés.
     generation: u64,
+    /// Nombre de requêtes encore en vol pour la session courante.
+    pending: u8,
 }
 
-/// Flux de GIF partagé entre l'UI et les callbacks réseau (`ehttp`).
+impl GifFeedState {
+    /// Liste entrelacée GIF + Mèmes, prête pour l'affichage.
+    pub fn items(&self) -> Vec<GifItem> {
+        interleave(&self.gif_raw, &self.meme_raw)
+    }
+
+    /// Vrai si au moins un des deux feeds a une page suivante.
+    pub fn has_next(&self) -> bool {
+        self.gif_has_next || self.meme_has_next
+    }
+}
+
+/// Flux de GIF+Mèmes partagé entre l'UI et les callbacks réseau (`ehttp`).
 #[derive(Clone, Default)]
 pub struct GifFeed {
     inner: Arc<Mutex<GifFeedState>>,
@@ -193,89 +258,141 @@ impl GifFeed {
         self.inner.lock().unwrap()
     }
 
-    /// Charge la première page des tendances (remplace les résultats courants).
+    /// Charge la première page des tendances GIF + Mèmes en parallèle.
     pub fn load_trending(&self, ctx: &egui::Context, key: &str, locale: &str) {
-        {
+        let gen = {
             let mut s = self.inner.lock().unwrap();
             s.query.clear();
-            s.page = 1;
-        }
-        let url = trending_url(key, locale, 1);
-        self.fire(ctx, url, true);
+            s.gif_page = 1;
+            s.meme_page = 1;
+            s.generation += 1;
+            s.gif_raw.clear();
+            s.meme_raw.clear();
+            s.gif_has_next = false;
+            s.meme_has_next = false;
+            s.pending = 2;
+            s.status = GifStatus::Loading;
+            s.generation
+        };
+        self.fire_one(ctx, trending_url(key, locale, 1), gen, Kind::Gif);
+        self.fire_one(ctx, meme_trending_url(key, locale, 1), gen, Kind::Meme);
     }
 
-    /// Lance une recherche (remplace les résultats). Query vide → tendances.
+    /// Lance une recherche GIF + Mèmes. Query vide → tendances.
     pub fn search(&self, ctx: &egui::Context, key: &str, locale: &str, query: &str) {
         if query.trim().is_empty() {
             self.load_trending(ctx, key, locale);
             return;
         }
-        {
+        let gen = {
             let mut s = self.inner.lock().unwrap();
             s.query = query.to_string();
-            s.page = 1;
-        }
-        let url = search_url(key, locale, query, 1);
-        self.fire(ctx, url, true);
-    }
-
-    /// Charge la page suivante et l'ajoute aux résultats (pagination infinie).
-    pub fn load_more(&self, ctx: &egui::Context, key: &str, locale: &str) {
-        let (query, next_page) = {
-            let mut s = self.inner.lock().unwrap();
-            if s.status == GifStatus::Loading || !s.has_next {
-                return;
-            }
-            s.page += 1;
-            (s.query.clone(), s.page)
-        };
-        let url = if query.is_empty() {
-            trending_url(key, locale, next_page)
-        } else {
-            search_url(key, locale, &query, next_page)
-        };
-        self.fire(ctx, url, false);
-    }
-
-    /// Émet la requête HTTP et applique le résultat à l'état partagé.
-    /// `replace` : vrai pour repartir de zéro, faux pour ajouter (pagination).
-    fn fire(&self, ctx: &egui::Context, url: String, replace: bool) {
-        let generation = {
-            let mut s = self.inner.lock().unwrap();
+            s.gif_page = 1;
+            s.meme_page = 1;
             s.generation += 1;
+            s.gif_raw.clear();
+            s.meme_raw.clear();
+            s.gif_has_next = false;
+            s.meme_has_next = false;
+            s.pending = 2;
             s.status = GifStatus::Loading;
-            if replace {
-                s.items.clear();
-            }
             s.generation
         };
+        self.fire_one(ctx, search_url(key, locale, query, 1), gen, Kind::Gif);
+        self.fire_one(ctx, meme_search_url(key, locale, query, 1), gen, Kind::Meme);
+    }
+
+    /// Charge la page suivante pour chaque feed qui a encore des résultats.
+    pub fn load_more(&self, ctx: &egui::Context, key: &str, locale: &str) {
+        let (gen, gif_url, meme_url) = {
+            let mut s = self.inner.lock().unwrap();
+            if s.status == GifStatus::Loading {
+                return;
+            }
+            let need_gif = s.gif_has_next;
+            let need_meme = s.meme_has_next;
+            if !need_gif && !need_meme {
+                return;
+            }
+            if need_gif {
+                s.gif_page += 1;
+            }
+            if need_meme {
+                s.meme_page += 1;
+            }
+            s.pending = (need_gif as u8) + (need_meme as u8);
+            s.status = GifStatus::Loading;
+            let gen = s.generation;
+            let gif_url = need_gif.then(|| {
+                if s.query.is_empty() {
+                    trending_url(key, locale, s.gif_page)
+                } else {
+                    search_url(key, locale, &s.query, s.gif_page)
+                }
+            });
+            let meme_url = need_meme.then(|| {
+                if s.query.is_empty() {
+                    meme_trending_url(key, locale, s.meme_page)
+                } else {
+                    meme_search_url(key, locale, &s.query, s.meme_page)
+                }
+            });
+            (gen, gif_url, meme_url)
+        };
+        if let Some(url) = gif_url {
+            self.fire_one(ctx, url, gen, Kind::Gif);
+        }
+        if let Some(url) = meme_url {
+            self.fire_one(ctx, url, gen, Kind::Meme);
+        }
+    }
+
+    /// Émet une requête HTTP et applique le résultat au sous-feed correspondant.
+    /// `expected_gen` : si la session a changé entre temps, la réponse est ignorée.
+    fn fire_one(&self, ctx: &egui::Context, url: String, expected_gen: u64, kind: Kind) {
         let inner = self.inner.clone();
         let ctx = ctx.clone();
         ehttp::fetch(ehttp::Request::get(url), move |result| {
             let mut s = inner.lock().unwrap();
-            // Réponse périmée (une requête plus récente l'a remplacée).
-            if generation != s.generation {
+            if s.generation != expected_gen {
                 return;
             }
+            s.pending = s.pending.saturating_sub(1);
             match result {
                 Ok(resp) if resp.ok => match parse(&resp.bytes) {
                     Ok((items, has_next)) => {
-                        s.items.extend(items);
-                        s.has_next = has_next;
-                        s.status = GifStatus::Loaded;
+                        match kind {
+                            Kind::Gif => {
+                                s.gif_raw.extend(items);
+                                s.gif_has_next = has_next;
+                            }
+                            Kind::Meme => {
+                                s.meme_raw.extend(items);
+                                s.meme_has_next = has_next;
+                            }
+                        }
+                        if s.pending == 0 {
+                            s.status = GifStatus::Loaded;
+                        }
                     }
                     Err(e) => {
                         eprintln!("[klipy] parsing réponse échoué : {e}");
-                        s.status = GifStatus::Error(e);
+                        if s.pending == 0 {
+                            s.status = GifStatus::Error(e);
+                        }
                     }
                 },
                 Ok(resp) => {
                     eprintln!("[klipy] HTTP {} : {}", resp.status, resp.status_text);
-                    s.status = GifStatus::Error(format!("HTTP {}", resp.status));
+                    if s.pending == 0 {
+                        s.status = GifStatus::Error(format!("HTTP {}", resp.status));
+                    }
                 }
                 Err(e) => {
                     eprintln!("[klipy] requête échouée : {e}");
-                    s.status = GifStatus::Error(e);
+                    if s.pending == 0 {
+                        s.status = GifStatus::Error(e);
+                    }
                 }
             }
             ctx.request_repaint();
@@ -297,11 +414,43 @@ mod tests {
     }
 
     #[test]
+    fn meme_trending_url_uses_memes_endpoint() {
+        let url = meme_trending_url("MYKEY", "fr", 1);
+        assert!(url.contains("/MYKEY/memes/trending"));
+        assert!(url.contains("page=1"));
+    }
+
+    #[test]
     fn search_url_encodes_query() {
         let url = search_url("K", "en", "happy cat", 1);
         assert!(url.contains("/K/gifs/search"));
         assert!(url.contains("q=happy%20cat"));
         assert!(url.contains("page=1"));
+    }
+
+    #[test]
+    fn meme_search_url_encodes_query() {
+        let url = meme_search_url("K", "en", "funny dog", 1);
+        assert!(url.contains("/K/memes/search"));
+        assert!(url.contains("q=funny%20dog"));
+    }
+
+    #[test]
+    fn interleave_alternates_items() {
+        let mk = |id: &str| GifItem {
+            id: id.to_string(),
+            preview_url: String::new(),
+            full_url: String::new(),
+            width: None,
+            height: None,
+        };
+        let gifs = vec![mk("g1"), mk("g2"), mk("g3")];
+        let memes = vec![mk("m1"), mk("m2")];
+        let merged = interleave(&gifs, &memes);
+        assert_eq!(
+            merged.iter().map(|i| i.id.as_str()).collect::<Vec<_>>(),
+            vec!["g1", "m1", "g2", "m2", "g3"]
+        );
     }
 
     #[test]
