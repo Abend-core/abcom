@@ -567,8 +567,7 @@ mod tests {
 
         // send_transfer fait to_addr.port() + 1 pour joindre le service de transfert.
         // Le listener est sur recv_port → on passe recv_port - 1 comme port de chat.
-        let to_addr: std::net::SocketAddr =
-            format!("127.0.0.1:{}", recv_port - 1).parse().unwrap();
+        let to_addr: std::net::SocketAddr = format!("127.0.0.1:{}", recv_port - 1).parse().unwrap();
         let request = TransferRequest {
             from: "alice".to_string(),
             recipient: "bob".to_string(),
@@ -577,7 +576,11 @@ mod tests {
         };
 
         let result = super::send_transfer(request, send_event_tx).await;
-        assert!(result.is_ok(), "send_transfer a échoué : {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "send_transfer a échoué : {:?}",
+            result.err()
+        );
 
         // Attendre que receive_transfer ait fini d'écrire sur disque
         tokio::time::timeout(Duration::from_secs(5), recv_task)
