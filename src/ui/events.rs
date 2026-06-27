@@ -71,7 +71,10 @@ impl AbcomApp {
                                 message_hash: msg_hash,
                                 timestamp: chrono::Local::now().format("%H:%M").to_string(),
                             };
-                            let ack_req = MessageAckRequest { to_addr: peer.addr, ack };
+                            let ack_req = MessageAckRequest {
+                                to_addr: peer.addr,
+                                ack,
+                            };
 
                             // ReadReceipt uniquement si la conv est déjà ouverte + fenêtre focalisée
                             let already_reading = self.window_focused
@@ -118,7 +121,10 @@ impl AbcomApp {
                     // notre avatar pour qu'il s'affiche chez ce pair.
                     if !self.avatar_sent_to.contains(&username) {
                         if let Some(announce) = s.avatar_announce() {
-                            let request = AvatarRequest { to_addr: addr, announce };
+                            let request = AvatarRequest {
+                                to_addr: addr,
+                                announce,
+                            };
                             if self.send_avatar_tx.try_send(request).is_ok() {
                                 self.avatar_sent_to.insert(username);
                             }
@@ -199,10 +205,8 @@ impl AbcomApp {
 
                     match status {
                         TransferStatus::Completed => {
-                            self.last_notification = Some(format!(
-                                "Transfer complete: {} ({})",
-                                label, peer
-                            ));
+                            self.last_notification =
+                                Some(format!("Transfer complete: {} ({})", label, peer));
                             if !detail.is_empty() {
                                 self.last_notification = Some(format!(
                                     "Transfer complete: {} ({}) -> {}",
@@ -212,10 +216,8 @@ impl AbcomApp {
                             self.notification_time = std::time::Instant::now();
                         }
                         TransferStatus::Failed => {
-                            self.last_notification = Some(format!(
-                                "Transfer failed: {} ({})",
-                                label, peer
-                            ));
+                            self.last_notification =
+                                Some(format!("Transfer failed: {} ({})", label, peer));
                             self.notification_time = std::time::Instant::now();
                         }
                         TransferStatus::Rejected => {

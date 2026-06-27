@@ -156,12 +156,17 @@ fn blockquote_text(line: &str) -> Option<&str> {
 }
 
 fn is_thematic_break(line: &str) -> bool {
-    let compact = line.chars().filter(|character| !character.is_whitespace()).collect::<String>();
+    let compact = line
+        .chars()
+        .filter(|character| !character.is_whitespace())
+        .collect::<String>();
     compact.len() >= 3
         && compact
             .chars()
             .all(|character| matches!(character, '-' | '*' | '_'))
-        && compact.chars().all(|character| character == compact.chars().next().unwrap())
+        && compact
+            .chars()
+            .all(|character| character == compact.chars().next().unwrap())
 }
 
 fn starts_special_block(line: &str) -> bool {
@@ -287,7 +292,10 @@ fn parse_inline(input: &str) -> Vec<MarkdownSpan> {
 }
 
 fn parse_code_span(input: &str) -> Option<(&str, usize)> {
-    let delimiter_len = input.chars().take_while(|&character| character == '`').count();
+    let delimiter_len = input
+        .chars()
+        .take_while(|&character| character == '`')
+        .count();
     if delimiter_len == 0 {
         return None;
     }
@@ -356,7 +364,14 @@ pub(crate) fn render_message_markdown(
             }
             MarkdownBlock::Paragraph(spans) => {
                 ui.horizontal_wrapped(|ui| {
-                    render_spans_with_emoji_size(ui, &spans, emoji_map, emoji_textures, None, emoji_size)
+                    render_spans_with_emoji_size(
+                        ui,
+                        &spans,
+                        emoji_map,
+                        emoji_textures,
+                        None,
+                        emoji_size,
+                    )
                 });
             }
             MarkdownBlock::Heading { level, spans } => {
@@ -379,17 +394,37 @@ pub(crate) fn render_message_markdown(
             MarkdownBlock::Bullet(spans) => {
                 ui.horizontal_wrapped(|ui| {
                     ui.label("• ");
-                    render_spans_with_emoji_size(ui, &spans, emoji_map, emoji_textures, None, emoji_size);
+                    render_spans_with_emoji_size(
+                        ui,
+                        &spans,
+                        emoji_map,
+                        emoji_textures,
+                        None,
+                        emoji_size,
+                    );
                 });
             }
             MarkdownBlock::OrderedBullet { number, spans } => {
                 ui.horizontal_wrapped(|ui| {
                     ui.label(format!("{}. ", number));
-                    render_spans_with_emoji_size(ui, &spans, emoji_map, emoji_textures, None, emoji_size);
+                    render_spans_with_emoji_size(
+                        ui,
+                        &spans,
+                        emoji_map,
+                        emoji_textures,
+                        None,
+                        emoji_size,
+                    );
                 });
             }
             MarkdownBlock::Blockquote(spans) => {
-                render_blockquote_with_emoji_size(ui, &spans, emoji_map, emoji_textures, emoji_size);
+                render_blockquote_with_emoji_size(
+                    ui,
+                    &spans,
+                    emoji_map,
+                    emoji_textures,
+                    emoji_size,
+                );
             }
             MarkdownBlock::CodeBlock { language, code } => {
                 render_code_block(ui, language.as_deref(), &code);
@@ -447,7 +482,13 @@ fn render_spans_with_emoji_size(
                 if let Some(SpanOverride::Heading(size)) = override_style {
                     ui.label(egui::RichText::new(text).strong().size(size));
                 } else {
-                    super::emoji_picker::render_inline(ui, text, emoji_map, emoji_textures, emoji_size);
+                    super::emoji_picker::render_inline(
+                        ui,
+                        text,
+                        emoji_map,
+                        emoji_textures,
+                        emoji_size,
+                    );
                 }
             }
             MarkdownSpan::Strong(text) => {
@@ -500,7 +541,14 @@ fn render_blockquote_with_emoji_size(
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                render_spans_with_emoji_size(ui, spans, emoji_map, emoji_textures, None, emoji_size);
+                render_spans_with_emoji_size(
+                    ui,
+                    spans,
+                    emoji_map,
+                    emoji_textures,
+                    None,
+                    emoji_size,
+                );
             });
         });
 }
@@ -648,9 +696,7 @@ mod tests {
                         url: "https://example.com".to_string(),
                     }],
                 },
-                MarkdownBlock::Blockquote(vec![MarkdownSpan::Text(
-                    "note importante".to_string(),
-                )]),
+                MarkdownBlock::Blockquote(vec![MarkdownSpan::Text("note importante".to_string(),)]),
             ]
         );
     }

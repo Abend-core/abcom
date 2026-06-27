@@ -137,8 +137,11 @@ impl AbcomApp {
                                 ui.label(egui::RichText::new(profile_hint).small().weak());
                                 ui.add_space(10.0);
                                 ui.horizontal(|ui| {
-                                    let button_label =
-                                        if has_avatar { change_label } else { choose_label };
+                                    let button_label = if has_avatar {
+                                        change_label
+                                    } else {
+                                        choose_label
+                                    };
                                     if ui.button(button_label).clicked() {
                                         pick_avatar = true;
                                     }

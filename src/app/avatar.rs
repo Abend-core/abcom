@@ -94,7 +94,8 @@ mod tests {
     use crate::app::AppState;
 
     fn tmp_dir(label: &str) -> std::path::PathBuf {
-        let dir = std::env::temp_dir().join(format!("abcom_avatar_{}_{}", label, std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("abcom_avatar_{}_{}", label, std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         dir
     }

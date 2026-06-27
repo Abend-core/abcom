@@ -1,16 +1,16 @@
-use tokio::net::UdpSocket;
-use tokio::sync::mpsc::Sender;
-use tokio::time::{interval, Duration};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tokio::net::UdpSocket;
+use tokio::sync::mpsc::Sender;
+use tokio::time::{interval, Duration};
 
 use crate::config;
 use crate::message::{AppEvent, DiscoveryPacket};
 
-const BROADCAST_INTERVAL: u64 = 3;      // Envoyer un broadcast chaque 3 secondes
-const DISCOVERY_TIMEOUT: u64 = 6;       // Un peer est inactif après 6 secondes d'inactivité (détection rapide changement réseau)
-const CLEANUP_INTERVAL: u64 = 2;        // Vérifier les timeouts chaque 2 secondes
+const BROADCAST_INTERVAL: u64 = 3; // Envoyer un broadcast chaque 3 secondes
+const DISCOVERY_TIMEOUT: u64 = 6; // Un peer est inactif après 6 secondes d'inactivité (détection rapide changement réseau)
+const CLEANUP_INTERVAL: u64 = 2; // Vérifier les timeouts chaque 2 secondes
 
 /// Crée le socket UDP de découverte avec SO_REUSEADDR/REUSEPORT, ce qui permet
 /// à plusieurs instances locales de partager le même port de broadcast et donc
@@ -45,14 +45,17 @@ pub async fn run(username: String, tx: Sender<AppEvent>) {
         }
     };
 
-    let packet = DiscoveryPacket { username: username.clone(), port: config::chat_port() };
+    let packet = DiscoveryPacket {
+        username: username.clone(),
+        port: config::chat_port(),
+    };
     let data = serde_json::to_vec(&packet).unwrap_or_default();
     let broadcast_addr = format!("255.255.255.255:{}", config::DISCOVERY_PORT);
 
     let mut tick_broadcast = interval(Duration::from_secs(BROADCAST_INTERVAL));
     let mut tick_cleanup = interval(Duration::from_secs(CLEANUP_INTERVAL));
     let mut buf = vec![0u8; 1024];
-    
+
     // Tracker les timestamps des peers découverts
     let mut peer_timestamps: HashMap<String, u64> = HashMap::new();
 
@@ -67,13 +70,13 @@ pub async fn run(username: String, tx: Sender<AppEvent>) {
                     .duration_since(UNIX_EPOCH)
                     .unwrap_or_default()
                     .as_secs();
-                
+
                 let disconnected: Vec<String> = peer_timestamps
                     .iter()
                     .filter(|(_, last_seen)| now - *last_seen >= DISCOVERY_TIMEOUT)
                     .map(|(username, _)| username.clone())
                     .collect();
-                
+
                 for username in disconnected {
                     peer_timestamps.remove(&username);
                     let _ = tx.send(AppEvent::PeerDisconnected { username }).await;
@@ -88,7 +91,7 @@ pub async fn run(username: String, tx: Sender<AppEvent>) {
                                 .duration_since(UNIX_EPOCH)
                                 .unwrap_or_default()
                                 .as_secs();
-                            
+
                             peer_timestamps.insert(pkt.username.clone(), now);
 
                             // Adresse TCP du pair = IP source + port de chat annoncé
@@ -113,7 +116,10 @@ mod tests {
 
     #[test]
     fn discovery_packet_round_trip() {
-        let pkt = DiscoveryPacket { username: "alice".to_string(), port: 9000 };
+        let pkt = DiscoveryPacket {
+            username: "alice".to_string(),
+            port: 9000,
+        };
         let json = serde_json::to_string(&pkt).unwrap();
         let decoded: DiscoveryPacket = serde_json::from_str(&json).unwrap();
         assert_eq!(decoded.username, "alice");
@@ -126,7 +132,10 @@ mod tests {
         let json = r#"{"username":"bob"}"#;
         let decoded: DiscoveryPacket = serde_json::from_str(json).unwrap();
         assert_eq!(decoded.username, "bob");
-        assert_eq!(decoded.port, 9000, "port absent doit valoir 9000 (rétro-compat)");
+        assert_eq!(
+            decoded.port, 9000,
+            "port absent doit valoir 9000 (rétro-compat)"
+        );
     }
 
     #[test]
@@ -142,6 +151,10 @@ mod tests {
         // Vérifie que la création du socket UDP (SO_REUSEADDR + broadcast) fonctionne.
         // Deux instances doivent pouvoir partager le même port — c'est l'invariant clé.
         let result = super::bind_discovery_socket();
-        assert!(result.is_ok(), "bind_discovery_socket a échoué: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "bind_discovery_socket a échoué: {:?}",
+            result.err()
+        );
     }
 }

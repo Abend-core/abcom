@@ -227,7 +227,10 @@ async fn receive_transfer(
 
     let decision = match tokio::time::timeout(DECISION_TIMEOUT, decision_rx).await {
         Ok(Ok(decision)) => decision,
-        _ => TransferDecision { accept: false, dest_dir: None },
+        _ => TransferDecision {
+            accept: false,
+            dest_dir: None,
+        },
     };
 
     // Informer l'émetteur (1 = accepté, 0 = refusé).
