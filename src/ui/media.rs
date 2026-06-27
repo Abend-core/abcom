@@ -15,11 +15,36 @@ use super::AbcomApp;
 const THUMB_MAX_WIDTH: f32 = 320.0;
 /// Hauteur maximale d'une vignette d'image dans le fil.
 const THUMB_MAX_HEIGHT: f32 = 260.0;
+/// Bornes d'affichage d'un GIF dans le fil (plus grand qu'une vignette image).
+const GIF_MAX_WIDTH: f32 = 360.0;
+const GIF_MAX_HEIGHT: f32 = 300.0;
+
+/// Taille d'affichage d'un GIF/vignette à partir des dimensions fournies par
+/// l'API, calée dans la boîte `max_w`×`max_h` en conservant le ratio. Autorise
+/// l'agrandissement (les variantes WebP de Klipy sont parfois plus petites que
+/// la boîte) ; à défaut de dimensions connues, remplit la boîte.
+pub(crate) fn gif_display_size(
+    width: Option<u32>,
+    height: Option<u32>,
+    max_w: f32,
+    max_h: f32,
+) -> egui::Vec2 {
+    let w = width.unwrap_or(0) as f32;
+    let h = height.unwrap_or(0) as f32;
+    if w <= 0.0 || h <= 0.0 {
+        return egui::vec2(max_w, max_h);
+    }
+    let scale = (max_w / w).min(max_h / h);
+    egui::vec2(w * scale, h * scale)
+}
 
 /// Nom affiché/transmis pour un média : nom du fichier, ou `dossier.zip`.
 pub(crate) fn media_display_name(path: &Path) -> String {
     if path.is_dir() {
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("dossier");
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("dossier");
         format!("{name}.zip")
     } else {
         path.file_name()
@@ -53,7 +78,13 @@ pub(crate) fn media_id(filename: &str) -> String {
     let micros = chrono::Utc::now().timestamp_micros();
     let safe: String = filename
         .chars()
-        .map(|c| if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') { c } else { '_' })
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_') {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     format!("{micros}-{safe}")
 }
@@ -115,7 +146,11 @@ pub(crate) fn render_media_progress(
             }
             ui.label(egui::RichText::new(elide(&media.filename, 38)).strong());
             ui.add_space(6.0);
-            ui.add(egui::ProgressBar::new(ratio).desired_width(width).corner_radius(4.0));
+            ui.add(
+                egui::ProgressBar::new(ratio)
+                    .desired_width(width)
+                    .corner_radius(4.0),
+            );
             ui.add_space(4.0);
             ui.label(
                 egui::RichText::new(format!(
@@ -135,6 +170,21 @@ pub(crate) fn render_media_block(
     media: &MediaAttachment,
     texture: Option<&egui::TextureHandle>,
 ) -> Option<MediaAction> {
+    // GIF : animé via les loaders egui_extras, chargé depuis l'URL Klipy.
+    // Taille forcée d'après le ratio HD pour un affichage net et non riquiqui.
+    if media.kind == MediaKind::Gif {
+        if let Some(url) = &media.url {
+            let max_w = GIF_MAX_WIDTH.min(ui.available_width());
+            let size = gif_display_size(media.width, media.height, max_w, GIF_MAX_HEIGHT);
+            ui.add(
+                egui::Image::from_uri(url.clone())
+                    .fit_to_exact_size(size)
+                    .corner_radius(8.0),
+            );
+            return None;
+        }
+        return file_card(ui, media);
+    }
     match (&media.kind, texture) {
         (MediaKind::Image, Some(texture)) => {
             let width = fitted_width(texture, THUMB_MAX_WIDTH, THUMB_MAX_HEIGHT);
@@ -212,7 +262,11 @@ fn file_badge(ui: &mut egui::Ui, extension: &str) {
         egui::Color32::from_rgb(88, 101, 242),
     );
     let label: String = extension.chars().take(4).collect::<String>().to_uppercase();
-    let text = if label.is_empty() { "FILE".to_string() } else { label };
+    let text = if label.is_empty() {
+        "FILE".to_string()
+    } else {
+        label
+    };
     painter.text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
@@ -243,11 +297,23 @@ fn download_button(ui: &mut egui::Ui) -> bool {
         let stroke = egui::Stroke::new(1.7, color);
         let c = rect.center();
         // Flèche : tige verticale + pointe.
-        painter.line_segment([c + egui::vec2(0.0, -6.0), c + egui::vec2(0.0, 3.0)], stroke);
-        painter.line_segment([c + egui::vec2(-4.0, -1.0), c + egui::vec2(0.0, 3.0)], stroke);
-        painter.line_segment([c + egui::vec2(4.0, -1.0), c + egui::vec2(0.0, 3.0)], stroke);
+        painter.line_segment(
+            [c + egui::vec2(0.0, -6.0), c + egui::vec2(0.0, 3.0)],
+            stroke,
+        );
+        painter.line_segment(
+            [c + egui::vec2(-4.0, -1.0), c + egui::vec2(0.0, 3.0)],
+            stroke,
+        );
+        painter.line_segment(
+            [c + egui::vec2(4.0, -1.0), c + egui::vec2(0.0, 3.0)],
+            stroke,
+        );
         // Bac de réception.
-        painter.line_segment([c + egui::vec2(-6.0, 7.0), c + egui::vec2(6.0, 7.0)], stroke);
+        painter.line_segment(
+            [c + egui::vec2(-6.0, 7.0), c + egui::vec2(6.0, 7.0)],
+            stroke,
+        );
     }
     response.on_hover_text("Télécharger").clicked()
 }
@@ -285,7 +351,11 @@ impl AbcomApp {
             [width as usize, height as usize],
             rgba.as_raw(),
         );
-        Some(ctx.load_texture(format!("media_{id}"), color_image, egui::TextureOptions::LINEAR))
+        Some(ctx.load_texture(
+            format!("media_{id}"),
+            color_image,
+            egui::TextureOptions::LINEAR,
+        ))
     }
 
     /// Nom d'origine d'un média retrouvé dans l'historique (sinon son `id`).
@@ -418,7 +488,10 @@ mod tests {
         let file = dir.join("rapport.pdf");
         std::fs::write(&file, b"x").unwrap();
         assert_eq!(media_display_name(&file), "rapport.pdf");
-        assert_eq!(media_display_name(&dir), format!("{}.zip", dir.file_name().unwrap().to_str().unwrap()));
+        assert_eq!(
+            media_display_name(&dir),
+            format!("{}.zip", dir.file_name().unwrap().to_str().unwrap())
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
