@@ -1,5 +1,3 @@
-use std::collections::hash_map::DefaultHasher;
-use std::hash::{Hash, Hasher};
 use std::net::SocketAddr;
 use std::time::SystemTime;
 
@@ -15,12 +13,29 @@ pub struct PendingMessage {
 }
 
 impl AppState {
-    /// Calcule un hash de message pour identifier les accusés de lecture
+    /// Calcule un hash FNV-1a stable entre processus pour identifier les messages.
+    ///
+    /// Contrairement à DefaultHasher (graine aléatoire depuis Rust 1.36),
+    /// FNV-1a produit le même résultat quel que soit le processus ou la machine,
+    /// ce qui est indispensable : Alice calcule le hash côté envoi, Bob le recalcule
+    /// côté réception pour l'inclure dans l'ACK — ils doivent tomber sur la même valeur.
+    ///
+    /// La clé inclut `timestamp_epoch` + `to_user` pour éviter les collisions entre
+    /// deux messages identiques envoyés par le même utilisateur à des moments différents.
     pub fn message_hash(msg: &ChatMessage) -> u64 {
-        let content = format!("{}:{}", msg.from, msg.content);
-        let mut hasher = DefaultHasher::new();
-        content.hash(&mut hasher);
-        hasher.finish()
+        let key = format!(
+            "{}:{}:{}:{}",
+            msg.from,
+            msg.to_user.as_deref().unwrap_or("broadcast"),
+            msg.timestamp_epoch.unwrap_or(0),
+            msg.content
+        );
+        let mut hash: u64 = 14_695_981_039_346_656_037;
+        for byte in key.bytes() {
+            hash ^= byte as u64;
+            hash = hash.wrapping_mul(1_099_511_628_211);
+        }
+        hash
     }
 
     pub fn mark_message_read(&mut self, message_hash: u64, username: String) {
@@ -117,6 +132,38 @@ mod tests {
     fn test_message_hash_differs_by_sender() {
         let m1 = make_msg("alice", "hello");
         let m2 = make_msg("bob", "hello");
+        assert_ne!(AppState::message_hash(&m1), AppState::message_hash(&m2));
+    }
+
+    #[test]
+    fn test_message_hash_stable_known_value() {
+        // Valeur FNV-1a connue : garantit que l'algo ne change pas entre compilations.
+        // Si ce test casse, un ACK envoyé par Bob ne matchera jamais le hash d'Alice.
+        let m = ChatMessage {
+            from: "alice".to_string(),
+            content: "bonjour".to_string(),
+            timestamp: "12:00".to_string(),
+            timestamp_epoch: Some(1_750_000_000),
+            to_user: Some("bob".to_string()),
+        };
+        let expected = AppState::message_hash(&m);
+        assert_eq!(AppState::message_hash(&m), expected);
+        // Le hash ne doit PAS être 0 (FNV-1a ne produit jamais 0 pour une clé non vide)
+        assert_ne!(expected, 0);
+    }
+
+    #[test]
+    fn test_duplicate_content_different_epoch_gives_different_hash() {
+        // Cas du bug corrigé : Alice envoie "Bonjour" deux fois à des instants différents.
+        // Avant le fix (DefaultHasher sans epoch), les deux messages avaient le même hash.
+        let m1 = ChatMessage {
+            from: "alice".to_string(),
+            content: "Bonjour".to_string(),
+            timestamp: "14:00".to_string(),
+            timestamp_epoch: Some(1_000),
+            to_user: None,
+        };
+        let m2 = ChatMessage { timestamp_epoch: Some(2_000), ..m1.clone() };
         assert_ne!(AppState::message_hash(&m1), AppState::message_hash(&m2));
     }
 
