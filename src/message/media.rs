@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 pub enum MediaKind {
     /// Image affichée en vignette (cliquable pour l'agrandir).
     Image,
+    /// GIF animé référencé par URL (Klipy) : aucun octet n'est streamé, chaque
+    /// pair récupère l'animation depuis le CDN via le champ [`MediaAttachment::url`].
+    Gif,
     /// Tout autre fichier, affiché en carte téléchargeable.
     File,
 }
@@ -24,6 +27,10 @@ pub struct MediaAttachment {
     pub filename: String,
     pub kind: MediaKind,
     pub size_bytes: u64,
+    /// URL source pour un GIF (variante WebP hd de Klipy). `None` pour les
+    /// images et fichiers, dont les octets transitent par streaming.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub width: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -123,6 +130,7 @@ mod tests {
             filename: "abc.png".to_string(),
             kind: MediaKind::Image,
             size_bytes: 3,
+            url: None,
             width: Some(10),
             height: Some(20),
         };
@@ -140,11 +148,30 @@ mod tests {
             filename: "f.bin".to_string(),
             kind: MediaKind::File,
             size_bytes: 0,
+            url: None,
             width: None,
             height: None,
         };
         let json = serde_json::to_string(&att).unwrap();
         assert!(!json.contains("width"));
+    }
+
+    #[test]
+    fn gif_media_round_trip_keeps_url() {
+        let att = MediaAttachment {
+            id: "klipy-42".to_string(),
+            filename: "gif.webp".to_string(),
+            kind: MediaKind::Gif,
+            size_bytes: 0,
+            url: Some("https://cdn.klipy.com/hd.webp".to_string()),
+            width: Some(480),
+            height: Some(320),
+        };
+        let json = serde_json::to_string(&att).unwrap();
+        assert!(json.contains("\"kind\":\"gif\""));
+        let back: MediaAttachment = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.kind, MediaKind::Gif);
+        assert_eq!(back.url.as_deref(), Some("https://cdn.klipy.com/hd.webp"));
     }
 
     #[test]
@@ -159,6 +186,7 @@ mod tests {
                 filename: "x.zip".to_string(),
                 kind: MediaKind::File,
                 size_bytes: 6_000_000_000,
+                url: None,
                 width: None,
                 height: None,
             },

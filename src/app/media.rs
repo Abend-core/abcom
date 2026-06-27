@@ -70,6 +70,7 @@ mod tests {
                 filename: "z.bin".to_string(),
                 kind: MediaKind::File,
                 size_bytes: 3,
+                url: None,
                 width: None,
                 height: None,
             }),
@@ -78,7 +79,10 @@ mod tests {
         s.remove_media_message("z.bin");
 
         assert!(s.messages.is_empty(), "le message média doit être retiré");
-        assert!(s.media_bytes("z.bin").is_none(), "le fichier doit être supprimé");
+        assert!(
+            s.media_bytes("z.bin").is_none(),
+            "le fichier doit être supprimé"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 }
