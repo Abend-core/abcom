@@ -7,7 +7,7 @@ use crate::message::{
 };
 use crate::transfer::TransferStatus;
 
-use super::{sound::play_notification_sound, AbcomApp, PendingOffer};
+use super::{sound::play_notification_sound, AbcomApp, Notification, PendingOffer};
 
 impl AbcomApp {
     /// Chargement paresseux des textures emoji (nécessite le contexte egui)
@@ -100,7 +100,15 @@ impl AbcomApp {
 
                     s.add_message(msg.clone());
                     if msg.from != s.my_username {
-                        self.last_notification = Some(format!("{}: {}", msg.from, msg.content));
+                        self.last_notification = Some(Notification::Message {
+                            from: msg.from.clone(),
+                            channel: if msg.to_user.is_none() {
+                                Some("Tous".to_string())
+                            } else {
+                                None
+                            },
+                            content: msg.content.clone(),
+                        });
                         self.notification_time = std::time::Instant::now();
                         self.has_unread = true;
                         let source_conv: Option<String> = if msg.to_user.is_none() {
@@ -205,28 +213,28 @@ impl AbcomApp {
 
                     match status {
                         TransferStatus::Completed => {
-                            self.last_notification =
-                                Some(format!("Transfer complete: {} ({})", label, peer));
-                            if !detail.is_empty() {
-                                self.last_notification = Some(format!(
-                                    "Transfer complete: {} ({}) -> {}",
-                                    label, peer, detail
-                                ));
-                            }
+                            let msg = if detail.is_empty() {
+                                format!("Transfer complete: {} ({})", label, peer)
+                            } else {
+                                format!("Transfer complete: {} ({}) -> {}", label, peer, detail)
+                            };
+                            self.last_notification = Some(Notification::System(msg));
                             self.notification_time = std::time::Instant::now();
                         }
                         TransferStatus::Failed => {
-                            self.last_notification =
-                                Some(format!("Transfer failed: {} ({})", label, peer));
+                            self.last_notification = Some(Notification::System(format!(
+                                "Transfer failed: {} ({})",
+                                label, peer
+                            )));
                             self.notification_time = std::time::Instant::now();
                         }
                         TransferStatus::Rejected => {
-                            self.last_notification = Some(format!(
+                            self.last_notification = Some(Notification::System(format!(
                                 "{}: {} ({})",
                                 self.tr("Transfert refusé", "Transfer declined"),
                                 label,
                                 peer
-                            ));
+                            )));
                             self.notification_time = std::time::Instant::now();
                         }
                         _ => {}
@@ -243,11 +251,11 @@ impl AbcomApp {
     /// qui ont expiré (le récepteur les a alors auto-refusées côté réseau).
     pub(crate) fn process_transfer_offers(&mut self) {
         while let Ok(offer) = self.offer_rx.try_recv() {
-            self.last_notification = Some(format!(
+            self.last_notification = Some(Notification::System(format!(
                 "{} {}",
                 offer.from,
                 self.tr("vous envoie un fichier", "is sending you a file")
-            ));
+            )));
             self.notification_time = std::time::Instant::now();
             self.has_unread = true;
             if self.enable_sound_notifications {

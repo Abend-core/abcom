@@ -5,7 +5,7 @@ use crate::app::AppState;
 use crate::message::ChatMessage;
 use crate::transfer::{TransferDecision, TransferDirection, TransferStatus};
 
-use super::{AbcomApp, UiLanguage};
+use super::{AbcomApp, Notification, UiLanguage};
 
 /// Diamètre de l'avatar affiché en tête de chaque groupe de messages.
 const AVATAR_SIZE: f32 = 40.0;
@@ -694,20 +694,40 @@ impl AbcomApp {
         }
     }
 
-    /// Popup de notification en haut à droite
+    /// Toast de notification en bas à gauche.
     pub(crate) fn show_notification(&mut self, ctx: &egui::Context) {
         if let Some(notif) = &self.last_notification {
             if self.notification_time.elapsed().as_secs_f32() < 3.0 {
-                egui::Window::new(self.tr("Notification", "Notification"))
-                    .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 10.0))
+                egui::Window::new("__toast__")
+                    .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(12.0, -12.0))
                     .resizable(false)
                     .collapsible(false)
                     .title_bar(false)
-                    .show(ctx, |ui| {
-                        ui.colored_label(
-                            egui::Color32::from_rgb(255, 200, 100),
-                            egui::RichText::new(notif).text_style(egui::TextStyle::Body),
-                        );
+                    .min_width(160.0)
+                    .max_width(280.0)
+                    .show(ctx, |ui| match notif {
+                        Notification::Message {
+                            from,
+                            channel,
+                            content,
+                        } => {
+                            ui.horizontal(|ui| {
+                                ui.colored_label(
+                                    egui::Color32::from_rgb(255, 200, 100),
+                                    egui::RichText::new(from).strong(),
+                                );
+                                if let Some(ch) = channel {
+                                    ui.colored_label(egui::Color32::GRAY, format!("· #{}", ch));
+                                }
+                            });
+                            ui.label(truncate_for_toast(content, 55));
+                        }
+                        Notification::System(text) => {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(255, 200, 100),
+                                egui::RichText::new(text).text_style(egui::TextStyle::Body),
+                            );
+                        }
                     });
             } else {
                 self.last_notification = None;
@@ -730,6 +750,20 @@ fn format_bytes(bytes: u64) -> String {
         format!("{:.1} Ko", b / KB)
     } else {
         format!("{} o", bytes)
+    }
+}
+
+/// Tronque un contenu de message pour l'affichage toast (max `max` caractères, une seule ligne).
+fn truncate_for_toast(text: &str, max: usize) -> String {
+    let single: String = text
+        .chars()
+        .filter(|c| *c != '\n' && *c != '\r')
+        .take(max + 1)
+        .collect();
+    if single.chars().count() > max {
+        format!("{}…", single.chars().take(max).collect::<String>())
+    } else {
+        single
     }
 }
 
