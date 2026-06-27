@@ -34,6 +34,12 @@ cargo run --release -- <username>
 make install
 ```
 
+### Setup (une fois après le clone)
+```bash
+git config core.hooksPath .githooks
+```
+Active le hook pre-commit qui bloque les commits non formatés (`cargo fmt`).
+
 ### Déploiement utilisateur
 ```bash
 bash scripts/abcom-install.sh ./target/release/abcom
