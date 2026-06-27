@@ -46,18 +46,6 @@ pub(crate) enum SettingsTab {
     License,
 }
 
-/// Contenu d'une notification toast.
-pub(crate) enum Notification {
-    /// Message reçu : auteur, canal optionnel ("Tous" si broadcast), contenu brut.
-    Message {
-        from: String,
-        channel: Option<String>,
-        content: String,
-    },
-    /// Notification système (transfert, erreur, info UI).
-    System(String),
-}
-
 /// Proposition de réception en attente d'une décision de l'utilisateur.
 pub(crate) struct PendingOffer {
     pub(crate) transfer_id: String,
@@ -89,8 +77,6 @@ pub(crate) struct AbcomApp {
     pub(crate) show_emoji_picker: bool,
     pub(crate) show_participants: bool,
     pub(crate) enable_sound_notifications: bool,
-    pub(crate) last_notification: Option<Notification>,
-    pub(crate) notification_time: std::time::Instant,
     pub(crate) has_unread: bool,
     pub(crate) window_focused: bool,
     pub(crate) emoji_textures: Vec<(String, egui::TextureHandle)>,
@@ -173,8 +159,6 @@ impl AbcomApp {
             show_emoji_picker: false,
             show_participants: false,
             enable_sound_notifications: true,
-            last_notification: None,
-            notification_time: std::time::Instant::now(),
             has_unread: false,
             window_focused: true,
             emoji_textures: Vec::new(),
@@ -287,9 +271,14 @@ impl eframe::App for AbcomApp {
         self.process_transfer_offers();
         self.periodic_tasks();
 
-        // Flash barre des tâches si message non lu — réinitialisé une seule fois
-        // quand la fenêtre reprend le focus (pas d'envoi répété en boucle).
-        if self.has_unread && ctx.input(|i| i.focused) {
+        // Clignotement de la barre des tâches : demande l'attention OS quand
+        // l'app n'est pas au premier plan et qu'un message est non lu.
+        // Réinitialise dès que la fenêtre reprend le focus.
+        if self.has_unread && !self.window_focused {
+            ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
+                egui::UserAttentionType::Informational,
+            ));
+        } else if self.window_focused && self.has_unread {
             self.has_unread = false;
             ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
                 egui::UserAttentionType::Reset,
@@ -301,11 +290,9 @@ impl eframe::App for AbcomApp {
         if self.pending_picker != 0 {
             let kind = self.pending_picker;
             self.pending_picker = 0;
-            let (files_title, folder_title, files_added, folder_added) = (
+            let (files_title, folder_title) = (
                 self.tr("Ajouter des fichiers", "Add files"),
                 self.tr("Ajouter un dossier", "Add folder"),
-                self.tr("Fichiers ajoutés", "Files added"),
-                self.tr("Dossier ajouté", "Folder added"),
             );
             match kind {
                 1 => {
@@ -316,9 +303,6 @@ impl eframe::App for AbcomApp {
                                 self.pending_attachments.push(p);
                             }
                         }
-                        self.last_notification =
-                            Some(Notification::System(files_added.to_string()));
-                        self.notification_time = std::time::Instant::now();
                     }
                 }
                 2 => {
@@ -327,9 +311,6 @@ impl eframe::App for AbcomApp {
                         if !self.pending_attachments.contains(&path) {
                             self.pending_attachments.push(path);
                         }
-                        self.last_notification =
-                            Some(Notification::System(folder_added.to_string()));
-                        self.notification_time = std::time::Instant::now();
                     }
                 }
                 _ => {}
@@ -340,10 +321,7 @@ impl eframe::App for AbcomApp {
         // natifs pour éviter un conflit avec la run-loop AppKit sur macOS).
         if self.pending_avatar_pick {
             self.pending_avatar_pick = false;
-            let (pick_title, error_msg) = (
-                self.tr("Choisir une image de profil", "Choose a profile picture"),
-                self.tr("Image de profil invalide", "Invalid profile picture"),
-            );
+            let pick_title = self.tr("Choisir une image de profil", "Choose a profile picture");
             if let Some(path) = rfd::FileDialog::new()
                 .set_title(pick_title)
                 .add_filter("Images", &["png", "jpg", "jpeg", "svg"])
@@ -358,8 +336,6 @@ impl eframe::App for AbcomApp {
                     }
                     Err(e) => {
                         eprintln!("[ui] Avatar non chargé : {}", e);
-                        self.last_notification = Some(Notification::System(error_msg.to_string()));
-                        self.notification_time = std::time::Instant::now();
                     }
                 }
             }
@@ -390,7 +366,6 @@ impl eframe::App for AbcomApp {
 
         self.show_sidebar_panel(ctx);
         let emoji_btn_clicked = self.show_input_bar(ctx);
-        self.show_notification(ctx);
         self.show_emoji_picker_window(ctx, emoji_btn_clicked);
         self.render_group_modal(ctx);
         self.show_central_panel(ctx);
