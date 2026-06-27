@@ -103,11 +103,17 @@ fn paint_plus_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color
     let arm = rect.width().min(rect.height()) * 0.34;
     let stroke = egui::Stroke::new(2.0, color);
     painter.line_segment(
-        [egui::pos2(center.x - arm, center.y), egui::pos2(center.x + arm, center.y)],
+        [
+            egui::pos2(center.x - arm, center.y),
+            egui::pos2(center.x + arm, center.y),
+        ],
         stroke,
     );
     painter.line_segment(
-        [egui::pos2(center.x, center.y - arm), egui::pos2(center.x, center.y + arm)],
+        [
+            egui::pos2(center.x, center.y - arm),
+            egui::pos2(center.x, center.y + arm),
+        ],
         stroke,
     );
 }
@@ -148,7 +154,10 @@ fn attachment_menu_popup(
     area.show(ctx, |ui| {
         egui::Frame::popup(ui.style())
             .fill(egui::Color32::from_rgb(58, 58, 62))
-            .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(102, 102, 108)))
+            .stroke(egui::Stroke::new(
+                1.0,
+                egui::Color32::from_rgb(102, 102, 108),
+            ))
             .corner_radius(egui::CornerRadius::same(12))
             .inner_margin(egui::Margin::symmetric(8, 8))
             .show(ui, |ui| {
@@ -288,8 +297,8 @@ impl AbcomApp {
                                 "🔴 Cet utilisateur est hors ligne",
                                 "🔴 This user is offline",
                             ))
-                                .color(egui::Color32::from_rgb(180, 40, 40))
-                                .small(),
+                            .color(egui::Color32::from_rgb(180, 40, 40))
+                            .small(),
                         );
                     });
                 });
@@ -318,17 +327,26 @@ impl AbcomApp {
                                 ui.horizontal_wrapped(|ui| {
                                     ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
                                     let mut remove_index = None;
-                                    for (index, path) in self.pending_attachments.iter().enumerate() {
+                                    for (index, path) in self.pending_attachments.iter().enumerate()
+                                    {
                                         egui::Frame::default()
-                                            .fill(egui::Color32::from_rgba_unmultiplied(255, 255, 255, 24))
+                                            .fill(egui::Color32::from_rgba_unmultiplied(
+                                                255, 255, 255, 24,
+                                            ))
                                             .corner_radius(egui::CornerRadius::same(10))
                                             .inner_margin(egui::Margin::symmetric(8, 4))
                                             .show(ui, |ui| {
                                                 ui.horizontal(|ui| {
-                                                    ui.label(if path.is_dir() { "📁" } else { "📄" });
+                                                    ui.label(if path.is_dir() {
+                                                        "📁"
+                                                    } else {
+                                                        "📄"
+                                                    });
                                                     ui.label(
                                                         egui::RichText::new(attachment_label(path))
-                                                            .color(egui::Color32::from_rgb(244, 245, 247))
+                                                            .color(egui::Color32::from_rgb(
+                                                                244, 245, 247,
+                                                            ))
                                                             .small(),
                                                     );
                                                     if ui.small_button("✕").clicked() {
@@ -344,15 +362,16 @@ impl AbcomApp {
                                 ui.add_space(6.0);
                             }
 
-                            ui.with_layout(
-                                egui::Layout::left_to_right(egui::Align::Min),
-                                |ui| {
+                            ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
                                 ui.set_min_height(ACTION_BUTTON_SIZE[1]);
                                 ui.spacing_mut().item_spacing = egui::vec2(8.0, 0.0);
 
                                 let plus_btn = icon_button(
                                     ui,
-                                    self.tr("Ajouter des fichiers ou dossiers", "Add files or folders"),
+                                    self.tr(
+                                        "Ajouter des fichiers ou dossiers",
+                                        "Add files or folders",
+                                    ),
                                     self.show_attachment_menu,
                                     paint_plus_icon,
                                 );
@@ -367,25 +386,27 @@ impl AbcomApp {
 
                                 let actions_width = 168.0;
                                 let available_w = (ui.available_width() - actions_width).max(180.0);
-                                let menu_open_now = emoji_shortcode_trigger(&self.input, self.input_cursor_char)
-                                    .map(|(_, q)| !q.is_empty())
-                                    .unwrap_or(false);
+                                let menu_open_now =
+                                    emoji_shortcode_trigger(&self.input, self.input_cursor_char)
+                                        .map(|(_, q)| !q.is_empty())
+                                        .unwrap_or(false);
 
-                                let (resp, mut pressed_enter, changed) = composer::custom_composer_input(
-                                    ui,
-                                    &mut self.input,
-                                    &mut self.input_cursor_char,
-                                    &mut self.input_has_focus,
-                                    &mut self.input_scroll_lines,
-                                    &self.emoji_map,
-                                    &self.emoji_textures,
-                                    &self.emoji_alias_to_char,
-                                    &self.emoji_aliases,
-                                    menu_open_now,
-                                    self.shortcode_selected,
-                                    available_w,
-                                    &mut self.input_selection_anchor,
-                                );
+                                let (resp, mut pressed_enter, changed) =
+                                    composer::custom_composer_input(
+                                        ui,
+                                        &mut self.input,
+                                        &mut self.input_cursor_char,
+                                        &mut self.input_has_focus,
+                                        &mut self.input_scroll_lines,
+                                        &self.emoji_map,
+                                        &self.emoji_textures,
+                                        &self.emoji_alias_to_char,
+                                        &self.emoji_aliases,
+                                        menu_open_now,
+                                        self.shortcode_selected,
+                                        available_w,
+                                        &mut self.input_selection_anchor,
+                                    );
 
                                 ui.add_space(6.0);
 
@@ -424,7 +445,8 @@ impl AbcomApp {
                                     self.notification_time = std::time::Instant::now();
                                 }
 
-                                let emoji_btn = if let Some((_, tex)) = self.emoji_textures.first() {
+                                let emoji_btn = if let Some((_, tex)) = self.emoji_textures.first()
+                                {
                                     icon_button(
                                         ui,
                                         self.tr("Emojis", "Emoji"),
@@ -486,141 +508,153 @@ impl AbcomApp {
 
                                     let clicked_outside = ctx.input(|i| i.pointer.any_pressed())
                                         && !plus_btn.hovered()
-                                        && !popup_rect.contains(
-                                            ctx.input(|i| i.pointer.interact_pos().unwrap_or_default()),
-                                        );
+                                        && !popup_rect.contains(ctx.input(|i| {
+                                            i.pointer.interact_pos().unwrap_or_default()
+                                        }));
                                     if clicked_outside {
                                         self.show_attachment_menu = false;
                                     }
                                 }
 
-                            // Popup de suggestions shortcode
-                            let shortcode_limit = match emoji_shortcode_trigger(&self.input, self.input_cursor_char) {
-                                Some((_, q)) if q.is_empty() => 5,
-                                _ => 12,
-                            };
-                            let shortcode_list = super::emoji_picker::shortcode_suggestions(
-                                &self.input,
-                                self.input_cursor_char,
-                                &self.emoji_alias_to_char,
-                                &self.emoji_aliases,
-                                shortcode_limit,
-                            );
-
-                            let mut clicked_shortcode: Option<String> = None;
-                            if shortcode_list.is_empty() {
-                                self.shortcode_selected = 0;
-                            } else if self.shortcode_selected >= shortcode_list.len() {
-                                self.shortcode_selected = shortcode_list.len() - 1;
-                            }
-
-                            // Consumir las flechas solo si el menú de shortcodes está abierto
-                            if self.input_has_focus && menu_open_now {
-                        if ctx.input_mut(|i| {
-                            i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
-                        })
-                            && !shortcode_list.is_empty() {
-                                self.shortcode_selected =
-                                    (self.shortcode_selected + 1).min(shortcode_list.len() - 1);
-                            }
-                        if ctx
-                            .input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp))
-                            && !shortcode_list.is_empty() {
-                                self.shortcode_selected = self.shortcode_selected.saturating_sub(1);
-                            }
-                            }
-
-                            if self.input_has_focus && !shortcode_list.is_empty() {
-                        super::emoji_picker::show_shortcode_popup(
-                            ctx,
-                            ui,
-                            &resp,
-                            &shortcode_list,
-                            &self.emoji_map,
-                            &self.emoji_textures,
-                            self.shortcode_selected,
-                            &mut clicked_shortcode,
-                        );
-                            }
-
-                            if self.input_has_focus && !shortcode_list.is_empty() && pressed_enter {
-                        if let Some((alias, _ch)) = shortcode_list.get(self.shortcode_selected) {
-                            clicked_shortcode = Some(alias.clone());
-                            pressed_enter = false;
-                        }
-                            }
-
-                            if let Some(alias) = clicked_shortcode {
-                        if let Some((start, _)) =
-                            emoji_shortcode_trigger(&self.input, self.input_cursor_char)
-                        {
-                            if let Some(ch) = self.emoji_alias_to_char.get(&alias) {
-                                let end = self.input_cursor_char;
-                                composer::replace_char_range(
-                                    &mut self.input,
-                                    &mut self.input_cursor_char,
-                                    start,
-                                    end,
-                                    ch,
+                                // Popup de suggestions shortcode
+                                let shortcode_limit = match emoji_shortcode_trigger(
+                                    &self.input,
+                                    self.input_cursor_char,
+                                ) {
+                                    Some((_, q)) if q.is_empty() => 5,
+                                    _ => 12,
+                                };
+                                let shortcode_list = super::emoji_picker::shortcode_suggestions(
+                                    &self.input,
+                                    self.input_cursor_char,
+                                    &self.emoji_alias_to_char,
+                                    &self.emoji_aliases,
+                                    shortcode_limit,
                                 );
-                                composer::sync_cursor(ctx, self.input_cursor_char);
-                                self.input_has_focus = true;
-                                self.show_emoji_picker = false;
-                            }
-                        }
-                            }
 
-                            // Indicateur de frappe
-                            if changed && self.last_typing_broadcast.elapsed().as_millis() > 1500 {
-                        self.last_typing_broadcast = std::time::Instant::now();
-                        let (my_name, target_addrs) = {
-                            let s = self.state.lock().unwrap();
-                            let name = s.my_username.clone();
-                            let addrs = match &s.selected_conversation {
-                                None => s
-                                    .peers
-                                    .iter()
-                                    .filter(|p| p.online)
-                                    .map(|p| p.addr)
-                                    .collect::<Vec<_>>(),
-                                Some(conv) => s
-                                    .peers
-                                    .iter()
-                                    .find(|p| p.online && &p.username == conv)
-                                    .map(|p| p.addr)
-                                    .into_iter()
-                                    .collect(),
-                            };
-                            (name, addrs)
-                        };
-                        for addr in target_addrs {
-                            let _ = self.send_typing_tx.try_send(TypingRequest {
-                                to_addr: addr,
-                                indicator: TypingIndicator {
-                                    from: my_name.clone(),
-                                },
-                            });
-                        }
-                            }
+                                let mut clicked_shortcode: Option<String> = None;
+                                if shortcode_list.is_empty() {
+                                    self.shortcode_selected = 0;
+                                } else if self.shortcode_selected >= shortcode_list.len() {
+                                    self.shortcode_selected = shortcode_list.len() - 1;
+                                }
 
-                            let pressed_enter_fallback = ui.input(|i| {
-                                i.key_pressed(egui::Key::Enter) && !i.modifiers.shift && !menu_open_now
-                            });
+                                // Consumir las flechas solo si el menú de shortcodes está abierto
+                                if self.input_has_focus && menu_open_now {
+                                    if ctx.input_mut(|i| {
+                                        i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
+                                    }) && !shortcode_list.is_empty()
+                                    {
+                                        self.shortcode_selected = (self.shortcode_selected + 1)
+                                            .min(shortcode_list.len() - 1);
+                                    }
+                                    if ctx.input_mut(|i| {
+                                        i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)
+                                    }) && !shortcode_list.is_empty()
+                                    {
+                                        self.shortcode_selected =
+                                            self.shortcode_selected.saturating_sub(1);
+                                    }
+                                }
+
+                                if self.input_has_focus && !shortcode_list.is_empty() {
+                                    super::emoji_picker::show_shortcode_popup(
+                                        ctx,
+                                        ui,
+                                        &resp,
+                                        &shortcode_list,
+                                        &self.emoji_map,
+                                        &self.emoji_textures,
+                                        self.shortcode_selected,
+                                        &mut clicked_shortcode,
+                                    );
+                                }
+
+                                if self.input_has_focus
+                                    && !shortcode_list.is_empty()
+                                    && pressed_enter
+                                {
+                                    if let Some((alias, _ch)) =
+                                        shortcode_list.get(self.shortcode_selected)
+                                    {
+                                        clicked_shortcode = Some(alias.clone());
+                                        pressed_enter = false;
+                                    }
+                                }
+
+                                if let Some(alias) = clicked_shortcode {
+                                    if let Some((start, _)) =
+                                        emoji_shortcode_trigger(&self.input, self.input_cursor_char)
+                                    {
+                                        if let Some(ch) = self.emoji_alias_to_char.get(&alias) {
+                                            let end = self.input_cursor_char;
+                                            composer::replace_char_range(
+                                                &mut self.input,
+                                                &mut self.input_cursor_char,
+                                                start,
+                                                end,
+                                                ch,
+                                            );
+                                            composer::sync_cursor(ctx, self.input_cursor_char);
+                                            self.input_has_focus = true;
+                                            self.show_emoji_picker = false;
+                                        }
+                                    }
+                                }
+
+                                // Indicateur de frappe
+                                if changed
+                                    && self.last_typing_broadcast.elapsed().as_millis() > 1500
+                                {
+                                    self.last_typing_broadcast = std::time::Instant::now();
+                                    let (my_name, target_addrs) = {
+                                        let s = self.state.lock().unwrap();
+                                        let name = s.my_username.clone();
+                                        let addrs = match &s.selected_conversation {
+                                            None => s
+                                                .peers
+                                                .iter()
+                                                .filter(|p| p.online)
+                                                .map(|p| p.addr)
+                                                .collect::<Vec<_>>(),
+                                            Some(conv) => s
+                                                .peers
+                                                .iter()
+                                                .find(|p| p.online && &p.username == conv)
+                                                .map(|p| p.addr)
+                                                .into_iter()
+                                                .collect(),
+                                        };
+                                        (name, addrs)
+                                    };
+                                    for addr in target_addrs {
+                                        let _ = self.send_typing_tx.try_send(TypingRequest {
+                                            to_addr: addr,
+                                            indicator: TypingIndicator {
+                                                from: my_name.clone(),
+                                            },
+                                        });
+                                    }
+                                }
+
+                                let pressed_enter_fallback = ui.input(|i| {
+                                    i.key_pressed(egui::Key::Enter)
+                                        && !i.modifiers.shift
+                                        && !menu_open_now
+                                });
 
                                 if should_send_message(
                                     pressed_enter,
                                     pressed_enter_fallback,
                                     menu_open_now,
                                     &self.input,
-                                )
-                                    && send_current_message(self, selected_addr, &all_peers) {
-                                        self.input_selection_anchor = None;
-                                        resp.request_focus();
-                                        self.show_emoji_picker = false;
-                                    }
-
-                            },
-                            );
+                                ) && send_current_message(self, selected_addr, &all_peers)
+                                {
+                                    self.input_selection_anchor = None;
+                                    resp.request_focus();
+                                    self.show_emoji_picker = false;
+                                }
+                            });
 
                             if !typing_list.is_empty() {
                                 ui.add_space(4.0);
@@ -702,7 +736,10 @@ mod tests {
 
         assert_eq!(
             paths,
-            vec![PathBuf::from("/tmp/alpha.txt"), PathBuf::from("/tmp/beta.txt")]
+            vec![
+                PathBuf::from("/tmp/alpha.txt"),
+                PathBuf::from("/tmp/beta.txt")
+            ]
         );
     }
 

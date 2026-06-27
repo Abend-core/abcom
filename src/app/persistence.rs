@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use crate::message::{Group, PeerRecord};
 use super::AppState;
+use crate::message::{Group, PeerRecord};
 
 impl AppState {
     /// Écriture atomique via fichier temporaire
@@ -133,9 +133,13 @@ mod tests {
         s.groups.push(make_group("Dev", "alice"));
         s.save_groups();
         // Aucun fichier .tmp ne doit subsister
-        let has_tmp = std::fs::read_dir(&dir).unwrap()
+        let has_tmp = std::fs::read_dir(&dir)
+            .unwrap()
             .any(|e| e.unwrap().file_name().to_string_lossy().ends_with(".tmp"));
-        assert!(!has_tmp, "Fichier .tmp ne doit pas rester après écriture atomique");
+        assert!(
+            !has_tmp,
+            "Fichier .tmp ne doit pas rester après écriture atomique"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

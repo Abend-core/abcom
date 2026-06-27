@@ -101,7 +101,9 @@ mod tests {
         super::send_packet(addr, packet).await;
 
         let received = tokio::time::timeout(Duration::from_secs(2), recv)
-            .await.unwrap().unwrap();
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(received, expected);
     }
 
@@ -128,7 +130,9 @@ mod tests {
         super::send_packet(addr, packet).await;
 
         let decoded = tokio::time::timeout(Duration::from_secs(2), recv)
-            .await.unwrap().unwrap();
+            .await
+            .unwrap()
+            .unwrap();
 
         match decoded {
             NetworkPacket::Chat(m) => {

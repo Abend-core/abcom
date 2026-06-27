@@ -29,7 +29,12 @@ impl AppState {
                 return;
             }
         }
-        self.peers.push(Peer { username, addr, last_seen: now, online: true });
+        self.peers.push(Peer {
+            username,
+            addr,
+            last_seen: now,
+            online: true,
+        });
     }
 
     /// Nettoie les pairs inactifs et retourne les usernames déconnectés
@@ -58,12 +63,18 @@ impl AppState {
     }
 
     pub fn is_peer_online(&self, username: &str) -> bool {
-        self.peers.iter().any(|p| p.username == username && p.online)
+        self.peers
+            .iter()
+            .any(|p| p.username == username && p.online)
     }
 
     /// Adresses de tous les pairs en ligne
     pub fn get_online_peers(&self) -> Vec<SocketAddr> {
-        self.peers.iter().filter(|p| p.online).map(|p| p.addr).collect()
+        self.peers
+            .iter()
+            .filter(|p| p.online)
+            .map(|p| p.addr)
+            .collect()
     }
 
     /// Alias d'un pair s'il en a un, sinon son username
@@ -77,7 +88,11 @@ impl AppState {
 
     /// Définit (ou retire, si `None`) l'alias d'un pair, puis persiste.
     pub fn set_peer_alias(&mut self, username: &str, alias: Option<String>) {
-        if let Some(rec) = self.peer_records.iter_mut().find(|r| r.username == username) {
+        if let Some(rec) = self
+            .peer_records
+            .iter_mut()
+            .find(|r| r.username == username)
+        {
             rec.alias = alias;
         } else {
             use crate::message::PeerRecord;
@@ -107,7 +122,12 @@ impl AppState {
         for username in known {
             if !self.peers.iter().any(|p| p.username == username) {
                 let dummy: SocketAddr = "0.0.0.0:0".parse().unwrap();
-                self.peers.push(Peer { username, addr: dummy, last_seen: 0, online: false });
+                self.peers.push(Peer {
+                    username,
+                    addr: dummy,
+                    last_seen: 0,
+                    online: false,
+                });
             }
         }
     }
@@ -115,8 +135,8 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
-    use std::net::SocketAddr;
     use crate::app::{AppState, Peer};
+    use std::net::SocketAddr;
 
     fn state(username: &str) -> AppState {
         let mut s = AppState::new(username.to_string());
@@ -130,7 +150,12 @@ mod tests {
 
     fn peer(name: &str, ip: &str, online: bool) -> Peer {
         let addr: SocketAddr = format!("{}:9000", ip).parse().unwrap();
-        Peer { username: name.to_string(), addr, last_seen: 0, online }
+        Peer {
+            username: name.to_string(),
+            addr,
+            last_seen: 0,
+            online,
+        }
     }
 
     #[test]
@@ -171,7 +196,10 @@ mod tests {
         let mut s = state("alice");
         // last_seen very recent: use std epoch + current time
         use std::time::{SystemTime, UNIX_EPOCH};
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
         s.peers.push(Peer {
             username: "bob".to_string(),
             addr: "192.168.1.5:9000".parse().unwrap(),
@@ -215,7 +243,10 @@ mod tests {
         s.peers.push(peer("bob", "192.168.1.5", true));
         s.selected_conversation = Some("bob".to_string());
         assert!(s.selected_peer_addr().is_some());
-        assert_eq!(s.selected_peer_addr().unwrap().ip().to_string(), "192.168.1.5");
+        assert_eq!(
+            s.selected_peer_addr().unwrap().ip().to_string(),
+            "192.168.1.5"
+        );
     }
 
     #[test]

@@ -95,7 +95,10 @@ mod tests {
         let mut s = state("alice");
         s.peers.push(peer("bob", "127.0.0.1:9000", true));
         s.peers.push(peer("carol", "127.0.0.1:9001", false));
-        s.create_group("team".to_string(), vec!["bob".to_string(), "carol".to_string()]);
+        s.create_group(
+            "team".to_string(),
+            vec!["bob".to_string(), "carol".to_string()],
+        );
         s.selected_conversation = Some("#team".to_string());
 
         let targets = s.selected_transfer_targets();
