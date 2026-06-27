@@ -3,15 +3,24 @@ use std::path::Path;
 #[cfg(test)]
 use std::path::PathBuf;
 
+use std::sync::{Arc, Mutex};
+
 use crate::app::AppState;
-use crate::message::{ChatMessage, SendRequest, TypingIndicator, TypingRequest};
-use crate::transfer::TransferRequest;
+use crate::message::{
+    ChatMessage, MediaAttachment, MediaKind, MediaSendJob, MediaStreamHeader, SendRequest,
+    TypingIndicator, TypingRequest,
+};
 
 use super::composer;
 use super::emoji_picker::emoji_shortcode_trigger;
 use super::AbcomApp;
 
 const ACTION_BUTTON_SIZE: [f32; 2] = [34.0, 34.0];
+
+/// Au-delà de cette taille (1 Go), l'envoi d'un média demande l'accord du
+/// destinataire avant transfert. En dessous, l'envoi est automatique. Dans les
+/// deux cas, c'est le même chemin (streaming par morceaux).
+const MEDIA_ACK_THRESHOLD: u64 = 1024 * 1024 * 1024;
 
 enum AttachmentMenuAction {
     AddFiles,
@@ -98,6 +107,26 @@ fn icon_button(
     response
 }
 
+/// Petite croix peinte pour retirer une pièce jointe (glyphe « ✕ » non rendu de
+/// façon fiable par la police). Renvoie `true` au clic.
+fn chip_remove_button(ui: &mut egui::Ui) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let color = if resp.hovered() {
+            egui::Color32::from_rgb(235, 120, 120)
+        } else {
+            egui::Color32::from_gray(200)
+        };
+        let stroke = egui::Stroke::new(1.6, color);
+        let c = rect.center();
+        let d = 3.5;
+        let p = ui.painter();
+        p.line_segment([c + egui::vec2(-d, -d), c + egui::vec2(d, d)], stroke);
+        p.line_segment([c + egui::vec2(d, -d), c + egui::vec2(-d, d)], stroke);
+    }
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+}
+
 fn paint_plus_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
     let center = rect.center();
     let arm = rect.width().min(rect.height()) * 0.34;
@@ -176,6 +205,94 @@ fn attachment_menu_popup(
     .inner
 }
 
+/// Envoie un fichier (ou un dossier zippé) comme média, par streaming. Tout le
+/// travail lourd (zip, copie locale dans `media/<id>`, lecture) se fait dans un
+/// thread dédié pour ne jamais geler l'UI, même pour plusieurs Go.
+fn send_one_media(
+    app: &AbcomApp,
+    path: &Path,
+    my_name: &str,
+    to_user: &Option<String>,
+    targets: &[(String, std::net::SocketAddr)],
+) {
+    let state = app.state.clone();
+    let send_media_tx = app.send_media_tx.clone();
+    let path = path.to_path_buf();
+    let my_name = my_name.to_string();
+    let to_user = to_user.clone();
+    let targets = targets.to_vec();
+
+    std::thread::spawn(move || {
+        if let Err(e) = prepare_and_stream(&state, &send_media_tx, &path, &my_name, &to_user, &targets)
+        {
+            eprintln!("[ui] préparation média échouée ({}): {}", path.display(), e);
+        }
+    });
+}
+
+/// Prépare un média dans `media/<id>` (copie d'un fichier ou zip d'un dossier),
+/// l'ajoute à notre historique, puis met en file un envoi vers chaque pair.
+fn prepare_and_stream(
+    state: &Arc<Mutex<AppState>>,
+    send_media_tx: &tokio::sync::mpsc::Sender<MediaSendJob>,
+    path: &Path,
+    my_name: &str,
+    to_user: &Option<String>,
+    targets: &[(String, std::net::SocketAddr)],
+) -> std::io::Result<()> {
+    let is_dir = path.is_dir();
+    let filename = super::media::media_display_name(path);
+    let id = super::media::media_id(&filename);
+
+    let dest = state.lock().unwrap().media_path(&id);
+    if let Some(parent) = dest.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    if is_dir {
+        crate::archive::zip_dir_to_path(path, &dest)?;
+    } else {
+        std::fs::copy(path, &dest)?;
+    }
+
+    let size_bytes = std::fs::metadata(&dest)?.len();
+    let (kind, width, height) = if !is_dir && MediaAttachment::is_image_filename(&filename) {
+        let dims = image::image_dimensions(&dest).ok();
+        (MediaKind::Image, dims.map(|d| d.0), dims.map(|d| d.1))
+    } else {
+        (MediaKind::File, None, None)
+    };
+
+    let media = MediaAttachment { id, filename, kind, size_bytes, width, height };
+    let now = chrono::Local::now();
+    let header = MediaStreamHeader {
+        from: my_name.to_string(),
+        to_user: to_user.clone(),
+        timestamp: now.format("%H:%M").to_string(),
+        timestamp_epoch: Some(now.timestamp() as u64),
+        media: media.clone(),
+        requires_ack: size_bytes > MEDIA_ACK_THRESHOLD,
+    };
+
+    // Notre propre copie du message (la carte apparaît, avec progression).
+    state.lock().unwrap().add_message(ChatMessage {
+        from: my_name.to_string(),
+        content: String::new(),
+        timestamp: header.timestamp.clone(),
+        timestamp_epoch: header.timestamp_epoch,
+        to_user: to_user.clone(),
+        media: Some(media),
+    });
+
+    for (_, addr) in targets {
+        let _ = send_media_tx.try_send(MediaSendJob {
+            to_addr: *addr,
+            source_path: dest.clone(),
+            header: header.clone(),
+        });
+    }
+    Ok(())
+}
+
 fn send_current_message(
     app: &mut AbcomApp,
     selected_addr: Option<std::net::SocketAddr>,
@@ -209,6 +326,7 @@ fn send_current_message(
             timestamp: now.format("%H:%M").to_string(),
             timestamp_epoch: Some(now.timestamp() as u64),
             to_user: selected_peer_name.clone(),
+            media: None,
         };
 
         {
@@ -235,7 +353,12 @@ fn send_current_message(
                 message: msg,
             });
         } else {
-            for peer in all_peers {
+            // Diffusion : uniquement aux pairs en ligne et joignables. On ignore
+            // les pairs hors-ligne restaurés depuis l'historique (adresse nulle).
+            for peer in all_peers
+                .iter()
+                .filter(|p| p.online && !p.addr.ip().is_unspecified())
+            {
                 let _ = app.send_tx.try_send(SendRequest {
                     to_addr: peer.addr,
                     message: msg.clone(),
@@ -245,17 +368,25 @@ fn send_current_message(
     }
 
     if has_attachments {
-        let paths = app.pending_attachments.clone();
-        for target in &transfer_targets {
-            let _ = app.send_transfer_tx.try_send(TransferRequest {
-                from: my_name.clone(),
-                recipient: target.username.clone(),
-                to_addr: target.addr,
-                paths: paths.clone(),
-            });
-        }
-        if transfer_targets.is_empty() {
-            eprintln!("[transfer] Aucun destinataire en ligne");
+        // Chemin unique pour tout fichier ou dossier : streaming par morceaux.
+        let targets: Vec<(String, std::net::SocketAddr)> = transfer_targets
+            .iter()
+            .map(|t| (t.username.clone(), t.addr))
+            .collect();
+
+        if targets.is_empty() {
+            app.last_notification = Some(
+                app.tr(
+                    "Aucun destinataire en ligne pour l'envoi",
+                    "No online recipient available",
+                )
+                .to_string(),
+            );
+            app.notification_time = std::time::Instant::now();
+        } else {
+            for path in app.pending_attachments.clone() {
+                send_one_media(app, &path, &my_name, &selected_peer_name, &targets);
+            }
         }
     }
 
@@ -342,7 +473,7 @@ impl AbcomApp {
                                                             ))
                                                             .small(),
                                                     );
-                                                    if ui.small_button("✕").clicked() {
+                                                    if chip_remove_button(ui) {
                                                         remove_index = Some(index);
                                                     }
                                                 });

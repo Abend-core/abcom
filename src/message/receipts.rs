@@ -129,6 +129,7 @@ mod tests {
             timestamp: "10:00".to_string(),
             timestamp_epoch: None,
             to_user: None,
+            media: None,
         };
         let json = serde_json::to_string(&chat).unwrap();
         let nm: NetworkMessage = serde_json::from_str(&json).unwrap();
