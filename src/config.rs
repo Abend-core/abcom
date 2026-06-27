@@ -31,8 +31,8 @@ pub fn chat_port() -> u16 {
     9000 + (instance_id() as u16) * 10
 }
 
-/// Port TCP de transfert de fichiers : toujours `chat_port + 1`.
-pub fn transfer_port() -> u16 {
+/// Port TCP de streaming des médias : toujours `chat_port + 1`.
+pub fn media_port() -> u16 {
     chat_port() + 1
 }
 

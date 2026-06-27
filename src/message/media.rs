@@ -10,13 +10,11 @@ pub enum MediaKind {
     File,
 }
 
-/// Média (image ou fichier) attaché à un [`super::ChatMessage`].
+/// Référence d'un média (image ou fichier) attaché à un [`super::ChatMessage`].
 ///
-/// Sur le réseau, `data` porte les octets bruts du fichier. À la réception, ces
-/// octets sont écrits dans le dossier `media/` puis retirés (`data = None`)
-/// avant d'enregistrer le message dans l'historique, afin de garder
-/// `messages.json` léger : seule la référence (`id`, `filename`, dimensions…)
-/// y subsiste.
+/// Métadonnée uniquement : les octets ne transitent jamais dans le message, ils
+/// sont transmis à part par streaming (voir `network::media_stream`) et écrits
+/// dans le dossier `media/<id>`. L'historique `messages.json` reste donc léger.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct MediaAttachment {
     /// Identifiant unique servant aussi de nom de fichier en cache
@@ -30,9 +28,6 @@ pub struct MediaAttachment {
     pub width: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub height: Option<u32>,
-    /// Octets bruts : présents sur le réseau, absents une fois en cache disque.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub data: Option<Vec<u8>>,
 }
 
 impl MediaAttachment {
@@ -43,6 +38,53 @@ impl MediaAttachment {
             Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp")
         )
     }
+}
+
+/// En-tête envoyé en tête d'un flux média : il décrit le message et le média à
+/// recevoir. Le destinataire reconstruit le [`super::ChatMessage`] à partir de
+/// ces champs, puis reçoit les `media.size_bytes` octets qui suivent.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct MediaStreamHeader {
+    pub from: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub to_user: Option<String>,
+    pub timestamp: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp_epoch: Option<u64>,
+    pub media: MediaAttachment,
+    /// Vrai si le destinataire doit accepter avant la réception (> 1 Go).
+    pub requires_ack: bool,
+}
+
+/// Tâche d'envoi d'un média en streaming vers un destinataire (canal interne).
+#[derive(Clone, Debug)]
+pub struct MediaSendJob {
+    /// Adresse de chat du destinataire ; le port média vaut `+1`.
+    pub to_addr: std::net::SocketAddr,
+    /// Fichier source à streamer (fichier original ou archive d'un dossier).
+    pub source_path: std::path::PathBuf,
+    pub header: MediaStreamHeader,
+}
+
+/// Offre de réception d'un média volumineux (> 1 Go), transmise à l'UI pour
+/// décision avant d'écrire le moindre octet.
+pub struct MediaStreamOffer {
+    pub from: String,
+    pub filename: String,
+    pub size_bytes: u64,
+    pub decision_tx: tokio::sync::oneshot::Sender<bool>,
+}
+
+/// Progression d'un transfert média (émission ou réception), par identifiant.
+#[derive(Clone, Debug)]
+pub struct MediaProgress {
+    pub id: String,
+    pub done: u64,
+    pub total: u64,
+    /// Transfert terminé avec succès.
+    pub finished: bool,
+    /// Transfert interrompu (erreur réseau ou refus côté distant).
+    pub failed: bool,
 }
 
 /// Extension d'un nom de fichier en minuscules, sans le point.
@@ -73,7 +115,7 @@ mod tests {
     }
 
     #[test]
-    fn media_round_trip_strips_nothing_by_serde() {
+    fn media_round_trip() {
         let att = MediaAttachment {
             id: "abc.png".to_string(),
             filename: "abc.png".to_string(),
@@ -81,17 +123,16 @@ mod tests {
             size_bytes: 3,
             width: Some(10),
             height: Some(20),
-            data: Some(vec![1, 2, 3]),
         };
         let json = serde_json::to_string(&att).unwrap();
         let back: MediaAttachment = serde_json::from_str(&json).unwrap();
         assert_eq!(back.kind, MediaKind::Image);
-        assert_eq!(back.data, Some(vec![1, 2, 3]));
+        assert_eq!(back.filename, "abc.png");
         assert_eq!(back.width, Some(10));
     }
 
     #[test]
-    fn media_without_data_omits_field() {
+    fn media_omits_absent_dimensions() {
         let att = MediaAttachment {
             id: "f.bin".to_string(),
             filename: "f.bin".to_string(),
@@ -99,10 +140,32 @@ mod tests {
             size_bytes: 0,
             width: None,
             height: None,
-            data: None,
         };
         let json = serde_json::to_string(&att).unwrap();
-        assert!(!json.contains("data"));
         assert!(!json.contains("width"));
+    }
+
+    #[test]
+    fn stream_header_round_trip() {
+        let header = super::MediaStreamHeader {
+            from: "bob".to_string(),
+            to_user: Some("ellis".to_string()),
+            timestamp: "12:00".to_string(),
+            timestamp_epoch: Some(1_750_000_000),
+            media: MediaAttachment {
+                id: "x.zip".to_string(),
+                filename: "x.zip".to_string(),
+                kind: MediaKind::File,
+                size_bytes: 6_000_000_000,
+                width: None,
+                height: None,
+            },
+            requires_ack: true,
+        };
+        let json = serde_json::to_string(&header).unwrap();
+        let back: super::MediaStreamHeader = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.media.size_bytes, 6_000_000_000);
+        assert!(back.requires_ack);
+        assert_eq!(back.to_user.as_deref(), Some("ellis"));
     }
 }
