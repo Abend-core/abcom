@@ -23,4 +23,6 @@ pub enum AppEvent {
     MediaIncoming(MediaStreamHeader),
     /// Progression d'un transfert média (émission ou réception).
     MediaProgressed(MediaProgress),
+    /// Le destinataire a refusé un média : on l'annote dans le fil (côté émetteur).
+    MediaDeclined(MediaStreamHeader),
 }

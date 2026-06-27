@@ -107,6 +107,26 @@ fn icon_button(
     response
 }
 
+/// Petite croix peinte pour retirer une pièce jointe (glyphe « ✕ » non rendu de
+/// façon fiable par la police). Renvoie `true` au clic.
+fn chip_remove_button(ui: &mut egui::Ui) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let color = if resp.hovered() {
+            egui::Color32::from_rgb(235, 120, 120)
+        } else {
+            egui::Color32::from_gray(200)
+        };
+        let stroke = egui::Stroke::new(1.6, color);
+        let c = rect.center();
+        let d = 3.5;
+        let p = ui.painter();
+        p.line_segment([c + egui::vec2(-d, -d), c + egui::vec2(d, d)], stroke);
+        p.line_segment([c + egui::vec2(d, -d), c + egui::vec2(-d, d)], stroke);
+    }
+    resp.on_hover_cursor(egui::CursorIcon::PointingHand).clicked()
+}
+
 fn paint_plus_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
     let center = rect.center();
     let arm = rect.width().min(rect.height()) * 0.34;
@@ -435,7 +455,7 @@ impl AbcomApp {
                                                             .color(egui::Color32::from_rgb(244, 245, 247))
                                                             .small(),
                                                     );
-                                                    if ui.small_button("✕").clicked() {
+                                                    if chip_remove_button(ui) {
                                                         remove_index = Some(index);
                                                     }
                                                 });

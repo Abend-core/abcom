@@ -644,6 +644,16 @@ impl AbcomApp {
 
         if let Some((index, accept)) = decided {
             let offer = self.pending_media_offers.remove(index);
+            if !accept {
+                // Refus : annoter le fil (message attribué à l'expéditeur).
+                let mut s = self.state.lock().unwrap();
+                let me = s.my_username.clone();
+                s.add_message(super::media::refused_media_message(
+                    &offer.from,
+                    &offer.filename,
+                    Some(me),
+                ));
+            }
             let _ = offer.decision_tx.send(accept);
         }
     }
