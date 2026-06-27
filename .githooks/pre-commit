@@ -1,0 +1,2 @@
+#!/bin/sh
+cargo fmt --check || { printf '\n[hook] Formate d'\''abord avec : cargo fmt\n\n'; exit 1; }
