@@ -261,6 +261,7 @@ mod tests {
                 filename: id.to_string(),
                 kind: MediaKind::File,
                 size_bytes: size,
+                url: None,
                 width: None,
                 height: None,
             },
@@ -360,7 +361,10 @@ mod tests {
                 finished |= p.finished;
             }
         }
-        assert!(waiting_seen, "état « en attente » attendu avant acceptation");
+        assert!(
+            waiting_seen,
+            "état « en attente » attendu avant acceptation"
+        );
         assert!(finished, "progression terminée attendue après acceptation");
 
         std::fs::remove_dir_all(&media_dir).ok();

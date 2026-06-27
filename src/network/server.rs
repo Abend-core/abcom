@@ -128,6 +128,7 @@ mod tests {
             timestamp: "14:00".to_string(),
             timestamp_epoch: None,
             to_user: None,
+            media: None,
         });
         let event = dispatch(packet).await.unwrap();
         assert!(matches!(event, AppEvent::MessageReceived(m) if m.content == "hello"));
