@@ -1,5 +1,8 @@
-//! Sélecteur de GIF façon Discord : barre de recherche + grille masonry de
-//! vignettes animées (Klipy), insertion du GIF choisi dans la conversation.
+//! Sélecteur de GIF + Mèmes façon Discord : barre de recherche + grille
+//! masonry de vignettes animées (Klipy), insertion dans la conversation.
+//!
+//! Attribution obligatoire ToS Klipy : logo « Powered by KLIPY » affiché
+//! dans le pied du sélecteur, adapté au thème clair/sombre.
 
 use eframe::egui;
 
@@ -9,8 +12,12 @@ use crate::message::{ChatMessage, MediaAttachment, MediaKind, SendRequest};
 
 use super::AbcomApp;
 
-/// Construit et envoie le message GIF (URL seule) vers la conversation courante,
-/// en réutilisant le même ciblage destinataire/diffusion que les messages texte.
+/// Logo attribution dark bg (texte blanc) — chargé une fois par le loader egui_extras.
+const ATTR_DARK: &[u8] = include_bytes!("../../assets/klipy/attribution_dark_bg.png");
+/// Logo attribution light bg (texte noir).
+const ATTR_LIGHT: &[u8] = include_bytes!("../../assets/klipy/attribution_light_bg.png");
+
+/// Construit et envoie le message GIF (URL seule) vers la conversation courante.
 fn send_gif(app: &mut AbcomApp, gif: &GifItem) {
     let (my_name, selected_peer_name, selected_addr, all_peers) = {
         let s = app.state.lock().unwrap();
@@ -78,13 +85,12 @@ fn send_gif(app: &mut AbcomApp, gif: &GifItem) {
 }
 
 impl AbcomApp {
-    /// Affiche la fenêtre du sélecteur de GIF (si ouvert) et gère recherche,
+    /// Affiche la fenêtre du sélecteur GIF+Mèmes (si ouvert) et gère recherche,
     /// pagination, sélection et fermeture au clic extérieur.
     pub(crate) fn show_gif_picker_window(&mut self, ctx: &egui::Context, gif_button_clicked: bool) {
         if !self.show_gif_picker {
             return;
         }
-        // Sans clé API, le sélecteur ne peut rien charger : on referme.
         let Some(key) = crate::config::klipy_api_key() else {
             self.show_gif_picker = false;
             return;
@@ -94,16 +100,16 @@ impl AbcomApp {
             super::UiLanguage::English => "en",
         };
 
-        // Premier affichage : charge les tendances.
+        // Premier affichage : charge les tendances GIF + Mèmes.
         let needs_initial = {
             let st = self.gif_feed.lock();
-            st.status == GifStatus::Idle && st.items.is_empty()
+            st.status == GifStatus::Idle && st.gif_raw.is_empty() && st.meme_raw.is_empty()
         };
         if needs_initial {
             self.gif_feed.load_trending(ctx, &key, locale);
         }
 
-        let search_hint = self.tr("Rechercher un GIF", "Search for a GIF");
+        let search_hint = self.tr("Rechercher des GIF et mèmes", "Search GIFs and memes");
         let loading_label = self.tr("Chargement…", "Loading…");
         let empty_label = self.tr("Aucun résultat", "No results");
         let error_label = self.tr("Erreur de chargement", "Loading error");
@@ -116,7 +122,7 @@ impl AbcomApp {
             .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-8.0, -60.0))
             .resizable(false)
             .collapsible(false)
-            .fixed_size([360.0, 420.0]);
+            .fixed_size([360.0, 440.0]);
 
         if let Some(resp) = window.show(ctx, |ui| {
             let edit = ui.add(
@@ -135,7 +141,7 @@ impl AbcomApp {
             // Instantané de l'état partagé pour le rendu de cette frame.
             let (items, status, has_next) = {
                 let st = self.gif_feed.lock();
-                (st.items.clone(), st.status.clone(), st.has_next)
+                (st.items(), st.status.clone(), st.has_next())
             };
 
             egui::ScrollArea::vertical()
@@ -161,16 +167,11 @@ impl AbcomApp {
                         return;
                     }
 
-                    // Grille masonry sur 2 colonnes (façon Discord) : on répartit
-                    // les vignettes en alternance, chacune calée sur la largeur de
-                    // colonne en gardant son ratio.
+                    // Grille masonry 2 colonnes : GIFs et mèmes entrelacés.
                     let col_w = (ui.available_width() - 6.0) / 2.0;
                     ui.columns(2, |cols| {
                         for (i, item) in items.iter().enumerate() {
                             let col = &mut cols[i % 2];
-                            // Taille forcée d'après le ratio : vignettes nettes,
-                            // uniformes en largeur, hauteur plafonnée pour les
-                            // GIF très allongés.
                             let size = super::media::gif_display_size(
                                 item.width,
                                 item.height,
@@ -205,12 +206,27 @@ impl AbcomApp {
                         ui.vertical_centered(|ui| ui.spinner());
                     }
                 });
+
+            // ── Attribution Klipy (ToS obligatoire) ──────────────────────────
+            ui.separator();
+            let dark = ui.visuals().dark_mode;
+            let (bytes, uri) = if dark {
+                (ATTR_DARK, "bytes://klipy_attr_dark")
+            } else {
+                (ATTR_LIGHT, "bytes://klipy_attr_light")
+            };
+            ui.add_space(2.0);
+            ui.vertical_centered(|ui| {
+                ui.add(
+                    egui::Image::from_bytes(uri, bytes).fit_to_exact_size(egui::vec2(140.0, 30.0)),
+                );
+            });
+            ui.add_space(2.0);
         }) {
             picker_rect = Some(resp.response.rect);
         }
 
-        // Recherche anti-rebond : ~300 ms après la dernière frappe, si le texte
-        // diffère de la requête déjà chargée.
+        // Recherche anti-rebond : ~300 ms après la dernière frappe.
         let pending = self.gif_query.trim().to_string();
         let feed_query = self.gif_feed.lock().query.clone();
         if pending != feed_query {
@@ -230,7 +246,7 @@ impl AbcomApp {
             self.show_gif_picker = false;
         }
 
-        // Fermeture au clic en dehors de la fenêtre (hors clic sur le bouton GIF).
+        // Fermeture au clic en dehors de la fenêtre.
         if !gif_button_clicked && ctx.input(|i| i.pointer.any_pressed()) {
             if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
                 if let Some(rect) = picker_rect {
