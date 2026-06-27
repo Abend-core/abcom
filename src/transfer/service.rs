@@ -380,3 +380,232 @@ fn snapshot(
         detail,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    use tokio::net::{TcpListener, TcpStream};
+    use tokio::sync::mpsc;
+
+    use crate::message::AppEvent;
+    use crate::transfer::{
+        TransferDecision, TransferDirection, TransferEntry, TransferEntryKind, TransferManifest,
+        TransferOffer, TransferRequest, TransferStatus,
+    };
+
+    fn manifest(from: &str, to: &str, filename: &str, size: u64) -> TransferManifest {
+        TransferManifest {
+            transfer_id: "test-42".to_string(),
+            from: from.to_string(),
+            to: to.to_string(),
+            label: filename.to_string(),
+            item_count: 1,
+            total_bytes: size,
+            entries: vec![TransferEntry {
+                relative_path: filename.to_string(),
+                kind: TransferEntryKind::File,
+                size_bytes: size,
+            }],
+        }
+    }
+
+    #[test]
+    fn test_snapshot_fields() {
+        let m = manifest("alice", "bob", "doc.txt", 100);
+        let p = super::snapshot(
+            &m,
+            "bob",
+            TransferDirection::Upload,
+            TransferStatus::Running,
+            42,
+            Some("doc.txt".to_string()),
+            String::new(),
+        );
+        assert_eq!(p.transfer_id, "test-42");
+        assert_eq!(p.peer, "bob");
+        assert_eq!(p.total_bytes, 100);
+        assert_eq!(p.bytes_done, 42);
+        assert_eq!(p.direction, TransferDirection::Upload);
+        assert_eq!(p.status, TransferStatus::Running);
+        assert_eq!(p.current_path, Some("doc.txt".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_receive_rejects_zero_header_length() {
+        let (event_tx, _) = mpsc::channel(4);
+        let (offer_tx, _) = mpsc::channel(4);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            super::receive_transfer(stream, event_tx, offer_tx).await
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        client.write_u32(0).await.unwrap();
+        drop(client);
+
+        let result = tokio::time::timeout(Duration::from_secs(2), task)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(result.is_err(), "header_len=0 doit retourner une erreur");
+    }
+
+    #[tokio::test]
+    async fn test_receive_refuses_when_no_ui() {
+        // offer_tx sans receiver → l'UI est absente → refus automatique (envoi 0)
+        let (event_tx, _) = mpsc::channel(4);
+        let (offer_tx, offer_rx) = mpsc::channel(1);
+        drop(offer_rx);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let m = manifest("alice", "bob", "f.txt", 5);
+        let header = serde_json::to_vec(&m).unwrap();
+
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let _ = super::receive_transfer(stream, event_tx, offer_tx).await;
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        client.write_u32(header.len() as u32).await.unwrap();
+        client.write_all(&header).await.unwrap();
+
+        let response = tokio::time::timeout(Duration::from_secs(2), client.read_u8())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(response, 0, "doit envoyer 0 quand l'UI est absente");
+    }
+
+    #[tokio::test]
+    async fn test_receive_user_rejects() {
+        let (event_tx, mut event_rx) = mpsc::channel(8);
+        let (offer_tx, mut offer_rx) = mpsc::channel(1);
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let m = manifest("alice", "bob", "f.txt", 5);
+        let header = serde_json::to_vec(&m).unwrap();
+
+        tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let _ = super::receive_transfer(stream, event_tx, offer_tx).await;
+        });
+
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        client.write_u32(header.len() as u32).await.unwrap();
+        client.write_all(&header).await.unwrap();
+
+        let offer: TransferOffer = tokio::time::timeout(Duration::from_secs(2), offer_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(offer.from, "alice");
+        offer
+            .decision_tx
+            .send(TransferDecision {
+                accept: false,
+                dest_dir: None,
+            })
+            .unwrap();
+
+        let response = tokio::time::timeout(Duration::from_secs(2), client.read_u8())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(response, 0, "doit envoyer 0 quand l'utilisateur refuse");
+
+        let event = tokio::time::timeout(Duration::from_secs(2), event_rx.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        match event {
+            AppEvent::TransferUpdated(p) => {
+                assert_eq!(p.status, TransferStatus::Rejected)
+            }
+            _ => panic!("Attendu TransferUpdated(Rejected)"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_full_transfer_round_trip() {
+        let pid = std::process::id();
+        let src_dir = std::env::temp_dir().join(format!("abcom-send-{}", pid));
+        let dest_dir = std::env::temp_dir().join(format!("abcom-recv-{}", pid));
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(src_dir.join("hello.txt"), b"hello").unwrap();
+
+        let (send_event_tx, mut send_event_rx) = mpsc::channel(16);
+        let (recv_event_tx, _) = mpsc::channel(16);
+        let (offer_tx, mut offer_rx) = mpsc::channel(1);
+
+        // Le listener reçoit le transfert
+        let recv_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let recv_port = recv_listener.local_addr().unwrap().port();
+
+        let recv_task = tokio::spawn(async move {
+            let (stream, _) = recv_listener.accept().await.unwrap();
+            super::receive_transfer(stream, recv_event_tx, offer_tx).await
+        });
+
+        // Auto-accepter l'offre
+        let dest_dir_clone = dest_dir.clone();
+        tokio::spawn(async move {
+            if let Some(offer) = offer_rx.recv().await {
+                let _ = offer.decision_tx.send(TransferDecision {
+                    accept: true,
+                    dest_dir: Some(dest_dir_clone),
+                });
+            }
+        });
+
+        // send_transfer fait to_addr.port() + 1 pour joindre le service de transfert.
+        // Le listener est sur recv_port → on passe recv_port - 1 comme port de chat.
+        let to_addr: std::net::SocketAddr =
+            format!("127.0.0.1:{}", recv_port - 1).parse().unwrap();
+        let request = TransferRequest {
+            from: "alice".to_string(),
+            recipient: "bob".to_string(),
+            to_addr,
+            paths: vec![src_dir.join("hello.txt")],
+        };
+
+        let result = super::send_transfer(request, send_event_tx).await;
+        assert!(result.is_ok(), "send_transfer a échoué : {:?}", result.err());
+
+        // Attendre que receive_transfer ait fini d'écrire sur disque
+        tokio::time::timeout(Duration::from_secs(5), recv_task)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+
+        // Vérifier l'événement Completed
+        let mut completed = false;
+        loop {
+            match tokio::time::timeout(Duration::from_millis(200), send_event_rx.recv()).await {
+                Ok(Some(AppEvent::TransferUpdated(p))) if p.status == TransferStatus::Completed => {
+                    completed = true;
+                    break;
+                }
+                Ok(Some(_)) => continue,
+                _ => break,
+            }
+        }
+        assert!(completed, "Aucun événement Completed reçu côté envoi");
+
+        // Vérifier le fichier reçu sur disque
+        let received = dest_dir.join("hello.txt");
+        assert!(received.exists(), "Fichier non créé à destination");
+        assert_eq!(std::fs::read(&received).unwrap(), b"hello");
+
+        let _ = std::fs::remove_dir_all(&src_dir);
+        let _ = std::fs::remove_dir_all(&dest_dir);
+    }
+}
