@@ -2,12 +2,10 @@ use eframe::egui;
 
 use crate::app::AppState;
 use crate::message::{
-    AppEvent, AvatarRequest, GroupAction, MessageAck, MessageAckRequest, ReadReceipt,
+    AppEvent, AvatarRequest, ChatMessage, GroupAction, MessageAck, MessageAckRequest, ReadReceipt,
     ReadReceiptRequest,
 };
-use crate::transfer::TransferStatus;
-
-use super::{sound::play_notification_sound, AbcomApp, PendingOffer};
+use super::{sound::play_notification_sound, AbcomApp};
 
 impl AbcomApp {
     /// Chargement paresseux des textures emoji (nécessite le contexte egui)
@@ -71,10 +69,7 @@ impl AbcomApp {
                                 message_hash: msg_hash,
                                 timestamp: chrono::Local::now().format("%H:%M").to_string(),
                             };
-                            let ack_req = MessageAckRequest {
-                                to_addr: peer.addr,
-                                ack,
-                            };
+                            let ack_req = MessageAckRequest { to_addr: peer.addr, ack };
 
                             // ReadReceipt uniquement si la conv est déjà ouverte + fenêtre focalisée
                             let already_reading = self.window_focused
@@ -100,6 +95,8 @@ impl AbcomApp {
 
                     s.add_message(msg.clone());
                     if msg.from != s.my_username {
+                        self.last_notification = Some(format!("{}: {}", msg.from, msg.content));
+                        self.notification_time = std::time::Instant::now();
                         self.has_unread = true;
                         let source_conv: Option<String> = if msg.to_user.is_none() {
                             None
@@ -119,10 +116,7 @@ impl AbcomApp {
                     // notre avatar pour qu'il s'affiche chez ce pair.
                     if !self.avatar_sent_to.contains(&username) {
                         if let Some(announce) = s.avatar_announce() {
-                            let request = AvatarRequest {
-                                to_addr: addr,
-                                announce,
-                            };
+                            let request = AvatarRequest { to_addr: addr, announce };
                             if self.send_avatar_tx.try_send(request).is_ok() {
                                 self.avatar_sent_to.insert(username);
                             }
@@ -191,55 +185,86 @@ impl AbcomApp {
                     // Forcer le rechargement de la texture mise en cache.
                     self.avatar_textures.remove(&from);
                 }
-                AppEvent::TransferUpdated(progress) => {
-                    let transfer_id = progress.transfer_id.clone();
-                    let status = progress.status.clone();
-                    let label = progress.label.clone();
-                    let peer = progress.peer.clone();
-                    let _detail = progress.detail.clone();
-                    drop(s);
-
-                    self.transfer_progress.insert(transfer_id, progress);
-
-                    match status {
-                        TransferStatus::Completed => {
-                            eprintln!("[transfer] Terminé : {} ({})", label, peer);
+                AppEvent::MediaIncoming(header) => {
+                    // Début de réception d'un média : on crée le message (carte
+                    // + progression) ; les octets arrivent dans media/<id>.
+                    let from = header.from.clone();
+                    let msg = ChatMessage {
+                        from: header.from,
+                        content: String::new(),
+                        timestamp: header.timestamp,
+                        timestamp_epoch: header.timestamp_epoch,
+                        to_user: header.to_user,
+                        media: Some(header.media),
+                    };
+                    s.add_message(msg.clone());
+                    if from != s.my_username {
+                        self.last_notification = Some(format!(
+                            "{} {}",
+                            from,
+                            self.tr("vous envoie un fichier", "is sending you a file")
+                        ));
+                        self.notification_time = std::time::Instant::now();
+                        self.has_unread = true;
+                        if self.enable_sound_notifications {
+                            play_notification_sound();
                         }
-                        TransferStatus::Failed => {
-                            eprintln!("[transfer] Échec : {} ({})", label, peer);
-                        }
-                        _ => {}
                     }
-
-                    s = self.state.lock().unwrap();
+                }
+                AppEvent::MediaProgressed(progress) => {
+                    let id = progress.id.clone();
+                    if progress.failed {
+                        // Refus ou erreur : on retire la carte, le message et le
+                        // fichier (côté émetteur comme destinataire).
+                        self.media_progress.remove(&id);
+                        self.media_textures.remove(&id);
+                        s.remove_media_message(&id);
+                        self.last_notification = Some(
+                            self.tr("Transfert média interrompu", "Media transfer interrupted")
+                                .to_string(),
+                        );
+                        self.notification_time = std::time::Instant::now();
+                    } else if progress.finished {
+                        self.media_progress.remove(&id);
+                        // Le fichier est complet : recharger une éventuelle vignette.
+                        self.media_textures.remove(&id);
+                    } else {
+                        self.media_progress.insert(id, progress);
+                    }
+                }
+                AppEvent::MediaDeclined(header) => {
+                    // Côté émetteur : on retire la carte « en attente » et on
+                    // annote le fil que le fichier a été refusé.
+                    self.media_progress.remove(&header.media.id);
+                    self.media_textures.remove(&header.media.id);
+                    s.remove_media_message(&header.media.id);
+                    s.add_message(super::media::refused_media_message(
+                        &header.from,
+                        &header.media.filename,
+                        header.to_user.clone(),
+                    ));
                 }
             }
         }
         s.clear_typing_if_old();
     }
 
-    /// Récupère les propositions de réception de fichiers et purge celles
-    /// qui ont expiré (le récepteur les a alors auto-refusées côté réseau).
-    pub(crate) fn process_transfer_offers(&mut self) {
-        while let Ok(offer) = self.offer_rx.try_recv() {
+    /// Récupère les offres de médias volumineux (> 1 Go) en attente d'accord et
+    /// les ajoute au bandeau d'acceptation.
+    pub(crate) fn process_media_offers(&mut self) {
+        while let Ok(offer) = self.media_offer_rx.try_recv() {
+            self.last_notification = Some(format!(
+                "{} {}",
+                offer.from,
+                self.tr("vous envoie un fichier", "is sending you a file")
+            ));
+            self.notification_time = std::time::Instant::now();
             self.has_unread = true;
             if self.enable_sound_notifications {
                 play_notification_sound();
             }
-            self.pending_offers.push(PendingOffer {
-                transfer_id: offer.transfer_id,
-                from: offer.from,
-                label: offer.label,
-                total_bytes: offer.total_bytes,
-                item_count: offer.item_count,
-                decision_tx: offer.decision_tx,
-                received_at: std::time::Instant::now(),
-            });
+            self.pending_media_offers.push(offer);
         }
-
-        // Le récepteur auto-refuse au bout de 120 s ; on retire la carte avant.
-        self.pending_offers
-            .retain(|o| o.received_at.elapsed() < std::time::Duration::from_secs(115));
     }
 
     /// Tâches périodiques : nettoyage des pairs inactifs et retry ACK
