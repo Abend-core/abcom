@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use super::AppState;
+use super::{receipts::ReceiptEntry, AppState};
 use crate::message::{Group, PeerRecord};
 
 impl AppState {
@@ -21,6 +21,33 @@ impl AppState {
                 if let Ok(msgs) = serde_json::from_str(&content) {
                     self.messages = msgs;
                 }
+            }
+        }
+    }
+
+    pub(super) fn load_receipts(&mut self) {
+        if self.receipts_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&self.receipts_path) {
+                if let Ok(map) = serde_json::from_str::<HashMap<String, ReceiptEntry>>(&content) {
+                    self.receipts = map
+                        .into_iter()
+                        .filter_map(|(k, v)| k.parse::<u64>().ok().map(|h| (h, v)))
+                        .collect();
+                }
+            }
+        }
+    }
+
+    pub(crate) fn save_receipts(&self) {
+        // Sérialise les clés u64 en String (JSON n'accepte que des clés string).
+        let map: HashMap<String, &ReceiptEntry> = self
+            .receipts
+            .iter()
+            .map(|(k, v)| (k.to_string(), v))
+            .collect();
+        if let Ok(json) = serde_json::to_string_pretty(&map) {
+            if let Err(e) = self.persist_json_atomic(&self.receipts_path, &json) {
+                eprintln!("[app] Erreur écriture receipts.json: {}", e);
             }
         }
     }
@@ -215,6 +242,29 @@ mod tests {
         s2.load_messages();
         assert_eq!(s2.messages.len(), 1);
         assert_eq!(s2.messages[0].content, "coucou");
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    // ── save_receipts + load_receipts round-trip ──────────────────────────
+
+    #[test]
+    fn receipts_round_trip() {
+        let dir = tmp_dir("receipts_rt");
+        let mut s1 = state_in(&dir, "alice");
+        s1.mark_message_delivered_by(42, "bob".to_string());
+        s1.mark_message_read_by(42, "bob".to_string());
+        s1.mark_message_delivered_by(42, "carol".to_string());
+        s1.save_receipts();
+
+        let mut s2 = state_in(&dir, "alice");
+        s2.load_receipts();
+        // L'état lu/reçu doit survivre au rechargement (clé u64 → string → u64).
+        let rs = s2.get_receipt_state(42, true);
+        assert!(rs.delivered);
+        assert!(rs.read);
+        let detail = rs.detail.unwrap();
+        assert_eq!(detail.delivered_by, vec!["bob", "carol"]);
+        assert_eq!(detail.read_by, vec!["bob"]);
         std::fs::remove_dir_all(&dir).ok();
     }
 

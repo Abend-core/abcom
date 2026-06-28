@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
@@ -15,7 +15,7 @@ mod transfers;
 mod typing;
 
 pub use peers::Peer;
-pub use receipts::PendingMessage;
+pub use receipts::{PendingMessage, ReceiptEntry, ReceiptState};
 
 pub struct AppState {
     pub my_username: String,
@@ -25,7 +25,8 @@ pub struct AppState {
     pub selected_conversation: Option<String>,
     pub typing_users: HashMap<String, SystemTime>,
     pub read_counts: HashMap<String, usize>,
-    pub read_receipts: HashMap<u64, HashSet<String>>,
+    /// État de livraison/lecture persisté par hash de message.
+    pub receipts: HashMap<u64, ReceiptEntry>,
     pub pending_messages: HashMap<u64, PendingMessage>,
     pub peer_records: Vec<PeerRecord>,
     /// Avatar local (octets PNG normalisés), `None` si non défini.
@@ -34,6 +35,7 @@ pub struct AppState {
     pub peer_avatars: HashMap<String, Vec<u8>>,
     history_path: PathBuf,
     read_counts_path: PathBuf,
+    receipts_path: PathBuf,
     groups_path: PathBuf,
     peer_records_path: PathBuf,
     avatar_path: PathBuf,
@@ -47,6 +49,7 @@ impl AppState {
 
         let history_path = base.join("messages.json");
         let read_counts_path = base.join("read_counts.json");
+        let receipts_path = base.join("receipts.json");
         let groups_path = base.join("groups.json");
         let peer_records_path = base.join("peer_records.json");
         let avatar_path = base.join("avatar.png");
@@ -61,13 +64,14 @@ impl AppState {
             selected_conversation: None,
             typing_users: HashMap::new(),
             read_counts: HashMap::new(),
-            read_receipts: HashMap::new(),
+            receipts: HashMap::new(),
             pending_messages: HashMap::new(),
             peer_records: Vec::new(),
             my_avatar: None,
             peer_avatars: HashMap::new(),
             history_path,
             read_counts_path,
+            receipts_path,
             groups_path,
             peer_records_path,
             avatar_path,
@@ -77,6 +81,7 @@ impl AppState {
 
         state.load_messages();
         state.load_read_counts();
+        state.load_receipts();
         state.load_groups();
         state.load_peer_records();
         state.load_avatar();
@@ -90,6 +95,7 @@ impl AppState {
     pub fn new_with_base(username: &str, base: &std::path::Path) -> Self {
         let history_path = base.join("messages.json");
         let read_counts_path = base.join("read_counts.json");
+        let receipts_path = base.join("receipts.json");
         let groups_path = base.join("groups.json");
         let peer_records_path = base.join("peer_records.json");
         let avatar_path = base.join("avatar.png");
@@ -103,13 +109,14 @@ impl AppState {
             selected_conversation: None,
             typing_users: HashMap::new(),
             read_counts: HashMap::new(),
-            read_receipts: HashMap::new(),
+            receipts: HashMap::new(),
             pending_messages: HashMap::new(),
             peer_records: Vec::new(),
             my_avatar: None,
             peer_avatars: HashMap::new(),
             history_path,
             read_counts_path,
+            receipts_path,
             groups_path,
             peer_records_path,
             avatar_path,

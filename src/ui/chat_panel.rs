@@ -1,7 +1,7 @@
 use chrono::{Datelike, Local, NaiveDate, TimeZone};
 use eframe::egui;
 
-use crate::app::AppState;
+use crate::app::{AppState, ReceiptState};
 use crate::message::ChatMessage;
 
 use super::{AbcomApp, UiLanguage};
@@ -179,14 +179,63 @@ fn render_day_divider(ui: &mut egui::Ui, label: &str) {
     ui.add_space(6.0);
 }
 
+/// Pré-calcule, pour chaque message qui ouvre un groupe, le hash du dernier
+/// message de ce groupe. Les indices qui ne démarrent pas un groupe reçoivent `None`.
+fn compute_group_last_hashes(msgs: &[ChatMessage]) -> Vec<Option<u64>> {
+    let n = msgs.len();
+    let mut result = vec![None; n];
+    if n == 0 {
+        return result;
+    }
+    let mut group_start: Option<usize> = None;
+    let mut last_day: Option<NaiveDate> = None;
+
+    for i in 0..n {
+        let msg = &msgs[i];
+        let day = message_day(msg);
+        let day_changed = match (day, last_day) {
+            (Some(d), Some(prev)) => d != prev,
+            (Some(_), None) => i > 0,
+            _ => false,
+        };
+        let is_new_group = if i == 0 {
+            true
+        } else {
+            let prev = &msgs[i - 1];
+            starts_new_group(
+                Some(prev.from.as_str()),
+                prev.timestamp_epoch,
+                &msg.from,
+                msg.timestamp_epoch,
+                day_changed,
+            )
+        };
+        if is_new_group {
+            if let Some(start) = group_start {
+                result[start] = Some(AppState::message_hash(&msgs[i - 1]));
+            }
+            group_start = Some(i);
+        }
+        if day.is_some() {
+            last_day = day;
+        }
+    }
+    if let Some(start) = group_start {
+        result[start] = Some(AppState::message_hash(&msgs[n - 1]));
+    }
+    result
+}
+
 /// En-tête d'un groupe de messages : nom coloré suivi, collé à droite, de
 /// l'heure d'envoi (format 24 h) et, pour nos messages, de l'accusé de lecture.
+/// `receipt` est `Some((state, group_last_hash))` uniquement pour nos propres messages.
 fn render_message_header(
     ui: &mut egui::Ui,
     display_name: &str,
     timestamp: &str,
     name_color: egui::Color32,
-    receipt: Option<(bool, bool)>,
+    receipt: Option<(&ReceiptState, u64)>,
+    language: UiLanguage,
 ) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
@@ -200,8 +249,49 @@ fn render_message_header(
                 .small()
                 .color(egui::Color32::from_gray(140)),
         );
-        if let Some((delivered, read)) = receipt {
-            show_receipt(ui, delivered, read);
+        if let Some((state, hash)) = receipt {
+            // En 1-à-1 : coches. En groupe / « Tous » (détail présent) : bouton
+            // « … » qui ouvre la liste nominative reçu/lu, sans coches (elles
+            // n'ont pas de sens à plusieurs, certains membres pouvant être absents).
+            if let Some(detail) = &state.detail {
+                let popup_id = ui.make_persistent_id(("receipt_popup", hash));
+                let btn = ui.small_button("...");
+                if btn.clicked() {
+                    ui.memory_mut(|m| m.toggle_popup(popup_id));
+                }
+                egui::popup_below_widget(
+                    ui,
+                    popup_id,
+                    &btn,
+                    egui::PopupCloseBehavior::CloseOnClickOutside,
+                    |ui| {
+                        ui.set_min_width(160.0);
+                        let (delivered_lbl, read_lbl) = match language {
+                            UiLanguage::French => ("Reçu par", "Lu par"),
+                            UiLanguage::English => ("Delivered to", "Read by"),
+                        };
+                        ui.label(egui::RichText::new(delivered_lbl).strong());
+                        if detail.delivered_by.is_empty() {
+                            ui.label(egui::RichText::new("—").weak());
+                        } else {
+                            for name in &detail.delivered_by {
+                                ui.label(name);
+                            }
+                        }
+                        ui.separator();
+                        ui.label(egui::RichText::new(read_lbl).strong());
+                        if detail.read_by.is_empty() {
+                            ui.label(egui::RichText::new("—").weak());
+                        } else {
+                            for name in &detail.read_by {
+                                ui.label(name);
+                            }
+                        }
+                    },
+                );
+            } else {
+                show_receipt(ui, state);
+            }
         }
     });
 }
@@ -507,10 +597,15 @@ impl AbcomApp {
                     // Vue multi-personnes (groupe `#…` ou « Tous ») : chaque pair
                     // reçoit une couleur distincte ; en 1-à-1 on garde le bleu.
                     let multi_person = selected_conv.as_deref().is_none_or(|c| c.starts_with('#'));
+
+                    // Pour chaque message qui démarre un groupe, hash du dernier
+                    // message de ce groupe — les coches reflètent ce dernier message.
+                    let group_last_hashes = compute_group_last_hashes(&conv_messages);
+
                     let mut last_from: Option<&str> = None;
                     let mut last_epoch: Option<u64> = None;
                     let mut last_day: Option<NaiveDate> = None;
-                    for msg in &conv_messages {
+                    for (idx, msg) in conv_messages.iter().enumerate() {
                         let day = message_day(msg);
                         let day_changed = match (day, last_day) {
                             (Some(d), Some(prev)) => d != prev,
@@ -538,12 +633,18 @@ impl AbcomApp {
                         } else {
                             PEER_NAME_COLOR
                         };
-                        // Accusé de réception de nos messages : ✓ envoyé,
-                        // ✓✓ gris livré (ACK), ✓✓ bleu lu (ReadReceipt).
-                        let receipt = is_me.then(|| {
-                            let hash = AppState::message_hash(msg);
-                            let s = self.state.lock().unwrap();
-                            (!s.is_message_pending(hash), s.get_read_count(hash) > 0)
+
+                        // Accusé de réception : calculé sur le DERNIER message du
+                        // groupe pour que l'état reflète le groupe entier, pas
+                        // seulement le premier message. En 1-à-1 : nos messages
+                        // (coches). En groupe / « Tous » : tous les messages, pour
+                        // que chacun puisse consulter le détail (« … »).
+                        let show_receipt_here = starts_group && (multi_person || is_me);
+                        let receipt: Option<(ReceiptState, u64)> = show_receipt_here.then(|| {
+                            let last_hash = group_last_hashes[idx]
+                                .unwrap_or_else(|| AppState::message_hash(msg));
+                            let st = self.state.lock().unwrap();
+                            (st.get_receipt_state(last_hash, multi_person), last_hash)
                         });
 
                         if starts_group {
@@ -568,7 +669,8 @@ impl AbcomApp {
                                         display,
                                         &header_time(msg),
                                         name_color,
-                                        receipt,
+                                        receipt.as_ref().map(|(rs, h)| (rs, *h)),
+                                        language,
                                     );
                                     if let Some(action) = render_message_body(
                                         ui,
@@ -737,17 +839,21 @@ pub(crate) fn format_bytes(bytes: u64) -> String {
 /// - ✓  gris  = envoyé, livraison en attente
 /// - ✓✓ gris  = livré (ACK reçu), pas encore lu
 /// - ✓✓ bleu  = lu (ReadReceipt reçu)
-fn show_receipt(ui: &mut egui::Ui, delivered: bool, read: bool) {
-    let double = delivered || read;
+fn show_receipt(ui: &mut egui::Ui, state: &ReceiptState) {
+    let double = state.delivered || state.read;
     let w = if double { 17.0_f32 } else { 9.0_f32 };
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 12.0), egui::Sense::hover());
     if !ui.is_rect_visible(rect) {
         return;
     }
-    let color = if read {
+    let color = if state.read {
         egui::Color32::from_rgb(80, 180, 255) // bleu = lu
+    } else if state.delivered {
+        egui::Color32::from_gray(160) // gris = livré
+    } else if state.is_pending {
+        egui::Color32::from_gray(110) // gris clair = en transit
     } else {
-        egui::Color32::from_gray(160) // gris = envoyé ou livré
+        egui::Color32::from_gray(130) // gris moyen = envoyé (état inconnu)
     };
     let stroke = egui::Stroke::new(1.5, color);
     let p = ui.painter();

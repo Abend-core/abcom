@@ -7,6 +7,17 @@ use crate::message::{
     ReadReceiptRequest,
 };
 
+/// Clé de conversation à laquelle appartient un message entrant, du point de vue
+/// du destinataire : `None` pour un message diffusé (« Tous »), `Some(#groupe)`
+/// pour un groupe, `Some(expéditeur)` pour un message privé.
+fn incoming_conversation_key(msg: &ChatMessage) -> Option<String> {
+    match &msg.to_user {
+        None => None,
+        Some(g) if g.starts_with('#') => Some(g.clone()),
+        Some(_) => Some(msg.from.clone()),
+    }
+}
+
 impl AbcomApp {
     /// Chargement paresseux des textures emoji (nécessite le contexte egui)
     pub(crate) fn lazy_load_emoji(&mut self, ctx: &egui::Context) {
@@ -57,40 +68,48 @@ impl AbcomApp {
         while let Ok(evt) = self.event_rx.try_recv() {
             match evt {
                 AppEvent::MessageReceived(msg) => {
-                    // ACK automatique (livraison) pour les messages privés.
-                    // Le ReadReceipt (lecture) n'est envoyé que si la conversation
-                    // est déjà ouverte et la fenêtre active — sinon différé à l'ouverture.
-                    if msg.to_user.is_some() && msg.from != s.my_username {
-                        if let Some(peer) = s.peers.iter().find(|p| p.username == msg.from) {
+                    // ACK automatique (livraison) pour tout message reçu d'un autre
+                    // pair, qu'il soit privé, de groupe (#…) ou diffusé (« Tous »).
+                    // L'ACK repart toujours vers l'expéditeur (msg.from). Le
+                    // ReadReceipt (lecture) n'est envoyé que si la conversation
+                    // correspondante est déjà ouverte et la fenêtre active.
+                    if msg.from != s.my_username {
+                        let recipients = s.receipt_recipients(&msg);
+                        if !recipients.is_empty() {
                             let msg_hash = AppState::message_hash(&msg);
-                            let ack = MessageAck {
-                                from: s.my_username.clone(),
-                                to: msg.from.clone(),
-                                message_hash: msg_hash,
-                                timestamp: chrono::Local::now().format("%H:%M").to_string(),
-                            };
-                            let ack_req = MessageAckRequest {
-                                to_addr: peer.addr,
-                                ack,
-                            };
+                            let now = chrono::Local::now().format("%H:%M").to_string();
 
-                            // ReadReceipt uniquement si la conv est déjà ouverte + fenêtre focalisée
-                            let already_reading = self.window_focused
-                                && s.selected_conversation == Some(msg.from.clone());
-                            let receipt_req = already_reading.then(|| ReadReceiptRequest {
-                                to_addr: peer.addr,
-                                receipt: ReadReceipt {
-                                    from: s.my_username.clone(),
-                                    to: msg.from.clone(),
-                                    message_hash: msg_hash,
-                                    timestamp: chrono::Local::now().format("%H:%M").to_string(),
-                                },
-                            });
+                            // Conversation à laquelle appartient ce message côté
+                            // destinataire : None = « Tous », Some(#groupe), ou
+                            // Some(expéditeur) pour un message privé.
+                            let conv_key = incoming_conversation_key(&msg);
+                            let already_reading =
+                                self.window_focused && s.selected_conversation == conv_key;
 
+                            let my_name = s.my_username.clone();
                             drop(s);
-                            let _ = self.send_ack_tx.try_send(ack_req);
-                            if let Some(rr) = receipt_req {
-                                let _ = self.send_read_receipt_tx.try_send(rr);
+                            for addr in recipients {
+                                let _ = self.send_ack_tx.try_send(MessageAckRequest {
+                                    to_addr: addr,
+                                    ack: MessageAck {
+                                        from: my_name.clone(),
+                                        to: msg.from.clone(),
+                                        message_hash: msg_hash,
+                                        timestamp: now.clone(),
+                                    },
+                                });
+                                if already_reading {
+                                    let _ =
+                                        self.send_read_receipt_tx.try_send(ReadReceiptRequest {
+                                            to_addr: addr,
+                                            receipt: ReadReceipt {
+                                                from: my_name.clone(),
+                                                to: msg.from.clone(),
+                                                message_hash: msg_hash,
+                                                timestamp: now.clone(),
+                                            },
+                                        });
+                                }
                             }
                             s = self.state.lock().unwrap();
                         }
@@ -180,10 +199,13 @@ impl AbcomApp {
                     }
                 },
                 AppEvent::ReadReceiptReceived(receipt) => {
-                    s.mark_message_read(receipt.message_hash, receipt.from.clone());
+                    s.mark_message_read_by(receipt.message_hash, receipt.from.clone());
+                    s.save_receipts();
                 }
                 AppEvent::MessageAckReceived(ack) => {
+                    s.mark_message_delivered_by(ack.message_hash, ack.from.clone());
                     s.mark_message_acked(ack.message_hash);
+                    s.save_receipts();
                 }
                 AppEvent::AvatarReceived(announce) => {
                     let from = announce.from.clone();
