@@ -17,6 +17,7 @@ Il donne une vue d'ensemble de l'état du développement en cours.
 
 | Feature | Branche | Description | Mergé le |
 |---|---|---|---|
+| GIF, Mèmes & Stickers | `feature/gif` | Sélecteur Klipy 3 onglets, affichage animé dans le fil, attribution ToS, crédits | 2026-06-28 |
 | Gestion des médias | `feature/gestion-medias` | Streaming par morceaux, vignette/visionneuse, acceptation > 1 Go, remplace l'ancien transfert | 2026-06-27 |
 | Correctif accusés de réception | `feature/fix-receipts` | NetworkPacket taggé + logique ✓/✓✓ gris/✓✓ bleu | 2026-06-23 |
 | Nettoyage racine du projet | `feature/root-cleanup` | Suppression .old.md, dist/, specification/, réorganisation | 2026-06-23 |

@@ -88,6 +88,7 @@ mod tests {
             timestamp: "10:00".to_string(),
             timestamp_epoch: None,
             to_user: Some("bob".to_string()),
+            media: None,
         });
         let expected = serde_json::to_vec(&packet).unwrap();
 
@@ -118,6 +119,7 @@ mod tests {
             timestamp: "14:30".to_string(),
             timestamp_epoch: Some(1_750_000_000),
             to_user: None,
+            media: None,
         });
 
         let recv = tokio::spawn(async move {
@@ -153,6 +155,7 @@ mod tests {
             timestamp: "10:00".to_string(),
             timestamp_epoch: None,
             to_user: None,
+            media: None,
         });
         super::send_packet(addr, packet).await;
     }

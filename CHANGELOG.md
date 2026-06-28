@@ -8,6 +8,12 @@ Format basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/), versi
 ## [Non publié] — dev
 
 ### Ajouté
+- Sélecteur de contenu Klipy : GIF animés, mèmes statiques et stickers en 3 onglets indépendants (GIF par défaut)
+- Recherche Klipy avec debounce 300 ms, scroll infini et pagination par onglet
+- Affichage des GIF animés directement dans le fil de conversation (360×300 px max, ratio préservé)
+- Transport GIF par URL uniquement — chaque pair charge le contenu depuis le CDN Klipy
+- Attribution « Powered by KLIPY » intégrée dans le pied du sélecteur (dark/light)
+- Crédits restructurés : sections Abcom, Klipy, OpenEmoji et Inter avec détails complets
 - Règles de workflow Git (`git.md`) pour l'équipe et les agents IA
 - Fichier `AVANCEMENT.md` pour le suivi des features sur `dev`
 - Script `scripts/run-multi.sh` pour tester la connexion P2P en local
