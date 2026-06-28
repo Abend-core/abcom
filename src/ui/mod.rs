@@ -13,14 +13,15 @@ use crate::message::{
 
 mod avatar;
 mod chat_panel;
-mod media;
-mod settings;
 pub mod composer;
 mod emoji_picker;
 mod events;
+mod gif_picker;
 mod group_modal;
 mod input_bar;
 mod markdown;
+mod media;
+mod settings;
 mod sidebar;
 mod sound;
 
@@ -46,6 +47,15 @@ pub(crate) enum SettingsTab {
     License,
 }
 
+/// Onglet actif du sélecteur de contenu Klipy (GIF / Mèmes / Stickers).
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum GifPickerTab {
+    #[default]
+    Gif,
+    Meme,
+    Sticker,
+}
+
 /// État de l'application UI
 pub(crate) struct AbcomApp {
     pub(crate) state: Arc<Mutex<AppState>>,
@@ -64,6 +74,20 @@ pub(crate) struct AbcomApp {
     pub(crate) input_scroll_lines: f32,
     pub(crate) show_attachment_menu: bool,
     pub(crate) show_emoji_picker: bool,
+    /// Sélecteur de contenu Klipy ouvert (GIF, Mèmes, Stickers).
+    pub(crate) show_gif_picker: bool,
+    /// Onglet actif du sélecteur Klipy.
+    pub(crate) gif_picker_tab: GifPickerTab,
+    /// Texte courant de la barre de recherche du sélecteur.
+    pub(crate) gif_query: String,
+    /// Feed GIF — tendances et recherche Klipy /gifs/*.
+    pub(crate) gif_feed: crate::klipy::GifFeed,
+    /// Feed Mèmes — tendances et recherche Klipy /static-memes/*.
+    pub(crate) meme_feed: crate::klipy::GifFeed,
+    /// Feed Stickers — tendances et recherche Klipy /stickers/*.
+    pub(crate) sticker_feed: crate::klipy::GifFeed,
+    /// Dernière frappe dans la recherche (anti-rebond avant requête).
+    pub(crate) gif_last_input: std::time::Instant,
     pub(crate) show_participants: bool,
     pub(crate) enable_sound_notifications: bool,
     pub(crate) last_notification: Option<String>,
@@ -149,6 +173,13 @@ impl AbcomApp {
             input_scroll_lines: 0.0,
             show_attachment_menu: false,
             show_emoji_picker: false,
+            show_gif_picker: false,
+            gif_picker_tab: GifPickerTab::Gif,
+            gif_query: String::new(),
+            gif_feed: crate::klipy::GifFeed::new(crate::klipy::ContentKind::Gif),
+            meme_feed: crate::klipy::GifFeed::new(crate::klipy::ContentKind::Meme),
+            sticker_feed: crate::klipy::GifFeed::new(crate::klipy::ContentKind::Sticker),
+            gif_last_input: std::time::Instant::now(),
             show_participants: false,
             enable_sound_notifications: true,
             last_notification: None,
@@ -226,11 +257,17 @@ impl AbcomApp {
     pub(crate) fn send_read_receipts_for_peer(&mut self, peer_name: &str) {
         let s = self.state.lock().unwrap();
         let my_name = s.my_username.clone();
-        let peer_addr = s.peers.iter().find(|p| p.username == peer_name).map(|p| p.addr);
+        let peer_addr = s
+            .peers
+            .iter()
+            .find(|p| p.username == peer_name)
+            .map(|p| p.addr);
         let Some(addr) = peer_addr else { return };
 
         let now = chrono::Local::now().format("%H:%M").to_string();
-        let receipts: Vec<_> = s.messages.iter()
+        let receipts: Vec<_> = s
+            .messages
+            .iter()
             .filter(|m| m.from == peer_name && m.to_user.as_deref() == Some(my_name.as_str()))
             .map(|m| ReadReceiptRequest {
                 to_addr: addr,
@@ -282,7 +319,8 @@ impl eframe::App for AbcomApp {
             );
             match kind {
                 1 => {
-                    if let Some(paths) = rfd::FileDialog::new().set_title(files_title).pick_files() {
+                    if let Some(paths) = rfd::FileDialog::new().set_title(files_title).pick_files()
+                    {
                         for p in paths {
                             if !self.pending_attachments.contains(&p) {
                                 self.pending_attachments.push(p);
@@ -293,7 +331,8 @@ impl eframe::App for AbcomApp {
                     }
                 }
                 2 => {
-                    if let Some(path) = rfd::FileDialog::new().set_title(folder_title).pick_folder() {
+                    if let Some(path) = rfd::FileDialog::new().set_title(folder_title).pick_folder()
+                    {
                         if !self.pending_attachments.contains(&path) {
                             self.pending_attachments.push(path);
                         }
@@ -311,10 +350,7 @@ impl eframe::App for AbcomApp {
             self.pending_avatar_pick = false;
             let (pick_title, error_msg) = (
                 self.tr("Choisir une image de profil", "Choose a profile picture"),
-                self.tr(
-                    "Image de profil invalide",
-                    "Invalid profile picture",
-                ),
+                self.tr("Image de profil invalide", "Invalid profile picture"),
             );
             if let Some(path) = rfd::FileDialog::new()
                 .set_title(pick_title)
@@ -338,9 +374,10 @@ impl eframe::App for AbcomApp {
         }
 
         self.show_sidebar_panel(ctx);
-        let emoji_btn_clicked = self.show_input_bar(ctx);
+        let (emoji_btn_clicked, gif_btn_clicked) = self.show_input_bar(ctx);
         self.show_notification(ctx);
         self.show_emoji_picker_window(ctx, emoji_btn_clicked);
+        self.show_gif_picker_window(ctx, gif_btn_clicked);
         self.render_group_modal(ctx);
         self.show_central_panel(ctx);
         self.render_settings(ctx);
@@ -364,9 +401,10 @@ fn build_fonts() -> egui::FontDefinitions {
             "../../assets/fonts/Inter-Bold.ttf"
         ))),
     );
-    fonts
-        .families
-        .insert(egui::FontFamily::Name(BOLD_FAMILY.into()), vec!["inter-bold".to_owned()]);
+    fonts.families.insert(
+        egui::FontFamily::Name(BOLD_FAMILY.into()),
+        vec!["inter-bold".to_owned()],
+    );
     fonts
 }
 
@@ -436,6 +474,9 @@ pub fn run(
         options,
         Box::new(|cc| {
             cc.egui_ctx.set_fonts(build_fonts());
+            // Loaders d'images egui_extras : HTTP (récupération depuis le CDN
+            // Klipy) + décodage GIF/WebP animés pour les vignettes et le fil.
+            egui_extras::install_image_loaders(&cc.egui_ctx);
             Ok(Box::new(AbcomApp::new(
                 state,
                 event_rx,
