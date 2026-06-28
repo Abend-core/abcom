@@ -297,12 +297,23 @@ impl AbcomApp {
 impl eframe::App for AbcomApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.apply_theme_preference(ctx);
+        let was_focused = self.window_focused;
         self.window_focused = ctx.input(|i| i.focused);
 
         self.lazy_load_emoji(ctx);
         self.process_events();
         self.process_media_offers();
         self.periodic_tasks();
+
+        // Reprise du focus : l'utilisateur revient sur la fenêtre et « lit » donc
+        // la conversation ouverte. On (re)renvoie les accusés de lecture pour
+        // tous ses messages reçus — indispensable quand le message est arrivé
+        // fenêtre en arrière-plan (cas courant : deux instances sur un même poste,
+        // une seule peut avoir le focus système à la fois).
+        if !was_focused && self.window_focused {
+            let conv = self.state.lock().unwrap().selected_conversation.clone();
+            self.send_read_receipts_for_conversation(&conv);
+        }
 
         // Flash barre des tâches si message non lu — réinitialisé une seule fois
         // quand la fenêtre reprend le focus (pas d'envoi répété en boucle).

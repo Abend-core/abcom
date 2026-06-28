@@ -37,6 +37,14 @@ impl AppState {
                 .iter()
                 .filter(|m| m.to_user.is_none())
                 .collect(),
+            // Groupe (`#…`) : tous les messages adressés à ce groupe, quel que
+            // soit l'expéditeur (les miens comme ceux des autres membres).
+            Some(conv) if conv.starts_with('#') => self
+                .messages
+                .iter()
+                .filter(|m| m.to_user.as_deref() == Some(conv.as_str()))
+                .collect(),
+            // Conversation privée : messages échangés avec ce pair.
             Some(username) => self
                 .messages
                 .iter()
@@ -73,6 +81,12 @@ impl AppState {
     pub fn clear_conversation_history(&mut self) {
         match &self.selected_conversation {
             None => self.messages.retain(|m| m.to_user.is_some()),
+            // Groupe : supprimer tous les messages adressés à ce groupe.
+            Some(conv) if conv.starts_with('#') => {
+                let g = conv.clone();
+                self.messages
+                    .retain(|m| m.to_user.as_deref() != Some(g.as_str()));
+            }
             Some(username) => {
                 let me = self.my_username.clone();
                 let u = username.clone();
@@ -115,6 +129,39 @@ mod tests {
         let mut s = state("alice");
         s.add_message(msg("bob", None, "hello"));
         assert_eq!(s.messages.len(), 1);
+    }
+
+    #[test]
+    fn test_group_conversation_shows_all_members_messages() {
+        let mut s = state("alice");
+        // Message d'un autre membre adressé au groupe.
+        s.messages
+            .push(msg("bob", Some("#team"), "salut le groupe"));
+        // Mon propre message au groupe.
+        s.messages.push(msg("alice", Some("#team"), "yo"));
+        // Bruit : privé et autre groupe à ignorer.
+        s.messages.push(msg("bob", Some("alice"), "privé"));
+        s.messages.push(msg("carol", Some("#autre"), "ailleurs"));
+
+        s.selected_conversation = Some("#team".to_string());
+        let conv = s.get_conversation_messages();
+        assert_eq!(conv.len(), 2);
+        assert!(conv
+            .iter()
+            .any(|m| m.from == "bob" && m.content == "salut le groupe"));
+        assert!(conv.iter().any(|m| m.from == "alice" && m.content == "yo"));
+    }
+
+    #[test]
+    fn test_clear_group_history_removes_all_group_messages() {
+        let mut s = state("alice");
+        s.messages.push(msg("bob", Some("#team"), "a"));
+        s.messages.push(msg("alice", Some("#team"), "b"));
+        s.messages.push(msg("bob", Some("alice"), "privé"));
+        s.selected_conversation = Some("#team".to_string());
+        s.clear_conversation_history();
+        assert_eq!(s.messages.len(), 1);
+        assert_eq!(s.messages[0].content, "privé");
     }
 
     #[test]

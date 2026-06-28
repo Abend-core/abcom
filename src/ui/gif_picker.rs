@@ -179,7 +179,7 @@ impl AbcomApp {
         let tab_gif_label = "GIF";
         let tab_meme_label = self.tr("Mèmes", "Memes");
         let tab_sticker_label = "Stickers";
-        let search_hint = self.tr("Rechercher…", "Search…");
+        let search_hint = self.tr("Search KLIPY", "Search KLIPY");
         let loading_label = self.tr("Chargement…", "Loading…");
         let empty_label = self.tr("Aucun résultat", "No results");
         let error_label = self.tr("Erreur de chargement", "Loading error");
