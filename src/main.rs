@@ -12,6 +12,16 @@ mod network;
 mod ui;
 
 fn main() -> anyhow::Result<()> {
+    if let Ok(content) = std::fs::read_to_string(".env") {
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') { continue; }
+            if let Some((k, v)) = line.split_once('=') {
+                std::env::set_var(k.trim(), v.trim());
+            }
+        }
+    }
+
     let username = std::env::args().nth(1).unwrap_or_else(|| {
         std::env::var("USER")
             .or_else(|_| std::env::var("USERNAME"))

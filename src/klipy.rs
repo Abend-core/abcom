@@ -81,7 +81,7 @@ struct FileMeta {
 
 impl KlipyGif {
     fn to_item(&self) -> Option<GifItem> {
-        let preview = variant(&self.file, &["sm", "xs", "md", "hd"])?;
+        let preview = variant(&self.file, &["xs", "sm", "md", "hd"])?;
         let full = variant(&self.file, &["hd", "md", "sm", "xs"])?;
         let id = value_to_string(&self.id).unwrap_or_else(|| full.url.clone());
         Some(GifItem {
