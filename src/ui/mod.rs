@@ -7,8 +7,9 @@ use tokio::sync::mpsc;
 
 use crate::app::AppState;
 use crate::message::{
-    AppEvent, AvatarRequest, MediaProgress, MediaSendJob, MediaStreamOffer, MessageAckRequest,
-    ReadReceipt, ReadReceiptRequest, SendGroupRequest, SendRequest, TypingRequest,
+    AppEvent, AvatarRequest, MediaAttachment, MediaProgress, MediaSendJob, MediaStreamOffer,
+    MessageAckRequest, ReactionRequest, ReadReceipt, ReadReceiptRequest, SendGroupRequest,
+    SendRequest, TypingRequest,
 };
 
 mod avatar;
@@ -21,9 +22,24 @@ mod group_modal;
 mod input_bar;
 mod markdown;
 mod media;
+mod reactions;
 mod settings;
 mod sidebar;
 mod sound;
+
+/// Emojis de réaction par défaut proposés avant tout historique d'usage,
+/// façon Discord.
+const DEFAULT_RECENT_EMOJIS: [&str; 6] = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+
+/// Aperçu figé du message ciblé par une réponse en cours de composition.
+/// Capturé au clic sur « répondre » pour ne pas re-verrouiller/rechercher
+/// l'état à chaque frame pendant que le composeur est affiché.
+pub(crate) struct ReplyTarget {
+    pub(crate) message_hash: u64,
+    pub(crate) author: String,
+    pub(crate) content_snippet: String,
+    pub(crate) media_thumb: Option<MediaAttachment>,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UiLanguage {
@@ -66,6 +82,7 @@ pub(crate) struct AbcomApp {
     pub(crate) send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
     pub(crate) send_ack_tx: mpsc::Sender<MessageAckRequest>,
     pub(crate) send_avatar_tx: mpsc::Sender<AvatarRequest>,
+    pub(crate) send_reaction_tx: mpsc::Sender<ReactionRequest>,
     pub(crate) send_media_tx: mpsc::Sender<MediaSendJob>,
     pub(crate) input: String,
     pub(crate) input_cursor_char: usize,
@@ -136,6 +153,15 @@ pub(crate) struct AbcomApp {
     pub(crate) pending_media_offers: Vec<MediaStreamOffer>,
     /// Progression des transferts média en cours, par identifiant.
     pub(crate) media_progress: std::collections::HashMap<String, MediaProgress>,
+    /// Hash du message dont la barre d'actions au survol est actuellement affichée.
+    pub(crate) hover_toolbar_target: Option<u64>,
+    /// Message ciblé par le picker de réaction ouvert (None = fermé), avec le
+    /// rectangle d'ancrage du bouton "+" pour positionner la popup.
+    pub(crate) reaction_picker_open: Option<(u64, egui::Rect)>,
+    /// Emojis récemment utilisés en réaction (MRU, la plus récente en tête).
+    pub(crate) recent_reaction_emojis: Vec<String>,
+    /// Message ciblé par une réponse en cours de composition (None = aucune).
+    pub(crate) replying_to: Option<ReplyTarget>,
 }
 
 impl AbcomApp {
@@ -150,6 +176,7 @@ impl AbcomApp {
         send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
         send_ack_tx: mpsc::Sender<MessageAckRequest>,
         send_avatar_tx: mpsc::Sender<AvatarRequest>,
+        send_reaction_tx: mpsc::Sender<ReactionRequest>,
         send_media_tx: mpsc::Sender<MediaSendJob>,
         media_offer_rx: mpsc::Receiver<MediaStreamOffer>,
     ) -> Self {
@@ -162,6 +189,7 @@ impl AbcomApp {
             send_read_receipt_tx,
             send_ack_tx,
             send_avatar_tx,
+            send_reaction_tx,
             send_media_tx,
             media_offer_rx,
             pending_media_offers: Vec::new(),
@@ -215,6 +243,13 @@ impl AbcomApp {
             pending_avatar_pick: false,
             media_textures: std::collections::HashMap::new(),
             media_viewer: None,
+            hover_toolbar_target: None,
+            reaction_picker_open: None,
+            recent_reaction_emojis: DEFAULT_RECENT_EMOJIS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            replying_to: None,
         }
     }
 
@@ -380,6 +415,7 @@ impl eframe::App for AbcomApp {
         self.show_gif_picker_window(ctx, gif_btn_clicked);
         self.render_group_modal(ctx);
         self.show_central_panel(ctx);
+        self.show_reaction_emoji_picker(ctx);
         self.render_settings(ctx);
         self.show_media_viewer(ctx);
 
@@ -452,6 +488,7 @@ pub fn run(
     send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
     send_ack_tx: mpsc::Sender<MessageAckRequest>,
     send_avatar_tx: mpsc::Sender<AvatarRequest>,
+    send_reaction_tx: mpsc::Sender<ReactionRequest>,
     send_media_tx: mpsc::Sender<MediaSendJob>,
     media_offer_rx: mpsc::Receiver<MediaStreamOffer>,
 ) -> anyhow::Result<()> {
@@ -486,6 +523,7 @@ pub fn run(
                 send_read_receipt_tx,
                 send_ack_tx,
                 send_avatar_tx,
+                send_reaction_tx,
                 send_media_tx,
                 media_offer_rx,
             )))

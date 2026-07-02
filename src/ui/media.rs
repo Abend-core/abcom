@@ -69,6 +69,7 @@ pub(crate) fn refused_media_message(
         timestamp_epoch: Some(now.timestamp() as u64),
         to_user,
         media: None,
+        reply_to: None,
     }
 }
 
@@ -319,12 +320,58 @@ fn download_button(ui: &mut egui::Ui) -> bool {
 }
 
 /// Raccourcit un texte trop long avec une ellipse finale.
-fn elide(text: &str, max_chars: usize) -> String {
+pub(crate) fn elide(text: &str, max_chars: usize) -> String {
     if text.chars().count() <= max_chars {
         return text.to_string();
     }
     let kept: String = text.chars().take(max_chars.saturating_sub(1)).collect();
     format!("{kept}…")
+}
+
+/// UVs de recadrage centré pour remplir un carré `target_w`x`target_h` à
+/// partir d'une texture `tex_size`, en préservant le centre de l'image source
+/// (portrait : rogne haut/bas ; paysage : rogne gauche/droite).
+fn center_crop_uv(tex_size: egui::Vec2, target_w: f32, target_h: f32) -> (egui::Pos2, egui::Pos2) {
+    if tex_size.x <= 0.0 || tex_size.y <= 0.0 || target_w <= 0.0 || target_h <= 0.0 {
+        return (egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    }
+    let tex_ratio = tex_size.x / tex_size.y;
+    let target_ratio = target_w / target_h;
+    if tex_ratio > target_ratio {
+        // Image plus large que la cible : rogner les côtés.
+        let visible_frac = target_ratio / tex_ratio;
+        let margin = (1.0 - visible_frac) / 2.0;
+        (egui::pos2(margin, 0.0), egui::pos2(1.0 - margin, 1.0))
+    } else {
+        // Image plus haute (ou égale) que la cible : rogner haut/bas.
+        let visible_frac = tex_ratio / target_ratio;
+        let margin = (1.0 - visible_frac) / 2.0;
+        (egui::pos2(0.0, margin), egui::pos2(1.0, 1.0 - margin))
+    }
+}
+
+/// Vignette carrée compacte (façon Discord) pour un aperçu de réponse,
+/// recadrée au centre — contrairement à `render_media_block`, qui préserve le
+/// ratio complet de l'image.
+pub(crate) fn render_reply_thumb(
+    ui: &mut egui::Ui,
+    texture: Option<&egui::TextureHandle>,
+    size: f32,
+) {
+    let Some(texture) = texture else {
+        return;
+    };
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let (uv_min, uv_max) = center_crop_uv(texture.size_vec2(), size, size);
+    ui.painter().image(
+        texture.id(),
+        rect,
+        egui::Rect::from_min_max(uv_min, uv_max),
+        egui::Color32::WHITE,
+    );
 }
 
 impl AbcomApp {
@@ -478,57 +525,5 @@ fn unique_destination(dir: &std::path::Path, filename: &str) -> std::path::PathB
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{media_display_name, media_id, refused_media_message, unique_destination};
-
-    #[test]
-    fn display_name_of_file_and_folder() {
-        let dir = std::env::temp_dir().join(format!("abcom_dn_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("rapport.pdf");
-        std::fs::write(&file, b"x").unwrap();
-        assert_eq!(media_display_name(&file), "rapport.pdf");
-        assert_eq!(
-            media_display_name(&dir),
-            format!("{}.zip", dir.file_name().unwrap().to_str().unwrap())
-        );
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn media_id_sanitizes_and_keeps_extension() {
-        let id = media_id("mon dossier/é@.png");
-        assert!(id.contains('-'), "préfixe horodaté attendu");
-        assert!(id.ends_with(".png"), "extension conservée");
-        // Aucun caractère problématique de chemin n'est conservé.
-        assert!(!id.contains('/') && !id.contains(' ') && !id.contains('@'));
-    }
-
-    #[test]
-    fn refused_message_is_attributed_to_sender() {
-        let msg = refused_media_message("bob", "photo.zip", Some("ellis".to_string()));
-        assert_eq!(msg.from, "bob");
-        assert!(msg.content.contains("photo.zip"));
-        assert!(msg.media.is_none());
-        assert_eq!(msg.to_user.as_deref(), Some("ellis"));
-    }
-
-    #[test]
-    fn unique_destination_keeps_free_name() {
-        let dir = std::env::temp_dir().join(format!("abcom_dl_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let dest = unique_destination(&dir, "libre.txt");
-        assert_eq!(dest, dir.join("libre.txt"));
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn unique_destination_avoids_collision() {
-        let dir = std::env::temp_dir().join(format!("abcom_dl2_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("photo.png"), b"x").unwrap();
-        let dest = unique_destination(&dir, "photo.png");
-        assert_eq!(dest, dir.join("photo (1).png"));
-        std::fs::remove_dir_all(&dir).ok();
-    }
-}
+#[path = "../tests/test_ui_media.rs"]
+mod tests;

@@ -4,6 +4,7 @@ use super::avatar::AvatarAnnounce;
 use super::chat::ChatMessage;
 use super::group::GroupEvent;
 use super::media::{MediaProgress, MediaStreamHeader};
+use super::reaction::ReactionEvent;
 use super::receipts::{MessageAck, ReadReceipt};
 
 /// Événements réseau envoyés vers l'UI
@@ -30,4 +31,6 @@ pub enum AppEvent {
     MediaProgressed(MediaProgress),
     /// Le destinataire a refusé un média : on l'annote dans le fil (côté émetteur).
     MediaDeclined(MediaStreamHeader),
+    /// Un pair a ajouté ou retiré une réaction emoji sur un message.
+    ReactionReceived(ReactionEvent),
 }

@@ -15,7 +15,9 @@ fn main() -> anyhow::Result<()> {
     if let Ok(content) = std::fs::read_to_string(".env") {
         for line in content.lines() {
             let line = line.trim();
-            if line.is_empty() || line.starts_with('#') { continue; }
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
             if let Some((k, v)) = line.split_once('=') {
                 std::env::set_var(k.trim(), v.trim());
             }
@@ -38,6 +40,7 @@ fn main() -> anyhow::Result<()> {
         mpsc::channel::<message::ReadReceiptRequest>(256);
     let (send_ack_tx, send_ack_rx) = mpsc::channel::<message::MessageAckRequest>(256);
     let (send_avatar_tx, send_avatar_rx) = mpsc::channel::<message::AvatarRequest>(64);
+    let (send_reaction_tx, send_reaction_rx) = mpsc::channel::<message::ReactionRequest>(256);
     let (send_media_tx, send_media_rx) = mpsc::channel::<message::MediaSendJob>(64);
     let (media_offer_tx, media_offer_rx) = mpsc::channel::<message::MediaStreamOffer>(16);
 
@@ -57,6 +60,7 @@ fn main() -> anyhow::Result<()> {
     rt.spawn(network::run_sender_read_receipts(send_read_receipt_rx));
     rt.spawn(network::run_sender_ack(send_ack_rx));
     rt.spawn(network::run_sender_avatar(send_avatar_rx));
+    rt.spawn(network::run_sender_reaction(send_reaction_rx));
     rt.spawn(network::run_media_sender(send_media_rx, event_tx.clone()));
     rt.spawn(network::run_media_server(
         event_tx.clone(),
@@ -73,6 +77,7 @@ fn main() -> anyhow::Result<()> {
         send_read_receipt_tx,
         send_ack_tx,
         send_avatar_tx,
+        send_reaction_tx,
         send_media_tx,
         media_offer_rx,
     )?;

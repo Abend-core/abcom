@@ -185,6 +185,9 @@ impl AbcomApp {
                 AppEvent::MessageAckReceived(ack) => {
                     s.mark_message_acked(ack.message_hash);
                 }
+                AppEvent::ReactionReceived(event) => {
+                    s.apply_reaction_event(&event);
+                }
                 AppEvent::AvatarReceived(announce) => {
                     let from = announce.from.clone();
                     s.set_peer_avatar(announce.from, announce.png);
@@ -202,6 +205,7 @@ impl AbcomApp {
                         timestamp_epoch: header.timestamp_epoch,
                         to_user: header.to_user,
                         media: Some(header.media),
+                        reply_to: None,
                     };
                     s.add_message(msg.clone());
                     if from != s.my_username {
