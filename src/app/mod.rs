@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::SystemTime;
 
-use crate::message::{ChatMessage, Group, PeerRecord};
+use crate::message::{ChatMessage, Group, PeerRecord, ReactionEntry};
 
 mod avatar;
 mod groups;
@@ -10,6 +10,7 @@ mod media;
 mod messages;
 mod peers;
 mod persistence;
+mod reactions;
 mod receipts;
 mod transfers;
 mod typing;
@@ -32,12 +33,15 @@ pub struct AppState {
     pub my_avatar: Option<Vec<u8>>,
     /// Avatars des pairs, indexés par nom d'utilisateur.
     pub peer_avatars: HashMap<String, Vec<u8>>,
+    /// Réactions emoji par message, indexées par `AppState::message_hash`.
+    pub reactions: HashMap<u64, Vec<ReactionEntry>>,
     history_path: PathBuf,
     read_counts_path: PathBuf,
     groups_path: PathBuf,
     peer_records_path: PathBuf,
     avatar_path: PathBuf,
     peer_avatars_path: PathBuf,
+    reactions_path: PathBuf,
     media_dir: PathBuf,
 }
 
@@ -51,6 +55,7 @@ impl AppState {
         let peer_records_path = base.join("peer_records.json");
         let avatar_path = base.join("avatar.png");
         let peer_avatars_path = base.join("peer_avatars.json");
+        let reactions_path = base.join("reactions.json");
         let media_dir = base.join("media");
 
         let mut state = Self {
@@ -66,12 +71,14 @@ impl AppState {
             peer_records: Vec::new(),
             my_avatar: None,
             peer_avatars: HashMap::new(),
+            reactions: HashMap::new(),
             history_path,
             read_counts_path,
             groups_path,
             peer_records_path,
             avatar_path,
             peer_avatars_path,
+            reactions_path,
             media_dir,
         };
 
@@ -81,6 +88,7 @@ impl AppState {
         state.load_peer_records();
         state.load_avatar();
         state.load_peer_avatars();
+        state.load_reactions();
         state.restore_peers_from_history();
         state
     }
@@ -94,6 +102,7 @@ impl AppState {
         let peer_records_path = base.join("peer_records.json");
         let avatar_path = base.join("avatar.png");
         let peer_avatars_path = base.join("peer_avatars.json");
+        let reactions_path = base.join("reactions.json");
         let media_dir = base.join("media");
         Self {
             my_username: username.to_string(),
@@ -108,12 +117,14 @@ impl AppState {
             peer_records: Vec::new(),
             my_avatar: None,
             peer_avatars: HashMap::new(),
+            reactions: HashMap::new(),
             history_path,
             read_counts_path,
             groups_path,
             peer_records_path,
             avatar_path,
             peer_avatars_path,
+            reactions_path,
             media_dir,
         }
     }

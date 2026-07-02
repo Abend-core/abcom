@@ -2,9 +2,9 @@ use chrono::{Datelike, Local, NaiveDate, TimeZone};
 use eframe::egui;
 
 use crate::app::AppState;
-use crate::message::ChatMessage;
+use crate::message::{ChatMessage, ReactionEntry};
 
-use super::{AbcomApp, UiLanguage};
+use super::{AbcomApp, ReplyTarget, UiLanguage};
 
 /// Diamètre de l'avatar affiché en tête de chaque groupe de messages.
 const AVATAR_SIZE: f32 = 40.0;
@@ -16,6 +16,11 @@ const GROUP_SPACING: f32 = 10.0;
 /// auteur (façon Discord/Cinny). Évite que des messages espacés de plusieurs
 /// heures ou jours paraissent envoyés d'un coup. Ajustable.
 const GROUP_BREAK_SECS: u64 = 5 * 60;
+/// Taille (carrée) d'un bouton de la barre d'actions au survol.
+const HOVER_BTN_SIZE: f32 = 26.0;
+/// Taille d'une texture d'emoji peinte dans un bouton de la barre de survol
+/// ou d'une pastille de réaction.
+const HOVER_EMOJI_SIZE: f32 = 16.0;
 /// Couleur du nom pour nos propres messages (conservée partout).
 const OWN_NAME_COLOR: egui::Color32 = egui::Color32::from_rgb(80, 200, 120);
 /// Couleur du nom d'un autre pair en conversation 1-à-1.
@@ -245,6 +250,269 @@ fn apply_media_action(
         super::media::MediaAction::View => *view_open = Some(media.id.clone()),
         super::media::MediaAction::Download => {
             *download = Some((media.id.clone(), media.filename.clone()))
+        }
+    }
+}
+
+/// Peint la texture PNG d'un emoji dans `rect` (jamais un glyphe police, cf.
+/// `emoji_picker::render_inline`), ou ne peint rien si la texture est absente
+/// du registre (emoji inconnu/non chargé).
+fn paint_emoji_texture(
+    ui: &egui::Ui,
+    rect: egui::Rect,
+    emoji: &str,
+    emoji_map: &std::collections::HashMap<String, usize>,
+    emoji_textures: &[(String, egui::TextureHandle)],
+) {
+    if let Some((_, texture)) = emoji_map
+        .get(emoji)
+        .and_then(|&idx| emoji_textures.get(idx))
+    {
+        ui.painter().image(
+            texture.id(),
+            rect,
+            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+            egui::Color32::WHITE,
+        );
+    }
+}
+
+/// Rend les pastilles de réaction sous un message (emoji + compteur),
+/// surlignées si l'utilisateur courant a réagi. Renvoie l'emoji cliqué ;
+/// l'appelant décide d'ajouter ou de retirer selon l'état actuel (toggle).
+fn render_reaction_pills(
+    ui: &mut egui::Ui,
+    reactions: &[ReactionEntry],
+    my_username: &str,
+    emoji_map: &std::collections::HashMap<String, usize>,
+    emoji_textures: &[(String, egui::TextureHandle)],
+) -> Option<String> {
+    if reactions.is_empty() {
+        return None;
+    }
+    let mut clicked = None;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+        for entry in reactions {
+            let mine = entry.users.iter().any(|u| u == my_username);
+            let (rect, resp) = ui.allocate_exact_size(egui::vec2(46.0, 24.0), egui::Sense::click());
+            if !ui.is_rect_visible(rect) {
+                continue;
+            }
+            let fill = if mine {
+                egui::Color32::from_rgb(70, 90, 140)
+            } else if resp.hovered() {
+                ui.visuals().widgets.hovered.bg_fill
+            } else {
+                egui::Color32::from_rgb(50, 52, 58)
+            };
+            let stroke = if mine {
+                egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 150, 255))
+            } else {
+                egui::Stroke::new(1.0, egui::Color32::from_rgb(70, 72, 78))
+            };
+            ui.painter()
+                .rect(rect, 6.0, fill, stroke, egui::StrokeKind::Inside);
+            let emoji_rect = egui::Rect::from_center_size(
+                rect.left_center() + egui::vec2(14.0, 0.0),
+                egui::vec2(HOVER_EMOJI_SIZE, HOVER_EMOJI_SIZE),
+            );
+            paint_emoji_texture(ui, emoji_rect, &entry.emoji, emoji_map, emoji_textures);
+            ui.painter().text(
+                rect.right_center() - egui::vec2(8.0, 0.0),
+                egui::Align2::RIGHT_CENTER,
+                entry.users.len().to_string(),
+                egui::TextStyle::Small.resolve(ui.style()),
+                ui.visuals().text_color(),
+            );
+            let tooltip = entry.users.join(", ");
+            if resp.on_hover_text(tooltip).clicked() {
+                clicked = Some(entry.emoji.clone());
+            }
+        }
+    });
+    clicked
+}
+
+/// Citation compacte au-dessus d'un message qui répond à un autre (façon
+/// Discord). `resolved` est `None` si le message d'origine a expiré du
+/// ring-buffer ou n'a jamais été reçu par ce pair.
+fn render_reply_quote(
+    ui: &mut egui::Ui,
+    resolved: Option<&ChatMessage>,
+    author_name: &str,
+    media_texture: Option<&egui::TextureHandle>,
+    not_found_label: &str,
+) {
+    egui::Frame::default()
+        .fill(egui::Color32::from_gray(40))
+        .corner_radius(egui::CornerRadius::same(6))
+        .inner_margin(egui::Margin::symmetric(6, 3))
+        .show(ui, |ui| {
+            ui.horizontal(|ui| match resolved {
+                Some(orig) => {
+                    if orig.media.is_some() {
+                        super::media::render_reply_thumb(ui, media_texture, 24.0);
+                    }
+                    ui.label(egui::RichText::new("⤷").small().weak());
+                    ui.label(egui::RichText::new(author_name).small().strong());
+                    let snippet = if orig.content.is_empty() && orig.media.is_some() {
+                        "📎".to_string()
+                    } else {
+                        super::media::elide(&orig.content, 60)
+                    };
+                    ui.label(egui::RichText::new(snippet).small().weak());
+                }
+                None => {
+                    ui.label(egui::RichText::new("⤷").small().weak());
+                    ui.label(
+                        egui::RichText::new(not_found_label)
+                            .small()
+                            .italics()
+                            .weak(),
+                    );
+                }
+            });
+        });
+    ui.add_space(2.0);
+}
+
+/// Résultat d'un rendu de la barre d'actions flottante au survol.
+struct HoverToolbarResult {
+    /// Le pointeur est actuellement au-dessus de la barre elle-même (pour
+    /// éviter que le survol ne « clignote » en passant de la ligne à la
+    /// barre flottante qui la recouvre partiellement).
+    pointer_over_toolbar: bool,
+    reply_clicked: bool,
+    quick_emoji: Option<String>,
+}
+
+impl AbcomApp {
+    /// Barre d'actions flottante affichée au survol d'un message : emojis
+    /// récents, "+" (picker complet de réaction) et "répondre". Pas de
+    /// bouton de transfert.
+    fn show_hover_toolbar(
+        &mut self,
+        ctx: &egui::Context,
+        msg_hash: u64,
+        row_rect: egui::Rect,
+        reply_label: &str,
+        add_reaction_label: &str,
+    ) -> HoverToolbarResult {
+        let recent = self.recent_reaction_emojis.clone();
+        let textures: Vec<(String, egui::TextureHandle)> = recent
+            .iter()
+            .filter_map(|e| self.emoji_textures.iter().find(|(ch, _)| ch == e).cloned())
+            .collect();
+
+        let toolbar_w = HOVER_BTN_SIZE * (textures.len() as f32 + 2.0) + 6.0;
+        let anchor = egui::pos2(
+            row_rect.right() - toolbar_w,
+            row_rect.top() - HOVER_BTN_SIZE - 8.0,
+        );
+
+        let mut quick_emoji = None;
+        let mut reply_clicked = false;
+        let mut plus_rect = None;
+
+        let area = egui::Area::new(egui::Id::new(("msg_hover_toolbar", msg_hash)))
+            .order(egui::Order::Foreground)
+            .fixed_pos(anchor);
+        let resp = area.show(ctx, |ui| {
+            egui::Frame::popup(ui.style())
+                .corner_radius(egui::CornerRadius::same(8))
+                .inner_margin(egui::Margin::symmetric(4, 4))
+                .show(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 2.0;
+                        for (ch, _) in &textures {
+                            let (rect, resp) = ui.allocate_exact_size(
+                                egui::vec2(HOVER_BTN_SIZE, HOVER_BTN_SIZE),
+                                egui::Sense::click(),
+                            );
+                            if resp.hovered() {
+                                ui.painter().rect_filled(
+                                    rect,
+                                    6.0,
+                                    ui.visuals().widgets.hovered.bg_fill,
+                                );
+                            }
+                            let emoji_rect = egui::Rect::from_center_size(
+                                rect.center(),
+                                egui::vec2(HOVER_EMOJI_SIZE, HOVER_EMOJI_SIZE),
+                            );
+                            paint_emoji_texture(
+                                ui,
+                                emoji_rect,
+                                ch,
+                                &self.emoji_map,
+                                &self.emoji_textures,
+                            );
+                            if resp.clicked() {
+                                quick_emoji = Some(ch.clone());
+                            }
+                        }
+
+                        let (plus_r, plus_resp) = ui.allocate_exact_size(
+                            egui::vec2(HOVER_BTN_SIZE, HOVER_BTN_SIZE),
+                            egui::Sense::click(),
+                        );
+                        if plus_resp.hovered() {
+                            ui.painter().rect_filled(
+                                plus_r,
+                                6.0,
+                                ui.visuals().widgets.hovered.bg_fill,
+                            );
+                        }
+                        ui.painter().text(
+                            plus_r.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "+",
+                            egui::FontId::proportional(16.0),
+                            ui.visuals().text_color(),
+                        );
+                        if plus_resp.on_hover_text(add_reaction_label).clicked() {
+                            plus_rect = Some(plus_r);
+                        }
+
+                        let (reply_r, reply_resp) = ui.allocate_exact_size(
+                            egui::vec2(HOVER_BTN_SIZE, HOVER_BTN_SIZE),
+                            egui::Sense::click(),
+                        );
+                        if reply_resp.hovered() {
+                            ui.painter().rect_filled(
+                                reply_r,
+                                6.0,
+                                ui.visuals().widgets.hovered.bg_fill,
+                            );
+                        }
+                        ui.painter().text(
+                            reply_r.center(),
+                            egui::Align2::CENTER_CENTER,
+                            "↩",
+                            egui::FontId::proportional(16.0),
+                            ui.visuals().text_color(),
+                        );
+                        if reply_resp.on_hover_text(reply_label).clicked() {
+                            reply_clicked = true;
+                        }
+                    });
+                });
+        });
+
+        if let Some(rect) = plus_rect {
+            self.reaction_picker_open = Some((msg_hash, rect));
+        }
+
+        let pointer_over_toolbar = ctx
+            .input(|i| i.pointer.interact_pos())
+            .map(|p| resp.response.rect.contains(p))
+            .unwrap_or(false);
+
+        HoverToolbarResult {
+            pointer_over_toolbar,
+            reply_clicked,
+            quick_emoji,
         }
     }
 }
@@ -510,6 +778,12 @@ impl AbcomApp {
                     let mut last_from: Option<&str> = None;
                     let mut last_epoch: Option<u64> = None;
                     let mut last_day: Option<NaiveDate> = None;
+                    let not_found_label = self.tr(
+                        "Message d'origine introuvable",
+                        "Original message not found",
+                    );
+                    let reply_label = self.tr("Répondre", "Reply");
+                    let add_reaction_label = self.tr("Ajouter une réaction", "Add reaction");
                     for msg in &conv_messages {
                         let day = message_day(msg);
                         let day_changed = match (day, last_day) {
@@ -538,15 +812,42 @@ impl AbcomApp {
                         } else {
                             PEER_NAME_COLOR
                         };
+                        let hash = AppState::message_hash(msg);
                         // Accusé de réception de nos messages : ✓ envoyé,
                         // ✓✓ gris livré (ACK), ✓✓ bleu lu (ReadReceipt).
                         let receipt = is_me.then(|| {
-                            let hash = AppState::message_hash(msg);
                             let s = self.state.lock().unwrap();
                             (!s.is_message_pending(hash), s.get_read_count(hash) > 0)
                         });
 
-                        if starts_group {
+                        // Citation de réponse et réactions, résolues une seule
+                        // fois par message avant le rendu.
+                        let resolved_reply = msg.reply_to.and_then(|reply_hash| {
+                            self.state
+                                .lock()
+                                .unwrap()
+                                .find_message_by_hash(reply_hash)
+                                .cloned()
+                        });
+                        let reply_author = resolved_reply
+                            .as_ref()
+                            .map(|m| {
+                                author_names
+                                    .get(&m.from)
+                                    .cloned()
+                                    .unwrap_or_else(|| m.from.clone())
+                            })
+                            .unwrap_or_default();
+                        let reply_media_tex = resolved_reply
+                            .as_ref()
+                            .and_then(|m| m.media.as_ref())
+                            .and_then(|med| media_textures.get(&med.id).and_then(|t| t.as_ref()));
+                        let reactions: Vec<ReactionEntry> =
+                            self.state.lock().unwrap().reactions_for(hash).to_vec();
+
+                        let mut reaction_clicked: Option<String> = None;
+
+                        let row = if starts_group {
                             ui.add_space(GROUP_SPACING);
                             ui.horizontal(|ui| {
                                 // Retrait du texte = avatar + gouttière, sans
@@ -570,6 +871,15 @@ impl AbcomApp {
                                         name_color,
                                         receipt,
                                     );
+                                    if msg.reply_to.is_some() {
+                                        render_reply_quote(
+                                            ui,
+                                            resolved_reply.as_ref(),
+                                            &reply_author,
+                                            reply_media_tex,
+                                            not_found_label,
+                                        );
+                                    }
                                     if let Some(action) = render_message_body(
                                         ui,
                                         msg,
@@ -585,13 +895,43 @@ impl AbcomApp {
                                             &mut media_download,
                                         );
                                     }
+                                    if let Some(emoji) = render_reaction_pills(
+                                        ui,
+                                        &reactions,
+                                        &my_name,
+                                        &self.emoji_map,
+                                        &self.emoji_textures,
+                                    ) {
+                                        reaction_clicked = Some(emoji);
+                                    }
                                 });
-                            });
+                            })
                         } else {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 0.0;
-                                ui.add_space(AVATAR_SIZE + AVATAR_GUTTER);
+                                let (gutter_rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(AVATAR_SIZE + AVATAR_GUTTER, 20.0),
+                                    egui::Sense::hover(),
+                                );
+                                if ui.rect_contains_pointer(gutter_rect) {
+                                    ui.painter().text(
+                                        gutter_rect.center(),
+                                        egui::Align2::CENTER_CENTER,
+                                        header_time(msg),
+                                        egui::TextStyle::Small.resolve(ui.style()),
+                                        egui::Color32::from_gray(140),
+                                    );
+                                }
                                 ui.vertical(|ui| {
+                                    if msg.reply_to.is_some() {
+                                        render_reply_quote(
+                                            ui,
+                                            resolved_reply.as_ref(),
+                                            &reply_author,
+                                            reply_media_tex,
+                                            not_found_label,
+                                        );
+                                    }
                                     if let Some(action) = render_message_body(
                                         ui,
                                         msg,
@@ -607,9 +947,62 @@ impl AbcomApp {
                                             &mut media_download,
                                         );
                                     }
+                                    if let Some(emoji) = render_reaction_pills(
+                                        ui,
+                                        &reactions,
+                                        &my_name,
+                                        &self.emoji_map,
+                                        &self.emoji_textures,
+                                    ) {
+                                        reaction_clicked = Some(emoji);
+                                    }
                                 });
+                            })
+                        };
+                        let row_rect = row.response.rect;
+
+                        // Survol : barre d'actions flottante (emojis récents,
+                        // "+", répondre). Reste affichée tant que le pointeur
+                        // est sur la ligne ou sur la barre elle-même, pour
+                        // éviter tout clignotement en s'y déplaçant.
+                        let row_hovered = ui.rect_contains_pointer(row_rect);
+                        if row_hovered {
+                            self.hover_toolbar_target = Some(hash);
+                        }
+                        let mut reply_requested = false;
+                        if self.hover_toolbar_target == Some(hash) {
+                            let result = self.show_hover_toolbar(
+                                ctx,
+                                hash,
+                                row_rect,
+                                reply_label,
+                                add_reaction_label,
+                            );
+                            if !row_hovered && !result.pointer_over_toolbar {
+                                self.hover_toolbar_target = None;
+                            }
+                            if let Some(emoji) = result.quick_emoji {
+                                reaction_clicked = Some(emoji);
+                            }
+                            reply_requested = result.reply_clicked;
+                        }
+
+                        if let Some(emoji) = reaction_clicked {
+                            self.send_reaction(hash, &emoji);
+                        }
+                        if reply_requested {
+                            let display = author_names
+                                .get(&msg.from)
+                                .cloned()
+                                .unwrap_or_else(|| msg.from.clone());
+                            self.replying_to = Some(ReplyTarget {
+                                message_hash: hash,
+                                author: display,
+                                content_snippet: super::media::elide(&msg.content, 80),
+                                media_thumb: msg.media.clone(),
                             });
                         }
+
                         last_from = Some(msg.from.as_str());
                         last_epoch = msg.timestamp_epoch;
                         if day.is_some() {
@@ -768,94 +1161,5 @@ fn show_receipt(ui: &mut egui::Ui, delivered: bool, read: bool) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{day_divider_label, starts_new_group, GROUP_BREAK_SECS};
-    use crate::ui::UiLanguage;
-    use chrono::NaiveDate;
-
-    #[test]
-    fn group_breaks_on_author_change() {
-        assert!(starts_new_group(
-            Some("alice"),
-            Some(100),
-            "bob",
-            Some(110),
-            false
-        ));
-    }
-
-    #[test]
-    fn group_breaks_on_day_change() {
-        assert!(starts_new_group(
-            Some("alice"),
-            Some(100),
-            "alice",
-            Some(110),
-            true
-        ));
-    }
-
-    #[test]
-    fn group_keeps_same_author_within_window() {
-        assert!(!starts_new_group(
-            Some("alice"),
-            Some(1_000),
-            "alice",
-            Some(1_000 + GROUP_BREAK_SECS),
-            false,
-        ));
-    }
-
-    #[test]
-    fn group_breaks_after_time_gap() {
-        assert!(starts_new_group(
-            Some("alice"),
-            Some(1_000),
-            "alice",
-            Some(1_000 + GROUP_BREAK_SECS + 1),
-            false,
-        ));
-    }
-
-    #[test]
-    fn group_falls_back_to_author_without_epoch() {
-        // Sans instants comparables : même auteur reste groupé.
-        assert!(!starts_new_group(Some("alice"), None, "alice", None, false));
-    }
-
-    #[test]
-    fn divider_labels_today_and_yesterday() {
-        let today = NaiveDate::from_ymd_opt(2026, 5, 20).unwrap();
-        let yesterday = NaiveDate::from_ymd_opt(2026, 5, 19).unwrap();
-        assert_eq!(
-            day_divider_label(today, today, UiLanguage::French),
-            "Aujourd'hui"
-        );
-        assert_eq!(
-            day_divider_label(today, today, UiLanguage::English),
-            "Today"
-        );
-        assert_eq!(
-            day_divider_label(yesterday, today, UiLanguage::French),
-            "Hier"
-        );
-        assert_eq!(
-            day_divider_label(yesterday, today, UiLanguage::English),
-            "Yesterday"
-        );
-    }
-
-    #[test]
-    fn divider_labels_full_date_localized() {
-        let today = NaiveDate::from_ymd_opt(2026, 6, 23).unwrap();
-        let date = NaiveDate::from_ymd_opt(2026, 5, 18).unwrap();
-        assert_eq!(
-            day_divider_label(date, today, UiLanguage::French),
-            "18 mai 2026"
-        );
-        assert_eq!(
-            day_divider_label(date, today, UiLanguage::English),
-            "May 18, 2026"
-        );
-    }
-}
+#[path = "../tests/test_ui_chat_panel.rs"]
+mod tests;

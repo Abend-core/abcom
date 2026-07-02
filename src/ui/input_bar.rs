@@ -291,6 +291,7 @@ fn prepare_and_stream(
         timestamp_epoch: header.timestamp_epoch,
         to_user: to_user.clone(),
         media: Some(media),
+        reply_to: None,
     });
 
     for (_, addr) in targets {
@@ -337,6 +338,7 @@ fn send_current_message(
             timestamp_epoch: Some(now.timestamp() as u64),
             to_user: selected_peer_name.clone(),
             media: None,
+            reply_to: app.replying_to.as_ref().map(|r| r.message_hash),
         };
 
         {
@@ -405,6 +407,7 @@ fn send_current_message(
     app.input_has_focus = true;
     app.input_scroll_lines = 0.0;
     app.pending_attachments.clear();
+    app.replying_to = None;
 
     true
 }
@@ -459,6 +462,57 @@ impl AbcomApp {
                     .inner_margin(egui::Margin::symmetric(10, 8))
                     .show(ui, |ui| {
                         ui.vertical(|ui| {
+                            // Aperçu de réponse : extrait les données possédées
+                            // avant tout appel `&mut self` (chargement de
+                            // texture), pour ne pas garder `self.replying_to`
+                            // emprunté pendant l'appel.
+                            let reply_preview = self.replying_to.as_ref().map(|r| {
+                                (
+                                    r.author.clone(),
+                                    r.content_snippet.clone(),
+                                    r.media_thumb.clone(),
+                                )
+                            });
+                            if let Some((author, snippet, media)) = reply_preview {
+                                let reply_to_label = self.tr("Réponse à", "Replying to");
+                                let texture = media
+                                    .as_ref()
+                                    .filter(|m| m.kind == crate::message::MediaKind::Image)
+                                    .and_then(|m| self.media_texture(ctx, &m.id));
+                                egui::Frame::default()
+                                    .fill(egui::Color32::from_rgba_unmultiplied(255, 255, 255, 16))
+                                    .corner_radius(egui::CornerRadius::same(8))
+                                    .inner_margin(egui::Margin::symmetric(8, 4))
+                                    .show(ui, |ui| {
+                                        ui.horizontal(|ui| {
+                                            if media.is_some() {
+                                                super::media::render_reply_thumb(
+                                                    ui,
+                                                    texture.as_ref(),
+                                                    28.0,
+                                                );
+                                            }
+                                            ui.label(
+                                                egui::RichText::new(format!(
+                                                    "{} {}",
+                                                    reply_to_label, author
+                                                ))
+                                                .small(),
+                                            );
+                                            ui.label(egui::RichText::new(&snippet).weak().small());
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    if chip_remove_button(ui) {
+                                                        self.replying_to = None;
+                                                    }
+                                                },
+                                            );
+                                        });
+                                    });
+                                ui.add_space(6.0);
+                            }
+
                             if !self.pending_attachments.is_empty() {
                                 ui.horizontal_wrapped(|ui| {
                                     ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
@@ -836,64 +890,5 @@ impl AbcomApp {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use super::{attachment_label, push_unique_paths, should_send_message};
-
-    #[test]
-    fn enter_from_composer_sends_when_shortcode_menu_is_closed() {
-        assert!(should_send_message(true, false, false, "hello"));
-    }
-
-    #[test]
-    fn enter_fallback_does_not_send_when_shortcode_menu_is_open() {
-        assert!(!should_send_message(false, true, true, ":jo"));
-    }
-
-    #[test]
-    fn enter_fallback_sends_when_shortcode_menu_is_closed() {
-        assert!(should_send_message(false, true, false, "hello"));
-    }
-
-    #[test]
-    fn empty_message_never_sends() {
-        assert!(!should_send_message(true, true, false, "   "));
-    }
-
-    #[test]
-    fn push_unique_paths_ignores_duplicates() {
-        let mut paths = vec![PathBuf::from("/tmp/alpha.txt")];
-
-        push_unique_paths(
-            &mut paths,
-            [
-                PathBuf::from("/tmp/alpha.txt"),
-                PathBuf::from("/tmp/beta.txt"),
-                PathBuf::from("/tmp/beta.txt"),
-            ],
-        );
-
-        assert_eq!(
-            paths,
-            vec![
-                PathBuf::from("/tmp/alpha.txt"),
-                PathBuf::from("/tmp/beta.txt")
-            ]
-        );
-    }
-
-    #[test]
-    fn attachment_label_prefers_file_name() {
-        assert_eq!(
-            attachment_label(PathBuf::from("/tmp/subdir/report.pdf").as_path()),
-            "report.pdf"
-        );
-    }
-
-    #[test]
-    fn attachment_label_falls_back_to_full_path_when_needed() {
-        let path = PathBuf::from("/");
-        assert_eq!(attachment_label(path.as_path()), "/");
-    }
-}
+#[path = "../tests/test_ui_input_bar.rs"]
+mod tests;

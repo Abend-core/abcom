@@ -44,6 +44,7 @@ fn send_gif(app: &mut AbcomApp, gif: &GifItem) {
         timestamp_epoch: Some(now.timestamp() as u64),
         to_user: selected_peer_name.clone(),
         media: Some(media),
+        reply_to: None,
     };
     {
         let msg_hash = AppState::message_hash(&msg);
