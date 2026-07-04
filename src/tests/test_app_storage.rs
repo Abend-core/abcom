@@ -28,6 +28,7 @@ fn msg(from: &str, to: Option<&str>, content: &str, epoch: u64) -> ChatMessage {
         to_user: to.map(str::to_string),
         media: None,
         reply_to: None,
+        nonce: None,
     }
 }
 

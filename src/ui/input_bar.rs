@@ -52,6 +52,45 @@ fn attachment_label(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
+/// Chip de pièce jointe à largeur fixe : icône, nom tronqué (chemin complet
+/// en infobulle) et croix de retrait collée à droite. Renvoie `true` si la
+/// croix est cliquée. La largeur fixe permet une grille qui se replie sur
+/// plusieurs lignes sans jamais déborder.
+fn attachment_chip(ui: &mut egui::Ui, path: &Path, width: f32) -> bool {
+    let mut removed = false;
+    egui::Frame::default()
+        .fill(egui::Color32::from_rgb(66, 66, 70))
+        .corner_radius(egui::CornerRadius::same(8))
+        .inner_margin(egui::Margin::symmetric(8, 4))
+        .show(ui, |ui| {
+            ui.set_width(width - 16.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 5.0;
+                ui.label(if path.is_dir() { "📁" } else { "📄" });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if chip_remove_button(ui) {
+                        removed = true;
+                    }
+                    ui.with_layout(
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(attachment_label(path))
+                                        .small()
+                                        .color(egui::Color32::from_rgb(244, 245, 247)),
+                                )
+                                .truncate(),
+                            )
+                            .on_hover_text(path.display().to_string());
+                        },
+                    );
+                });
+            });
+        });
+    removed
+}
+
 fn action_button_chrome(selected: bool) -> (egui::Color32, egui::Stroke) {
     let fill = if selected {
         egui::Color32::from_rgb(88, 122, 255)
@@ -292,6 +331,9 @@ fn prepare_and_stream(
         to_user: to_user.clone(),
         media: Some(media),
         reply_to: None,
+        // Pas de nonce : le destinataire reconstruit ce message depuis
+        // MediaStreamHeader et doit retomber sur le même hash.
+        nonce: None,
     });
 
     for (_, addr) in targets {
@@ -339,6 +381,7 @@ fn send_current_message(
             to_user: selected_peer_name.clone(),
             media: None,
             reply_to: app.replying_to.as_ref().map(|r| r.message_hash),
+            nonce: Some(ChatMessage::fresh_nonce()),
         };
 
         {
@@ -548,41 +591,108 @@ impl AbcomApp {
                             }
 
                             if !self.pending_attachments.is_empty() {
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-                                    let mut remove_index = None;
-                                    for (index, path) in self.pending_attachments.iter().enumerate()
-                                    {
-                                        egui::Frame::default()
-                                            .fill(egui::Color32::from_rgba_unmultiplied(
-                                                255, 255, 255, 24,
-                                            ))
-                                            .corner_radius(egui::CornerRadius::same(10))
-                                            .inner_margin(egui::Margin::symmetric(8, 4))
-                                            .show(ui, |ui| {
-                                                ui.horizontal(|ui| {
-                                                    ui.label(if path.is_dir() {
-                                                        "📁"
-                                                    } else {
-                                                        "📄"
-                                                    });
-                                                    ui.label(
-                                                        egui::RichText::new(attachment_label(path))
-                                                            .color(egui::Color32::from_rgb(
-                                                                244, 245, 247,
-                                                            ))
-                                                            .small(),
-                                                    );
-                                                    if chip_remove_button(ui) {
-                                                        remove_index = Some(index);
+                                // Bandeau uniforme avec l'aperçu de réponse :
+                                // même fond, même liseré d'accent, croix par
+                                // pièce, boutons d'ajout, liste qui s'étend
+                                // (défilement au-delà de quelques lignes).
+                                let count = self.pending_attachments.len();
+                                let attachments_label =
+                                    self.tr("Pièces jointes", "Attachments");
+                                let add_files_btn_label = self.tr("+ Fichiers", "+ Files");
+                                let add_folder_btn_label = self.tr("+ Dossier", "+ Folder");
+                                egui::Frame::default()
+                                    .fill(egui::Color32::from_rgb(52, 53, 58))
+                                    .corner_radius(egui::CornerRadius::same(10))
+                                    .inner_margin(egui::Margin::symmetric(10, 6))
+                                    .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 6.0;
+                                            let (accent, _) = ui.allocate_exact_size(
+                                                egui::vec2(3.0, 16.0),
+                                                egui::Sense::hover(),
+                                            );
+                                            ui.painter().rect_filled(
+                                                accent,
+                                                2.0,
+                                                egui::Color32::from_rgb(88, 101, 242),
+                                            );
+                                            ui.label(
+                                                egui::RichText::new(attachments_label)
+                                                    .small()
+                                                    .color(egui::Color32::from_gray(160)),
+                                            );
+                                            ui.label(
+                                                egui::RichText::new(count.to_string())
+                                                    .small()
+                                                    .color(egui::Color32::from_rgb(100, 180, 255))
+                                                    .family(egui::FontFamily::Name(
+                                                        super::BOLD_FAMILY.into(),
+                                                    )),
+                                            );
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    if ui.small_button(add_folder_btn_label).clicked()
+                                                    {
+                                                        picker_action = Some(
+                                                            AttachmentMenuAction::AddFolder,
+                                                        );
                                                     }
-                                                });
+                                                    if ui.small_button(add_files_btn_label).clicked()
+                                                    {
+                                                        picker_action =
+                                                            Some(AttachmentMenuAction::AddFiles);
+                                                    }
+                                                },
+                                            );
+                                        });
+                                        ui.add_space(4.0);
+                                        // Grille manuelle de chips à largeur
+                                        // fixe : `horizontal_wrapped` ne
+                                        // replie pas les conteneurs `Frame`
+                                        // (largeur inconnue au placement), on
+                                        // calcule donc nous-mêmes le nombre de
+                                        // chips par ligne — ça ne déborde
+                                        // jamais de la fenêtre.
+                                        const CHIP_W: f32 = 200.0;
+                                        const CHIP_GAP: f32 = 6.0;
+                                        let per_row = ((ui.available_width() + CHIP_GAP)
+                                            / (CHIP_W + CHIP_GAP))
+                                            .floor()
+                                            .max(1.0)
+                                            as usize;
+                                        let mut remove_index = None;
+                                        egui::ScrollArea::vertical()
+                                            .id_salt("attachments_scroll")
+                                            .max_height(100.0)
+                                            .show(ui, |ui| {
+                                                ui.spacing_mut().item_spacing =
+                                                    egui::vec2(CHIP_GAP, CHIP_GAP);
+                                                let paths: Vec<_> = self
+                                                    .pending_attachments
+                                                    .iter()
+                                                    .cloned()
+                                                    .enumerate()
+                                                    .collect();
+                                                for line in paths.chunks(per_row) {
+                                                    ui.horizontal(|ui| {
+                                                        for (index, path) in line {
+                                                            if attachment_chip(
+                                                                ui,
+                                                                path,
+                                                                CHIP_W,
+                                                            ) {
+                                                                remove_index = Some(*index);
+                                                            }
+                                                        }
+                                                    });
+                                                }
                                             });
-                                    }
-                                    if let Some(index) = remove_index {
-                                        self.pending_attachments.remove(index);
-                                    }
-                                });
+                                        if let Some(index) = remove_index {
+                                            self.pending_attachments.remove(index);
+                                        }
+                                    });
                                 ui.add_space(6.0);
                             }
 

@@ -64,6 +64,7 @@ async fn test_receives_chat_message() {
         to_user: None,
         media: None,
         reply_to: None,
+        nonce: None,
     });
     let event = dispatch(packet).await.unwrap();
     assert!(matches!(event, AppEvent::MessageReceived(m) if m.content == "hello"));

@@ -110,6 +110,9 @@ impl Storage {
             );
             CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v BLOB);",
         )?;
+        // Colonne ajoutée après coup (bases existantes) : l'erreur « duplicate
+        // column » est attendue et ignorée.
+        let _ = conn.execute("ALTER TABLE messages ADD COLUMN nonce INTEGER", []);
         let mut storage = Self { conn };
         if fresh {
             storage.migrate_from_json(base);
@@ -125,8 +128,8 @@ impl Storage {
             .as_ref()
             .and_then(|m| serde_json::to_string(m).ok());
         self.conn.execute(
-            "INSERT INTO messages (hash, from_user, to_user, content, timestamp, ts_epoch, media, reply_to)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO messages (hash, from_user, to_user, content, timestamp, ts_epoch, media, reply_to, nonce)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 super::AppState::message_hash(msg) as i64,
                 msg.from,
@@ -136,6 +139,7 @@ impl Storage {
                 msg.timestamp_epoch.map(|e| e as i64),
                 media,
                 msg.reply_to.map(|h| h as i64),
+                msg.nonce.map(|n| n as i64),
             ],
         )?;
         Ok(())
@@ -257,12 +261,13 @@ impl Storage {
                 timestamp_epoch: row.get::<_, Option<i64>>(5)?.map(|e| e as u64),
                 media: media.and_then(|m| serde_json::from_str(&m).ok()),
                 reply_to: row.get::<_, Option<i64>>(7)?.map(|h| h as u64),
+                nonce: row.get::<_, Option<i64>>(8)?.map(|n| n as u64),
             },
         ))
     }
 
     const MSG_COLS: &'static str =
-        "id, from_user, to_user, content, timestamp, ts_epoch, media, reply_to";
+        "id, from_user, to_user, content, timestamp, ts_epoch, media, reply_to, nonce";
 
     /// Derniers `limit` messages (ordre chronologique) + rowid du plus ancien
     /// chargé (None si toute la base tient dans la fenêtre).

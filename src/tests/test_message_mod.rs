@@ -10,6 +10,7 @@ fn chat() -> ChatMessage {
         to_user: Some("ellis".to_string()),
         media: None,
         reply_to: None,
+        nonce: None,
     }
 }
 

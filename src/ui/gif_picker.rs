@@ -45,6 +45,7 @@ fn send_gif(app: &mut AbcomApp, gif: &GifItem) {
         to_user: selected_peer_name.clone(),
         media: Some(media),
         reply_to: None,
+        nonce: Some(ChatMessage::fresh_nonce()),
     };
     {
         let msg_hash = AppState::message_hash(&msg);

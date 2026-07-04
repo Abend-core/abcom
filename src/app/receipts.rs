@@ -21,15 +21,19 @@ impl AppState {
     /// côté réception pour l'inclure dans l'ACK — ils doivent tomber sur la même valeur.
     ///
     /// La clé inclut `timestamp_epoch` + `to_user` + `media.id` pour éviter les collisions
-    /// entre messages identiques ou vides (cas des médias).
+    /// entre messages identiques ou vides (cas des médias), plus le `nonce`
+    /// quand il existe : deux messages au contenu identique envoyés dans la
+    /// même seconde restent distincts. Le nonce n'est ajouté que s'il est
+    /// présent, pour ne pas changer le hash des messages déjà persistés.
     pub fn message_hash(msg: &ChatMessage) -> u64 {
         let key = format!(
-            "{}:{}:{}:{}:{}",
+            "{}:{}:{}:{}:{}{}",
             msg.from,
             msg.to_user.as_deref().unwrap_or("broadcast"),
             msg.timestamp_epoch.unwrap_or(0),
             msg.content,
-            msg.media.as_ref().map(|m| m.id.as_str()).unwrap_or("")
+            msg.media.as_ref().map(|m| m.id.as_str()).unwrap_or(""),
+            msg.nonce.map(|n| format!(":{n}")).unwrap_or_default()
         );
         let mut hash: u64 = 14_695_981_039_346_656_037;
         for byte in key.bytes() {

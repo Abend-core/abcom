@@ -19,6 +19,7 @@ fn msg(from: &str, to: Option<&str>, content: &str) -> ChatMessage {
         to_user: to.map(|s| s.to_string()),
         media: None,
         reply_to: None,
+        nonce: None,
     }
 }
 

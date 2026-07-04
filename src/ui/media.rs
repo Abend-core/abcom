@@ -70,6 +70,9 @@ pub(crate) fn refused_media_message(
         to_user,
         media: None,
         reply_to: None,
+        // Pas de nonce : ce message est construit indépendamment chez
+        // l'émetteur et le destinataire et doit avoir le même hash des deux côtés.
+        nonce: None,
     }
 }
 
