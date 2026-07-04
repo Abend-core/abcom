@@ -54,6 +54,16 @@ rodio = { version = "0.19", default-features = false, features = ["symphonia-wav
 [target.'cfg(not(windows))'.dependencies]
 rodio = { version = "0.19", default-features = false }
 
+[target.'cfg(target_os = "macos")'.dependencies]
+# Bascule Dock/Accessory quand la fenêtre est repliée dans la barre de menus
+# (versions alignées sur celles déjà présentes via tray-icon/winit).
+objc2-foundation = { version = "0.2", features = ["NSThread"] }
+objc2-app-kit = { version = "0.2", features = [
+    "NSApplication",
+    "NSResponder",
+    "NSRunningApplication",
+] }
+
 # Binaire compact et rapide : LTO inter-crates, une seule unité de codegen,
 # symboles retirés, pas de tables de déroulement de panique.
 [profile.release]

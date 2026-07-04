@@ -425,9 +425,12 @@ impl AbcomApp {
 
 impl AbcomApp {
     /// Replie la fenêtre dans le tray : rendu stoppé, textures libérées
-    /// (elles seront rechargées paresseusement à la réouverture).
+    /// (elles seront rechargées paresseusement à la réouverture). Sur macOS,
+    /// l'application quitte aussi le Dock (politique Accessory) : elle ne
+    /// vit plus que dans la barre de menus.
     pub(crate) fn hide_to_tray(&mut self, ctx: &egui::Context) {
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        set_dock_visible(false);
         self.window_hidden = true;
         self.window_focused = false;
 
@@ -457,6 +460,7 @@ impl AbcomApp {
             return;
         }
         self.window_hidden = false;
+        set_dock_visible(true);
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         self.emoji_decode_rx = Some(spawn_emoji_decoder());
@@ -836,3 +840,30 @@ fn spawn_emoji_decoder() -> std::sync::mpsc::Receiver<Vec<(String, egui::ColorIm
         .ok();
     rx
 }
+
+/// macOS : montre/retire l'icône du Dock. Repliée dans la barre de menus,
+/// l'application passe en politique `Accessory` (plus de Dock ni de Cmd-Tab) ;
+/// à la réouverture elle redevient `Regular` et revient au premier plan.
+/// Doit être appelé sur le thread principal (c'est le cas dans `update`).
+#[cfg(target_os = "macos")]
+fn set_dock_visible(visible: bool) {
+    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+    let Some(mtm) = objc2_foundation::MainThreadMarker::new() else {
+        return;
+    };
+    let app = NSApplication::sharedApplication(mtm);
+    let policy = if visible {
+        NSApplicationActivationPolicy::Regular
+    } else {
+        NSApplicationActivationPolicy::Accessory
+    };
+    app.setActivationPolicy(policy);
+    if visible {
+        // Revenir au premier plan après la sortie du mode Accessory.
+        #[allow(deprecated)]
+        app.activateIgnoringOtherApps(true);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_dock_visible(_visible: bool) {}
