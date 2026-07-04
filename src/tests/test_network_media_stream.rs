@@ -1,7 +1,20 @@
 
+use std::sync::Arc;
+
 use super::*;
+use crate::identity::Identity;
 use crate::message::{MediaAttachment, MediaKind};
+use crate::network::secure::TrustStore;
 use tokio::sync::mpsc;
+
+fn test_ctx(username: &str, tx: mpsc::Sender<AppEvent>) -> Arc<NetContext> {
+    Arc::new(NetContext {
+        identity: Identity::ephemeral().unwrap(),
+        username: username.to_string(),
+        trust: Arc::new(TrustStore::new(Default::default(), None)),
+        event_tx: tx,
+    })
+}
 
 fn unique_dir(tag: &str) -> std::path::PathBuf {
     let dir = std::env::temp_dir().join(format!(
@@ -44,10 +57,10 @@ async fn streams_a_file_end_to_end() {
     let (offer_tx, _offer_rx) = mpsc::channel::<MediaStreamOffer>(4);
 
     let dir = media_dir.clone();
-    let server_tx = event_tx.clone();
+    let server_ctx = test_ctx("ellis", event_tx.clone());
     let server = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
-        stream_in(stream, server_tx, offer_tx, dir).await
+        stream_in(stream, server_ctx, offer_tx, dir).await
     });
 
     let source = std::env::temp_dir().join(format!("abcom_ms_src_{}.bin", std::process::id()));
@@ -60,7 +73,8 @@ async fn streams_a_file_end_to_end() {
         header: header("test.bin", payload.len() as u64, false),
     };
 
-    stream_out(&job, &event_tx).await.unwrap();
+    let client_ctx = test_ctx("bob", event_tx.clone());
+    stream_out(&job, &client_ctx).await.unwrap();
     server.await.unwrap().unwrap();
 
     assert_eq!(std::fs::read(media_dir.join("test.bin")).unwrap(), payload);
@@ -97,10 +111,10 @@ async fn large_media_streams_after_acceptance() {
     });
 
     let dir = media_dir.clone();
-    let server_tx = event_tx.clone();
+    let server_ctx = test_ctx("ellis", event_tx.clone());
     let server = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
-        stream_in(stream, server_tx, offer_tx, dir).await
+        stream_in(stream, server_ctx, offer_tx, dir).await
     });
 
     let source = std::env::temp_dir().join(format!("abcom_acc_src_{}.bin", std::process::id()));
@@ -113,7 +127,8 @@ async fn large_media_streams_after_acceptance() {
         header: header("big.zip", payload.len() as u64, true),
     };
 
-    stream_out(&job, &event_tx).await.unwrap();
+    let client_ctx = test_ctx("bob", event_tx.clone());
+    stream_out(&job, &client_ctx).await.unwrap();
     server.await.unwrap().unwrap();
 
     assert_eq!(std::fs::read(media_dir.join("big.zip")).unwrap(), payload);
@@ -152,10 +167,10 @@ async fn large_media_declined_writes_nothing() {
     });
 
     let dir = media_dir.clone();
-    let server_tx = event_tx.clone();
+    let server_ctx = test_ctx("ellis", event_tx.clone());
     let server = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
-        stream_in(stream, server_tx, offer_tx, dir).await
+        stream_in(stream, server_ctx, offer_tx, dir).await
     });
 
     let source = std::env::temp_dir().join(format!("abcom_dec_src_{}.bin", std::process::id()));
@@ -167,7 +182,8 @@ async fn large_media_declined_writes_nothing() {
         header: header("refuse.zip", 50_000, true),
     };
 
-    stream_out(&job, &event_tx).await.unwrap();
+    let client_ctx = test_ctx("bob", event_tx.clone());
+    stream_out(&job, &client_ctx).await.unwrap();
     server.await.unwrap().unwrap();
 
     // Rien n'a été écrit, et l'émetteur reçoit un refus (pas de réception).

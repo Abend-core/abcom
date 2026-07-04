@@ -138,6 +138,18 @@ impl AbcomApp {
                 match self.settings_tab {
                     SettingsTab::Profile => {
                         ui.label(egui::RichText::new(profile_heading).strong());
+                        ui.add_space(8.0);
+                        // Empreinte de la clé d'identité (Noise) : à comparer
+                        // hors-bande avec un pair pour vérifier l'appairage.
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} : {}",
+                                self.tr("Empreinte de votre clé", "Your key fingerprint"),
+                                self.identity_fingerprint
+                            ))
+                            .small()
+                            .weak(),
+                        );
                         ui.add_space(12.0);
                         ui.horizontal(|ui| {
                             show_avatar(ui, avatar_texture.as_ref(), &my_name, PROFILE_AVATAR_SIZE);

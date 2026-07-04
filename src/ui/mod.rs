@@ -80,6 +80,9 @@ pub(crate) enum GifPickerTab {
 /// État de l'application UI
 pub(crate) struct AbcomApp {
     pub(crate) state: Arc<Mutex<AppState>>,
+    /// Empreinte de notre clé publique (identité Noise), affichée dans les
+    /// Paramètres pour vérification hors-bande entre utilisateurs.
+    pub(crate) identity_fingerprint: String,
     pub(crate) event_rx: mpsc::Receiver<AppEvent>,
     pub(crate) send_tx: mpsc::Sender<SendRequest>,
     pub(crate) send_group_tx: mpsc::Sender<SendGroupRequest>,
@@ -208,6 +211,7 @@ impl AbcomApp {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         state: Arc<Mutex<AppState>>,
+        identity_fingerprint: String,
         event_rx: mpsc::Receiver<AppEvent>,
         send_tx: mpsc::Sender<SendRequest>,
         send_group_tx: mpsc::Sender<SendGroupRequest>,
@@ -221,6 +225,7 @@ impl AbcomApp {
     ) -> Self {
         Self {
             state,
+            identity_fingerprint,
             event_rx,
             send_tx,
             send_group_tx,
@@ -571,6 +576,7 @@ fn app_icon_data() -> Option<egui::IconData> {
 pub fn run(
     state: Arc<Mutex<AppState>>,
     ui_ctx: crate::notify::UiContext,
+    identity_fingerprint: String,
     event_rx: mpsc::Receiver<AppEvent>,
     send_tx: mpsc::Sender<SendRequest>,
     send_group_tx: mpsc::Sender<SendGroupRequest>,
@@ -609,6 +615,7 @@ pub fn run(
             egui_extras::install_image_loaders(&cc.egui_ctx);
             Ok(Box::new(AbcomApp::new(
                 state,
+                identity_fingerprint,
                 event_rx,
                 send_tx,
                 send_group_tx,

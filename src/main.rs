@@ -6,6 +6,7 @@ mod archive;
 mod config;
 mod discovery;
 mod emoji_registry;
+mod identity;
 mod klipy;
 mod message;
 mod network;
@@ -69,6 +70,22 @@ fn main() -> anyhow::Result<()> {
     let referenced_media = storage.all_media_ids().unwrap_or_default();
     let storage_tx = app::storage::spawn(storage, event_tx.clone());
 
+    // Identité cryptographique locale + magasin de confiance TOFU : toutes
+    // les connexions (chat et médias) sont chiffrées Noise XX.
+    let local_identity = identity::Identity::load_or_create(&config::data_dir())?;
+    let identity_fingerprint = local_identity.fingerprint();
+    let trust = Arc::new(network::secure::TrustStore::new(
+        loaded.peer_keys.clone(),
+        Some(storage_tx.clone()),
+    ));
+    let net_ctx = Arc::new(network::NetContext {
+        identity: local_identity.clone(),
+        username: username.clone(),
+        trust,
+        event_tx: event_tx.clone(),
+    });
+    let pool = network::ConnectionPool::new(net_ctx.clone());
+
     let state = Arc::new(Mutex::new(app::AppState::new(
         username.clone(),
         loaded,
@@ -82,18 +99,25 @@ fn main() -> anyhow::Result<()> {
         std::thread::spawn(move || app::media::gc_media_dir(dir, referenced_media));
     }
 
-    rt.spawn(discovery::run(username.clone(), event_tx.clone()));
-    rt.spawn(network::run_server(event_tx.clone()));
-    rt.spawn(network::run_sender(send_rx));
-    rt.spawn(network::run_sender_group(send_group_rx));
-    rt.spawn(network::run_sender_typing(send_typing_rx));
-    rt.spawn(network::run_sender_read_receipts(send_read_receipt_rx));
-    rt.spawn(network::run_sender_ack(send_ack_rx));
-    rt.spawn(network::run_sender_avatar(send_avatar_rx));
-    rt.spawn(network::run_sender_reaction(send_reaction_rx));
-    rt.spawn(network::run_media_sender(send_media_rx, event_tx.clone()));
-    rt.spawn(network::run_media_server(
+    rt.spawn(discovery::run(
+        username.clone(),
+        local_identity.public_hex(),
         event_tx.clone(),
+    ));
+    rt.spawn(network::run_server(net_ctx.clone()));
+    rt.spawn(network::run_sender(send_rx, pool.clone()));
+    rt.spawn(network::run_sender_group(send_group_rx, pool.clone()));
+    rt.spawn(network::run_sender_typing(send_typing_rx, pool.clone()));
+    rt.spawn(network::run_sender_read_receipts(
+        send_read_receipt_rx,
+        pool.clone(),
+    ));
+    rt.spawn(network::run_sender_ack(send_ack_rx, pool.clone()));
+    rt.spawn(network::run_sender_avatar(send_avatar_rx, pool.clone()));
+    rt.spawn(network::run_sender_reaction(send_reaction_rx, pool.clone()));
+    rt.spawn(network::run_media_sender(send_media_rx, net_ctx.clone()));
+    rt.spawn(network::run_media_server(
+        net_ctx.clone(),
         media_offer_tx,
         media_dir,
     ));
@@ -101,6 +125,7 @@ fn main() -> anyhow::Result<()> {
     ui::run(
         state,
         ui_ctx,
+        identity_fingerprint,
         event_rx,
         send_tx,
         send_group_tx,

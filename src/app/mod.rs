@@ -34,8 +34,6 @@ pub struct AppState {
     pub my_avatar: Option<Vec<u8>>,
     /// Avatars des pairs, indexés par nom d'utilisateur.
     pub peer_avatars: HashMap<String, Vec<u8>>,
-    /// Clés publiques épinglées des pairs (TOFU, transport chiffré).
-    pub peer_keys: HashMap<String, Vec<u8>>,
     /// Réactions emoji par message, indexées par `AppState::message_hash`.
     pub reactions: HashMap<u64, Vec<ReactionEntry>>,
     /// Compteur incrémenté à chaque mutation du **contenu** (messages,
@@ -85,7 +83,6 @@ impl AppState {
             peer_records: loaded.peer_records,
             my_avatar: None,
             peer_avatars: loaded.peer_avatars,
-            peer_keys: loaded.peer_keys,
             reactions: loaded.reactions,
             content_generation: 0,
             presence_generation: 0,
@@ -117,7 +114,6 @@ impl AppState {
             peer_records: Vec::new(),
             my_avatar: None,
             peer_avatars: HashMap::new(),
-            peer_keys: HashMap::new(),
             reactions: HashMap::new(),
             content_generation: 0,
             presence_generation: 0,

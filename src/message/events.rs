@@ -39,4 +39,8 @@ pub enum AppEvent {
         messages: Vec<ChatMessage>,
         oldest_rowid: Option<i64>,
     },
+    /// La clé statique présentée par ce pair ne correspond pas à celle
+    /// épinglée (TOFU) : la connexion a été refusée, l'utilisateur doit être
+    /// prévenu d'une possible usurpation.
+    KeyChanged { username: String },
 }

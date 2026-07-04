@@ -188,6 +188,22 @@ impl AbcomApp {
                 AppEvent::ReactionReceived(event) => {
                     s.apply_reaction_event(&event);
                 }
+                AppEvent::KeyChanged { username } => {
+                    // Alerte sécurité : la clé du pair ne correspond plus à
+                    // celle épinglée — la connexion a été refusée.
+                    self.last_notification = Some(format!(
+                        "⚠️ {} : {}",
+                        username,
+                        self.tr(
+                            "la clé d'identité a changé, connexion refusée",
+                            "identity key changed, connection refused"
+                        )
+                    ));
+                    self.notification_time = std::time::Instant::now();
+                    if self.enable_sound_notifications {
+                        play_notification_sound();
+                    }
+                }
                 AppEvent::OlderMessagesLoaded {
                     messages,
                     oldest_rowid,

@@ -1,5 +1,10 @@
-use tokio::io::AsyncWriteExt;
-use tokio::net::TcpStream;
+//! Expéditeurs : les canaux typés de l'UI convergent vers le
+//! [`ConnectionPool`](super::pool::ConnectionPool), qui maintient **une
+//! connexion persistante et chiffrée par pair** (plus de connexion TCP par
+//! paquet).
+
+use std::sync::Arc;
+
 use tokio::sync::mpsc::Receiver;
 
 use crate::message::{
@@ -7,72 +12,61 @@ use crate::message::{
     SendGroupRequest, SendRequest, TypingRequest,
 };
 
-pub(crate) async fn send_packet(addr: std::net::SocketAddr, packet: NetworkPacket) {
-    match TcpStream::connect(addr).await {
-        Ok(mut stream) => {
-            if let Ok(data) = serde_json::to_vec(&packet) {
-                let _ = stream.write_all(&data).await;
-                let _ = stream.flush().await;
-                let _ = stream.shutdown().await;
-            }
-        }
-        Err(e) => eprintln!("[network] Connexion échouée vers {}: {}", addr, e),
+use super::pool::ConnectionPool;
+
+/// Expéditeur pour les messages de chat.
+pub async fn run_sender(mut rx: Receiver<SendRequest>, pool: Arc<ConnectionPool>) {
+    while let Some(req) = rx.recv().await {
+        pool.send(req.to_addr, NetworkPacket::Chat(req.message)).await;
     }
 }
 
-/// Expéditeur TCP pour les messages de chat
-pub async fn run_sender(mut rx: Receiver<SendRequest>) {
+/// Expéditeur pour les événements de groupe.
+pub async fn run_sender_group(mut rx: Receiver<SendGroupRequest>, pool: Arc<ConnectionPool>) {
     while let Some(req) = rx.recv().await {
-        let packet = NetworkPacket::Chat(req.message);
-        tokio::spawn(send_packet(req.to_addr, packet));
+        pool.send(req.to_addr, NetworkPacket::Group(req.event)).await;
     }
 }
 
-/// Expéditeur TCP pour les événements de groupe
-pub async fn run_sender_group(mut rx: Receiver<SendGroupRequest>) {
+/// Expéditeur pour les indicateurs de frappe (fire-and-forget).
+pub async fn run_sender_typing(mut rx: Receiver<TypingRequest>, pool: Arc<ConnectionPool>) {
     while let Some(req) = rx.recv().await {
-        let packet = NetworkPacket::Group(req.event);
-        tokio::spawn(send_packet(req.to_addr, packet));
+        pool.send(req.to_addr, NetworkPacket::Typing(req.indicator))
+            .await;
     }
 }
 
-/// Expéditeur TCP pour les indicateurs de frappe (fire-and-forget)
-pub async fn run_sender_typing(mut rx: Receiver<TypingRequest>) {
+/// Expéditeur pour les accusés de lecture.
+pub async fn run_sender_read_receipts(
+    mut rx: Receiver<ReadReceiptRequest>,
+    pool: Arc<ConnectionPool>,
+) {
     while let Some(req) = rx.recv().await {
-        let packet = NetworkPacket::Typing(req.indicator);
-        tokio::spawn(send_packet(req.to_addr, packet));
+        pool.send(req.to_addr, NetworkPacket::ReadReceipt(req.receipt))
+            .await;
     }
 }
 
-/// Expéditeur TCP pour les accusés de lecture
-pub async fn run_sender_read_receipts(mut rx: Receiver<ReadReceiptRequest>) {
+/// Expéditeur pour les annonces d'avatar (image de profil).
+pub async fn run_sender_avatar(mut rx: Receiver<AvatarRequest>, pool: Arc<ConnectionPool>) {
     while let Some(req) = rx.recv().await {
-        let packet = NetworkPacket::ReadReceipt(req.receipt);
-        tokio::spawn(send_packet(req.to_addr, packet));
+        pool.send(req.to_addr, NetworkPacket::Avatar(req.announce))
+            .await;
     }
 }
 
-/// Expéditeur TCP pour les annonces d'avatar (image de profil)
-pub async fn run_sender_avatar(mut rx: Receiver<AvatarRequest>) {
+/// Expéditeur pour les ACK de livraison.
+pub async fn run_sender_ack(mut rx: Receiver<MessageAckRequest>, pool: Arc<ConnectionPool>) {
     while let Some(req) = rx.recv().await {
-        let packet = NetworkPacket::Avatar(req.announce);
-        tokio::spawn(send_packet(req.to_addr, packet));
+        pool.send(req.to_addr, NetworkPacket::Ack(req.ack)).await;
     }
 }
 
-/// Expéditeur TCP pour les ACK de livraison
-pub async fn run_sender_ack(mut rx: Receiver<MessageAckRequest>) {
+/// Expéditeur pour les réactions emoji (ajout/retrait).
+pub async fn run_sender_reaction(mut rx: Receiver<ReactionRequest>, pool: Arc<ConnectionPool>) {
     while let Some(req) = rx.recv().await {
-        let packet = NetworkPacket::Ack(req.ack);
-        tokio::spawn(send_packet(req.to_addr, packet));
-    }
-}
-
-/// Expéditeur TCP pour les réactions emoji (ajout/retrait)
-pub async fn run_sender_reaction(mut rx: Receiver<ReactionRequest>) {
-    while let Some(req) = rx.recv().await {
-        let packet = NetworkPacket::Reaction(req.event);
-        tokio::spawn(send_packet(req.to_addr, packet));
+        pool.send(req.to_addr, NetworkPacket::Reaction(req.event))
+            .await;
     }
 }
 

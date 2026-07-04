@@ -50,7 +50,7 @@ fn bind_discovery_socket() -> std::io::Result<UdpSocket> {
 /// Tâche de découverte des pairs par UDP broadcast.
 /// Diffuse le nom d'utilisateur toutes les 3 secondes et écoute les autres.
 /// Détecte aussi les déconnexions quand un peer n'a pas répondu pendant 10s.
-pub async fn run(username: String, tx: Sender<AppEvent>) {
+pub async fn run(username: String, pubkey_hex: String, tx: Sender<AppEvent>) {
     let socket = match bind_discovery_socket() {
         Ok(s) => s,
         Err(e) => {
@@ -62,6 +62,7 @@ pub async fn run(username: String, tx: Sender<AppEvent>) {
     let packet = DiscoveryPacket {
         username: username.clone(),
         port: config::chat_port(),
+        pubkey: pubkey_hex,
     };
     let data = serde_json::to_vec(&packet).unwrap_or_default();
     // On annonce à la fois en multicast (local + LAN, rebouclé) et en broadcast
