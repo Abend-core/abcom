@@ -45,7 +45,8 @@ pub async fn run_server_on(listener: TcpListener, ctx: Arc<NetContext>) {
 /// Gère une connexion entrante : handshake, identification, puis boucle de
 /// réception des paquets (la connexion reste ouverte).
 async fn handle_incoming(mut stream: TcpStream, ctx: Arc<NetContext>) -> std::io::Result<()> {
-    let (transport, remote_key) = handshake_responder(&mut stream, &ctx.identity).await?;
+    let (transport, remote_key) =
+        handshake_responder(&mut stream, &ctx.identity, ctx.psk_bytes()).await?;
     let mut secure = SecureStream::new(stream, transport);
     let peer = exchange_hello(&mut secure, &ctx.username, false).await?;
     if ctx.trust.verify_and_pin(&peer, &remote_key) == Trust::Mismatch {

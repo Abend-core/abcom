@@ -150,6 +150,18 @@ impl AbcomApp {
                             .small()
                             .weak(),
                         );
+                        let psk_label = if self.psk_active {
+                            self.tr(
+                                "Passphrase de salon : active",
+                                "Room passphrase: enabled",
+                            )
+                        } else {
+                            self.tr(
+                                "Passphrase de salon : désactivée (ABCOM_PASSPHRASE)",
+                                "Room passphrase: disabled (ABCOM_PASSPHRASE)",
+                            )
+                        };
+                        ui.label(egui::RichText::new(psk_label).small().weak());
                         ui.add_space(12.0);
                         ui.horizontal(|ui| {
                             show_avatar(ui, avatar_texture.as_ref(), &my_name, PROFILE_AVATAR_SIZE);

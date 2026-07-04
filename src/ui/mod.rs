@@ -83,6 +83,11 @@ pub(crate) struct AbcomApp {
     /// Empreinte de notre clé publique (identité Noise), affichée dans les
     /// Paramètres pour vérification hors-bande entre utilisateurs.
     pub(crate) identity_fingerprint: String,
+    /// Une passphrase de salon est active (handshake XXpsk3).
+    pub(crate) psk_active: bool,
+    /// Résultat du décodage des PNG emoji, effectué dans un thread au
+    /// démarrage : le premier frame n'attend plus les 323 décodages.
+    pub(crate) emoji_decode_rx: Option<std::sync::mpsc::Receiver<Vec<(String, egui::ColorImage)>>>,
     pub(crate) event_rx: mpsc::Receiver<AppEvent>,
     pub(crate) send_tx: mpsc::Sender<SendRequest>,
     pub(crate) send_group_tx: mpsc::Sender<SendGroupRequest>,
@@ -212,6 +217,7 @@ impl AbcomApp {
     pub(crate) fn new(
         state: Arc<Mutex<AppState>>,
         identity_fingerprint: String,
+        psk_active: bool,
         event_rx: mpsc::Receiver<AppEvent>,
         send_tx: mpsc::Sender<SendRequest>,
         send_group_tx: mpsc::Sender<SendGroupRequest>,
@@ -223,9 +229,15 @@ impl AbcomApp {
         send_media_tx: mpsc::Sender<MediaSendJob>,
         media_offer_rx: mpsc::Receiver<MediaStreamOffer>,
     ) -> Self {
+        // Décodage des emojis en arrière-plan dès la création : les textures
+        // seront créées (rapide) quand le résultat arrive, sans geler l'UI.
+        let emoji_decode_rx = Some(spawn_emoji_decoder());
+
         Self {
             state,
             identity_fingerprint,
+            psk_active,
+            emoji_decode_rx,
             event_rx,
             send_tx,
             send_group_tx,
@@ -577,6 +589,7 @@ pub fn run(
     state: Arc<Mutex<AppState>>,
     ui_ctx: crate::notify::UiContext,
     identity_fingerprint: String,
+    psk_active: bool,
     event_rx: mpsc::Receiver<AppEvent>,
     send_tx: mpsc::Sender<SendRequest>,
     send_group_tx: mpsc::Sender<SendGroupRequest>,
@@ -616,6 +629,7 @@ pub fn run(
             Ok(Box::new(AbcomApp::new(
                 state,
                 identity_fingerprint,
+                psk_active,
                 event_rx,
                 send_tx,
                 send_group_tx,
@@ -636,4 +650,31 @@ pub fn run(
     })?;
 
     Ok(())
+}
+
+/// Décode les PNG du registre d'emojis dans un thread dédié (le premier
+/// frame de l'UI n'attend plus ~323 décodages d'images).
+fn spawn_emoji_decoder() -> std::sync::mpsc::Receiver<Vec<(String, egui::ColorImage)>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("abcom-emoji".into())
+        .spawn(move || {
+            let images: Vec<(String, egui::ColorImage)> = crate::emoji_registry::EMOJI_DATA
+                .iter()
+                .filter_map(|(ch, bytes)| {
+                    image::load_from_memory(bytes).ok().map(|img| {
+                        let rgba = img.to_rgba8();
+                        let (w, h) = rgba.dimensions();
+                        let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                            [w as usize, h as usize],
+                            rgba.as_raw(),
+                        );
+                        (ch.to_string(), color_image)
+                    })
+                })
+                .collect();
+            let _ = tx.send(images);
+        })
+        .ok();
+    rx
 }

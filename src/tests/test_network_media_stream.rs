@@ -13,6 +13,7 @@ fn test_ctx(username: &str, tx: mpsc::Sender<AppEvent>) -> Arc<NetContext> {
         username: username.to_string(),
         trust: Arc::new(TrustStore::new(Default::default(), None)),
         event_tx: tx,
+        psk: None,
     })
 }
 

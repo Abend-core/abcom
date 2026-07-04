@@ -34,6 +34,9 @@ pub(crate) struct ChatRow {
     pub(crate) hash: u64,
     /// Libellé du séparateur de date à afficher au-dessus de la ligne.
     pub(crate) day_divider: Option<String>,
+    /// Libellé du jour de la ligne (même sans changement de jour) : affiché
+    /// en tête de fenêtre tronquée pour situer la coupure dans le temps.
+    pub(crate) day_label: Option<String>,
     /// Ouvre un groupe façon Discord (avatar + nom + heure).
     pub(crate) starts_group: bool,
     pub(crate) header_time: String,
@@ -71,6 +74,14 @@ pub(crate) struct ChatCache {
 }
 
 impl ChatCache {
+    /// Invalide entièrement le cache (y compris le markdown memoïsé) : la
+    /// détection « message 100 % emoji » dépend du registre d'emojis, chargé
+    /// en arrière-plan après les premières frames.
+    pub(crate) fn invalidate(&mut self) {
+        self.generation = None;
+        self.markdown.clear();
+    }
+
     pub(crate) fn conversation(&self) -> Option<&str> {
         self.conversation_key.as_ref().and_then(|c| c.as_deref())
     }
@@ -138,9 +149,12 @@ impl ChatCache {
                 (Some(_), None) => last_from.is_some(),
                 _ => false,
             };
-            let day_divider = day.filter(|_| day_changed || last_day.is_none()).map(|d| {
-                day_divider_label(d, today, language)
-            });
+            let day_label = day.map(|d| day_divider_label(d, today, language));
+            let day_divider = if day_changed || last_day.is_none() {
+                day_label.clone()
+            } else {
+                None
+            };
 
             // Une réponse ouvre toujours un nouvel en-tête, comme Discord.
             let starts_group = msg.reply_to.is_some()
@@ -233,6 +247,7 @@ impl ChatCache {
                 msg: (*msg).clone(),
                 hash,
                 day_divider,
+                day_label,
                 starts_group,
                 header_time: header_time(msg),
                 name_color,

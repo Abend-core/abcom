@@ -124,7 +124,8 @@ async fn connect_secure(
     ctx: &NetContext,
 ) -> std::io::Result<SecureStream> {
     let mut stream = TcpStream::connect(addr).await?;
-    let (transport, remote_key) = handshake_initiator(&mut stream, &ctx.identity).await?;
+    let (transport, remote_key) =
+        handshake_initiator(&mut stream, &ctx.identity, ctx.psk_bytes()).await?;
     let mut secure = SecureStream::new(stream, transport);
     let peer = exchange_hello(&mut secure, &ctx.username, true).await?;
     if ctx.trust.verify_and_pin(&peer, &remote_key) == Trust::Mismatch {
@@ -214,7 +215,8 @@ async fn stream_in(
     offer_tx: Sender<MediaStreamOffer>,
     media_dir: PathBuf,
 ) -> std::io::Result<()> {
-    let (transport, remote_key) = handshake_responder(&mut stream, &ctx.identity).await?;
+    let (transport, remote_key) =
+        handshake_responder(&mut stream, &ctx.identity, ctx.psk_bytes()).await?;
     let mut secure = SecureStream::new(stream, transport);
     let peer = exchange_hello(&mut secure, &ctx.username, false).await?;
     if ctx.trust.verify_and_pin(&peer, &remote_key) == Trust::Mismatch {

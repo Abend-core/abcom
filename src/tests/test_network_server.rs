@@ -17,6 +17,7 @@ fn ctx(username: &str, tx: mpsc::Sender<AppEvent>) -> Arc<NetContext> {
         username: username.to_string(),
         trust: Arc::new(TrustStore::new(Default::default(), None)),
         event_tx: tx,
+        psk: None,
     })
 }
 
@@ -24,7 +25,7 @@ fn ctx(username: &str, tx: mpsc::Sender<AppEvent>) -> Arc<NetContext> {
 async fn secure_client(addr: std::net::SocketAddr, username: &str) -> SecureStream {
     let identity = Identity::ephemeral().unwrap();
     let mut stream = TcpStream::connect(addr).await.unwrap();
-    let (transport, _) = handshake_initiator(&mut stream, &identity).await.unwrap();
+    let (transport, _) = handshake_initiator(&mut stream, &identity, None).await.unwrap();
     let mut secure = SecureStream::new(stream, transport);
     exchange_hello(&mut secure, username, true).await.unwrap();
     secure
