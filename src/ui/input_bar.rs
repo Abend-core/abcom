@@ -357,12 +357,20 @@ fn send_current_message(
         return false;
     }
 
-    let (my_name, selected_peer_name, transfer_targets) = {
+    let (my_name, selected_peer_name, transfer_targets, group_addrs) = {
         let s = app.state.lock().unwrap();
+        // Salon de groupe sélectionné : les destinataires sont les membres
+        // en ligne du groupe, pas l'ensemble des pairs.
+        let group_addrs = s
+            .selected_conversation
+            .as_deref()
+            .and_then(|c| c.strip_prefix('#'))
+            .map(|g| s.group_member_addrs(g));
         (
             s.my_username.clone(),
             s.selected_conversation.clone(),
             s.selected_transfer_targets(),
+            group_addrs,
         )
     };
 
@@ -402,7 +410,15 @@ fn send_current_message(
             }
         }
 
-        if let Some(addr) = selected_addr {
+        if let Some(addrs) = &group_addrs {
+            // Salon : uniquement les membres en ligne du groupe.
+            for addr in addrs {
+                let _ = app.send_tx.try_send(SendRequest {
+                    to_addr: *addr,
+                    message: msg.clone(),
+                });
+            }
+        } else if let Some(addr) = selected_addr {
             let _ = app.send_tx.try_send(SendRequest {
                 to_addr: addr,
                 message: msg,
@@ -953,13 +969,17 @@ impl AbcomApp {
                                                 .filter(|p| p.online)
                                                 .map(|p| p.addr)
                                                 .collect::<Vec<_>>(),
-                                            Some(conv) => s
-                                                .peers
-                                                .iter()
-                                                .find(|p| p.online && &p.username == conv)
-                                                .map(|p| p.addr)
-                                                .into_iter()
-                                                .collect(),
+                                            // Salon : membres en ligne du groupe.
+                                            Some(conv) => match conv.strip_prefix('#') {
+                                                Some(g) => s.group_member_addrs(g),
+                                                None => s
+                                                    .peers
+                                                    .iter()
+                                                    .find(|p| p.online && &p.username == conv)
+                                                    .map(|p| p.addr)
+                                                    .into_iter()
+                                                    .collect(),
+                                            },
                                         };
                                         (name, addrs)
                                     };

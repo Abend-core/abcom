@@ -77,33 +77,7 @@ impl AbcomApp {
                             ui.visuals().text_color(),
                         );
 
-                        if unread > 0 {
-                            let badge_text = if unread > 99 {
-                                "99+".to_string()
-                            } else {
-                                unread.to_string()
-                            };
-                            let badge_size = 24.0;
-                            let badge_rect = egui::Rect::from_min_size(
-                                egui::pos2(
-                                    rect.right() - badge_size - 12.0,
-                                    rect.center().y - badge_size / 2.0,
-                                ),
-                                egui::vec2(badge_size, badge_size),
-                            );
-                            ui.painter().rect_filled(
-                                badge_rect,
-                                badge_size / 2.0,
-                                egui::Color32::from_rgb(220, 40, 60),
-                            );
-                            ui.painter().text(
-                                badge_rect.center(),
-                                egui::Align2::CENTER_CENTER,
-                                badge_text,
-                                egui::TextStyle::Body.resolve(ui.style()),
-                                egui::Color32::WHITE,
-                            );
-                        }
+                        paint_unread_badge(ui, rect, unread);
 
                         if resp.clicked() {
                             let (is_selected_now, peer_name, peer_addr_for_receipt) = {
@@ -161,23 +135,28 @@ impl AbcomApp {
                 // Section groupes
                 ui.horizontal(|ui| {
                     ui.heading(self.tr("🔗 Groupes", "🔗 Groups"));
-                    if ui.small_button("+").clicked() {
-                        self.show_group_modal = true;
-                        self.group_name_input.clear();
-                        self.group_members_selected.clear();
-                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .small_button("＋")
+                            .on_hover_text(self.tr("Créer un groupe", "Create a group"))
+                            .clicked()
+                        {
+                            self.show_group_modal = true;
+                            self.group_name_input.clear();
+                            self.group_members_selected.clear();
+                        }
+                    });
                 });
                 ui.add_space(4.0);
 
                 let groups = self.sidebar_cache.groups.clone();
+                let group_unread = self.sidebar_cache.group_unread.clone();
                 if groups.is_empty() {
                     ui.weak(self.tr("Aucun groupe", "No group"));
                 } else {
-                    for group in groups.iter() {
-                        let is_selected = selected_conv
-                            .as_ref()
-                            .map(|c| c == &format!("#{}", group.name))
-                            .unwrap_or(false);
+                    for (gidx, group) in groups.iter().enumerate() {
+                        let conv_key = format!("#{}", group.name);
+                        let is_selected = selected_conv.as_deref() == Some(conv_key.as_str());
                         let desired = egui::vec2(ui.available_width(), 56.0);
                         let (rect, resp) = ui.allocate_exact_size(desired, egui::Sense::click());
                         let visuals = ui.style().interact(&resp);
@@ -196,15 +175,33 @@ impl AbcomApp {
                             .rect_stroke(rect, 8.0, stroke, egui::StrokeKind::Outside);
                         let font_id = egui::TextStyle::Button.resolve(ui.style());
                         ui.painter().text(
-                            rect.left_center() + egui::vec2(10.0, 0.0),
+                            rect.left_center() + egui::vec2(10.0, -9.0),
                             egui::Align2::LEFT_CENTER,
                             format!("🔗 {}", group.name),
                             font_id,
                             ui.visuals().text_color(),
                         );
+                        let n = group.members.len();
+                        let members_label = if n > 1 {
+                            format!("{} {}", n, self.tr("membres", "members"))
+                        } else {
+                            format!("{} {}", n, self.tr("membre", "member"))
+                        };
+                        ui.painter().text(
+                            rect.left_center() + egui::vec2(10.0, 9.0),
+                            egui::Align2::LEFT_CENTER,
+                            members_label,
+                            egui::TextStyle::Small.resolve(ui.style()),
+                            ui.visuals().weak_text_color(),
+                        );
+                        paint_unread_badge(ui, rect, group_unread.get(gidx).copied().unwrap_or(0));
                         if resp.clicked() {
-                            let group_name = format!("#{}", group.name);
-                            self.switch_conversation(Some(group_name));
+                            if is_selected {
+                                self.switch_conversation(None);
+                            } else {
+                                self.switch_conversation(Some(conv_key.clone()));
+                                self.state.lock().unwrap().mark_conversation_read(&conv_key);
+                            }
                         }
                         ui.add_space(4.0);
                     }
@@ -262,6 +259,39 @@ impl AbcomApp {
                 });
             });
     }
+}
+
+/// Pastille rouge de messages non-lus, alignée à droite d'une ligne de la
+/// barre latérale (pairs et salons).
+fn paint_unread_badge(ui: &egui::Ui, rect: egui::Rect, unread: usize) {
+    if unread == 0 {
+        return;
+    }
+    let badge_text = if unread > 99 {
+        "99+".to_string()
+    } else {
+        unread.to_string()
+    };
+    let badge_size = 24.0;
+    let badge_rect = egui::Rect::from_min_size(
+        egui::pos2(
+            rect.right() - badge_size - 12.0,
+            rect.center().y - badge_size / 2.0,
+        ),
+        egui::vec2(badge_size, badge_size),
+    );
+    ui.painter().rect_filled(
+        badge_rect,
+        badge_size / 2.0,
+        egui::Color32::from_rgb(220, 40, 60),
+    );
+    ui.painter().text(
+        badge_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        badge_text,
+        egui::TextStyle::Body.resolve(ui.style()),
+        egui::Color32::WHITE,
+    );
 }
 
 /// Bouton « engrenage » peint (rendu fiable, sans dépendre d'un glyphe emoji).
