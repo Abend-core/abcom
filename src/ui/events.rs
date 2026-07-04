@@ -3,8 +3,8 @@ use eframe::egui;
 use super::{sound::play_notification_sound, AbcomApp};
 use crate::app::AppState;
 use crate::message::{
-    AppEvent, AvatarRequest, ChatMessage, GroupAction, MessageAck, MessageAckRequest, ReadReceipt,
-    ReadReceiptRequest,
+    AppEvent, AvatarRequest, ChatMessage, GroupAction, GroupEvent, MessageAck, MessageAckRequest,
+    ReadReceipt, ReadReceiptRequest, SendGroupRequest,
 };
 
 impl AbcomApp {
@@ -73,10 +73,29 @@ impl AbcomApp {
         while let Ok(evt) = self.event_rx.try_recv() {
             match evt {
                 AppEvent::MessageReceived(msg) => {
-                    // ACK automatique (livraison) pour les messages privés.
+                    // Message de salon : `to_user` porte la clé `#nom`. Un salon
+                    // inconnu ou quitté est ignoré (l'émetteur ne devrait plus
+                    // nous cibler ; protège aussi d'un pair non membre).
+                    let group_conv: Option<String> = msg
+                        .to_user
+                        .as_deref()
+                        .filter(|t| t.starts_with('#'))
+                        .map(str::to_string);
+                    if let Some(conv) = &group_conv {
+                        let known = conv
+                            .strip_prefix('#')
+                            .map(|g| s.is_in_group(g))
+                            .unwrap_or(false);
+                        if !known {
+                            continue;
+                        }
+                    }
+
+                    // ACK automatique (livraison) pour les messages privés
+                    // uniquement (pas d'accusés multi-destinataires en salon).
                     // Le ReadReceipt (lecture) n'est envoyé que si la conversation
                     // est déjà ouverte et la fenêtre active — sinon différé à l'ouverture.
-                    if msg.to_user.is_some() && msg.from != s.my_username {
+                    if group_conv.is_none() && msg.to_user.is_some() && msg.from != s.my_username {
                         if let Some(peer) = s.peers.iter().find(|p| p.username == msg.from) {
                             let msg_hash = AppState::message_hash(&msg);
                             let ack = MessageAck {
@@ -114,11 +133,18 @@ impl AbcomApp {
 
                     s.add_message(msg.clone());
                     if msg.from != s.my_username {
-                        self.last_notification = Some(format!("{}: {}", msg.from, msg.content));
+                        self.last_notification = Some(match &group_conv {
+                            Some(conv) => format!("{} · {}: {}", conv, msg.from, msg.content),
+                            None => format!("{}: {}", msg.from, msg.content),
+                        });
                         self.notification_time = std::time::Instant::now();
                         self.has_unread = true;
+                        // Sourdine et « déjà ouverte » : la conversation source
+                        // est le salon pour un message de groupe, le pair sinon.
                         let source_conv: Option<String> = if msg.to_user.is_none() {
                             None
+                        } else if let Some(conv) = &group_conv {
+                            Some(conv.clone())
                         } else {
                             Some(msg.from.clone())
                         };
@@ -141,6 +167,22 @@ impl AbcomApp {
                 }
                 AppEvent::PeerDiscovered { username, addr } => {
                     s.add_peer(username.clone(), addr);
+                    // Re-synchronise auprès du pair (ré)apparu les groupes dont
+                    // nous sommes propriétaire et dont il est membre : il reçoit
+                    // l'état complet (création manquée hors-ligne, ajout, etc.).
+                    let sync_events: Vec<GroupEvent> = s
+                        .groups
+                        .iter()
+                        .filter(|g| g.owner == s.my_username && g.members.contains(&username))
+                        .map(|g| GroupEvent {
+                            action: GroupAction::Create { group: g.clone() },
+                        })
+                        .collect();
+                    for event in sync_events {
+                        let _ = self
+                            .send_group_tx
+                            .try_send(SendGroupRequest { to_addr: addr, event });
+                    }
                     // Première découverte (depuis le dernier envoi) : on partage
                     // notre avatar pour qu'il s'affiche chez ce pair.
                     if !self.avatar_sent_to.contains(&username) {
@@ -166,8 +208,17 @@ impl AbcomApp {
                 AppEvent::UserStoppedTyping(_) => s.clear_typing_if_old(),
                 AppEvent::GroupEventReceived(evt) => match evt.action {
                     GroupAction::Create { group } => {
-                        if !s.groups.iter().any(|g| g.name == group.name) {
-                            s.groups.push(group);
+                        // Création ou re-synchronisation par le propriétaire :
+                        // l'état reçu remplace le nôtre. Un groupe dont nous ne
+                        // sommes pas membre ne nous concerne pas.
+                        if group.members.contains(&s.my_username) {
+                            if let Some(existing) =
+                                s.groups.iter_mut().find(|g| g.name == group.name)
+                            {
+                                *existing = group;
+                            } else {
+                                s.groups.push(group);
+                            }
                             s.save_groups();
                         }
                     }
@@ -186,23 +237,20 @@ impl AbcomApp {
                         group_name,
                         username,
                     } => {
-                        if let Some(g) = s.groups.iter_mut().find(|g| g.name == group_name) {
-                            g.members.retain(|m| m != &username);
-                            s.save_groups();
-                        }
+                        // Départ volontaire ou exclusion — même règle de
+                        // succession que localement ; si c'est nous, le salon
+                        // et son historique local disparaissent.
+                        s.apply_member_removal(&group_name, &username);
                     }
                     GroupAction::Rename {
                         group_name,
                         new_name,
                     } => {
-                        if let Some(g) = s.groups.iter_mut().find(|g| g.name == group_name) {
-                            g.name = new_name;
-                            s.save_groups();
-                        }
+                        // Valide et migre l'historique vers la nouvelle clé.
+                        s.apply_group_rename(&group_name, new_name);
                     }
                     GroupAction::Delete { group_name } => {
-                        s.groups.retain(|g| g.name != group_name);
-                        s.save_groups();
+                        s.apply_group_delete(&group_name);
                     }
                 },
                 AppEvent::ReadReceiptReceived(receipt) => {
