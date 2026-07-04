@@ -42,6 +42,8 @@ pub enum StorageCmd {
     /// Charge la page précédente de l'historique ; le résultat revient à
     /// l'UI via `AppEvent::OlderMessagesLoaded`.
     LoadOlder { before_rowid: i64 },
+    /// Préférence persistée (table kv) : notifications, autostart…
+    SetKv { k: String, v: String },
     /// Accusé de traitement : toutes les commandes précédentes sont écrites.
     Flush(SyncSender<()>),
 }
@@ -59,6 +61,8 @@ pub struct LoadedState {
     pub peer_records: Vec<PeerRecord>,
     pub peer_avatars: HashMap<String, Vec<u8>>,
     pub peer_keys: HashMap<String, Vec<u8>>,
+    /// Préférences persistées (clé → valeur).
+    pub kv: HashMap<String, String>,
 }
 
 pub struct Storage {
@@ -237,6 +241,15 @@ impl Storage {
         Ok(())
     }
 
+    pub fn set_kv(&self, k: &str, v: &str) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "INSERT INTO kv (k, v) VALUES (?1, ?2)
+             ON CONFLICT(k) DO UPDATE SET v = excluded.v",
+            params![k, v.as_bytes()],
+        )?;
+        Ok(())
+    }
+
     pub fn upsert_peer_key(&self, username: &str, pubkey: &[u8]) -> rusqlite::Result<()> {
         self.conn.execute(
             "INSERT INTO peers (username, pubkey) VALUES (?1, ?2)
@@ -410,6 +423,17 @@ impl Storage {
             }
         }
 
+        let mut kv = HashMap::new();
+        if let Ok(mut stmt) = self.conn.prepare("SELECT k, v FROM kv") {
+            if let Ok(rows) = stmt.query_map([], |r| {
+                Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?))
+            }) {
+                for (k, v) in rows.flatten() {
+                    kv.insert(k, String::from_utf8_lossy(&v).into_owned());
+                }
+            }
+        }
+
         LoadedState {
             messages,
             oldest_rowid,
@@ -419,6 +443,7 @@ impl Storage {
             peer_records,
             peer_avatars,
             peer_keys,
+            kv,
         }
     }
 
@@ -521,6 +546,7 @@ fn run(storage: Storage, rx: Receiver<StorageCmd>, event_tx: tokio::sync::mpsc::
             StorageCmd::UpsertPeerKey { username, pubkey } => {
                 storage.upsert_peer_key(&username, &pubkey)
             }
+            StorageCmd::SetKv { k, v } => storage.set_kv(&k, &v),
             StorageCmd::LoadOlder { before_rowid } => {
                 match storage.load_older(before_rowid, OLDER_PAGE) {
                     Ok((messages, oldest_rowid)) => {

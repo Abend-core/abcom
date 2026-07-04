@@ -3,6 +3,7 @@ use tokio::sync::mpsc;
 
 mod app;
 mod archive;
+mod autostart;
 mod config;
 mod discovery;
 mod emoji_registry;
@@ -104,6 +105,17 @@ fn main() -> anyhow::Result<()> {
         loaded,
         Some(storage_tx),
     )));
+
+    // Autostart : activé par défaut au premier lancement d'un build release
+    // (préférence persistée, interrupteur dans Paramètres).
+    {
+        let mut s = state.lock().unwrap();
+        let existing = s.kv.get("autostart").map(|v| v == "1");
+        let effective = autostart::init_default(existing);
+        if existing.is_none() {
+            s.set_pref("autostart", if effective { "1" } else { "0" });
+        }
+    }
 
     // GC du cache disque des médias (orphelins + plafond), hors chemin de
     // démarrage : l'UI s'ouvre sans attendre le parcours du dossier.

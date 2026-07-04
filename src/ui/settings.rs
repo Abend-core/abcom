@@ -227,6 +227,52 @@ impl AbcomApp {
                                     );
                                 });
                                 ui.end_row();
+
+                                ui.label(
+                                    egui::RichText::new(
+                                        self.tr("Notifications", "Notifications"),
+                                    )
+                                    .strong(),
+                                );
+                                {
+                                    let label = self.tr(
+                                        "Afficher un aperçu du message",
+                                        "Show a message preview",
+                                    );
+                                    if ui.checkbox(&mut self.notif_preview, label).changed() {
+                                        let v = if self.notif_preview { "1" } else { "0" };
+                                        self.state.lock().unwrap().set_pref("notif_preview", v);
+                                    }
+                                }
+                                ui.end_row();
+
+                                ui.label(
+                                    egui::RichText::new(self.tr("Démarrage", "Startup")).strong(),
+                                );
+                                {
+                                    let label = self.tr(
+                                        "Lancer Abcom à l'ouverture de session",
+                                        "Launch Abcom at login",
+                                    );
+                                    if ui.checkbox(&mut self.autostart_enabled, label).changed() {
+                                        match crate::autostart::set_enabled(self.autostart_enabled)
+                                        {
+                                            Ok(()) => {
+                                                let v =
+                                                    if self.autostart_enabled { "1" } else { "0" };
+                                                self.state
+                                                    .lock()
+                                                    .unwrap()
+                                                    .set_pref("autostart", v);
+                                            }
+                                            Err(e) => {
+                                                eprintln!("[autostart] échec : {e}");
+                                                self.autostart_enabled = !self.autostart_enabled;
+                                            }
+                                        }
+                                    }
+                                }
+                                ui.end_row();
                             });
                     }
                     SettingsTab::Credits => {
