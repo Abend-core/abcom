@@ -124,7 +124,17 @@ impl AbcomApp {
                         };
                         let already_in_conv = s.selected_conversation == source_conv;
                         let conv_muted = self.muted_conversations.contains(&source_conv);
-                        if self.enable_sound_notifications && !already_in_conv && !conv_muted {
+                        if self.window_hidden {
+                            // Fenêtre repliée : notification système native
+                            // (aperçu selon la préférence), pas de bip interne.
+                            if !conv_muted {
+                                Self::notify_native(
+                                    msg.from.clone(),
+                                    self.native_body_for(&msg.content),
+                                );
+                            }
+                        } else if self.enable_sound_notifications && !already_in_conv && !conv_muted
+                        {
                             play_notification_sound();
                         }
                     }
@@ -207,16 +217,15 @@ impl AbcomApp {
                 AppEvent::KeyChanged { username } => {
                     // Alerte sécurité : la clé du pair ne correspond plus à
                     // celle épinglée — la connexion a été refusée.
-                    self.last_notification = Some(format!(
-                        "⚠️ {} : {}",
-                        username,
-                        self.tr(
-                            "la clé d'identité a changé, connexion refusée",
-                            "identity key changed, connection refused"
-                        )
-                    ));
+                    let label = self.tr(
+                        "la clé d'identité a changé, connexion refusée",
+                        "identity key changed, connection refused",
+                    );
+                    self.last_notification = Some(format!("⚠️ {} : {}", username, label));
                     self.notification_time = std::time::Instant::now();
-                    if self.enable_sound_notifications {
+                    if self.window_hidden {
+                        Self::notify_native(format!("⚠️ {username}"), label.to_string());
+                    } else if self.enable_sound_notifications {
                         play_notification_sound();
                     }
                 }
@@ -260,14 +269,13 @@ impl AbcomApp {
                     };
                     s.add_message(msg.clone());
                     if from != s.my_username {
-                        self.last_notification = Some(format!(
-                            "{} {}",
-                            from,
-                            self.tr("vous envoie un fichier", "is sending you a file")
-                        ));
+                        let label = self.tr("vous envoie un fichier", "is sending you a file");
+                        self.last_notification = Some(format!("{} {}", from, label));
                         self.notification_time = std::time::Instant::now();
                         self.has_unread = true;
-                        if self.enable_sound_notifications {
+                        if self.window_hidden {
+                            Self::notify_native(from.clone(), label.to_string());
+                        } else if self.enable_sound_notifications {
                             play_notification_sound();
                         }
                     }
@@ -315,14 +323,13 @@ impl AbcomApp {
     /// les ajoute au bandeau d'acceptation.
     pub(crate) fn process_media_offers(&mut self) {
         while let Ok(offer) = self.media_offer_rx.try_recv() {
-            self.last_notification = Some(format!(
-                "{} {}",
-                offer.from,
-                self.tr("vous envoie un fichier", "is sending you a file")
-            ));
+            let label = self.tr("vous envoie un fichier", "is sending you a file");
+            self.last_notification = Some(format!("{} {}", offer.from, label));
             self.notification_time = std::time::Instant::now();
             self.has_unread = true;
-            if self.enable_sound_notifications {
+            if self.window_hidden {
+                Self::notify_native(offer.from.clone(), label.to_string());
+            } else if self.enable_sound_notifications {
                 play_notification_sound();
             }
             self.pending_media_offers.push(offer);

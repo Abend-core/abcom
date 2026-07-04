@@ -126,14 +126,19 @@ fn show_feed_grid(
                         super::media::gif_display_size(item.width, item.height, col_w, col_w * 2.0);
                     // Gel hors écran : seuls les aperçus visibles dans la
                     // grille sont décodés/animés (la place reste réservée).
+                    // Hors focus : cadre statique (pause fiable).
                     let (rect, resp) = col.allocate_exact_size(size, egui::Sense::click());
                     if col.is_rect_visible(rect) {
-                        col.put(
-                            rect,
-                            egui::Image::from_uri(item.preview_url.clone())
-                                .fit_to_exact_size(size)
-                                .corner_radius(6.0),
-                        );
+                        if col.ctx().input(|i| i.focused) {
+                            col.put(
+                                rect,
+                                egui::Image::from_uri(item.preview_url.clone())
+                                    .fit_to_exact_size(size)
+                                    .corner_radius(6.0),
+                            );
+                        } else {
+                            super::media::paint_paused_gif(col, rect);
+                        }
                     }
                     let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
                     if resp.clicked() {
@@ -167,7 +172,7 @@ impl AbcomApp {
     /// Libère du cache d'images egui les aperçus des trois feeds Klipy
     /// (appelé à la fermeture du picker : les frames WebP décodées des
     /// aperçus représentent plusieurs dizaines de Mo par page).
-    fn forget_gif_previews(&self, ctx: &egui::Context) {
+    pub(crate) fn forget_gif_previews(&self, ctx: &egui::Context) {
         for feed in [&self.gif_feed, &self.meme_feed, &self.sticker_feed] {
             for item in feed.lock().items.iter() {
                 ctx.forget_image(&item.preview_url);

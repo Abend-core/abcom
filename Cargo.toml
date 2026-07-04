@@ -38,6 +38,9 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 snow = "0.10.0"
 blake2 = "0.10.6"
+tray-icon = "0.24.1"
+notify-rust = "4.18.0"
+auto-launch = "0.6.0"
 
 [features]
 default = []

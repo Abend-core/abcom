@@ -36,6 +36,9 @@ pub struct AppState {
     pub peer_avatars: HashMap<String, Vec<u8>>,
     /// Réactions emoji par message, indexées par `AppState::message_hash`.
     pub reactions: HashMap<u64, Vec<ReactionEntry>>,
+    /// Préférences persistées (notifications, autostart…), miroir de la
+    /// table kv.
+    pub kv: HashMap<String, String>,
     /// Compteur incrémenté à chaque mutation du **contenu** (messages,
     /// réactions, accusés, avatars, alias). Le cache du fil ne se
     /// reconstruit que lorsqu'il change.
@@ -84,6 +87,7 @@ impl AppState {
             my_avatar: None,
             peer_avatars: loaded.peer_avatars,
             reactions: loaded.reactions,
+            kv: loaded.kv,
             content_generation: 0,
             presence_generation: 0,
             storage,
@@ -115,6 +119,7 @@ impl AppState {
             my_avatar: None,
             peer_avatars: HashMap::new(),
             reactions: HashMap::new(),
+            kv: HashMap::new(),
             content_generation: 0,
             presence_generation: 0,
             storage: None,
@@ -133,6 +138,20 @@ impl AppState {
     /// Mutation de présence (pairs, frappe) : n'invalide que la barre latérale.
     pub fn bump_presence(&mut self) {
         self.presence_generation = self.presence_generation.wrapping_add(1);
+    }
+
+    /// Lit une préférence booléenne persistée.
+    pub fn pref_bool(&self, key: &str, default: bool) -> bool {
+        self.kv.get(key).map(|v| v == "1").unwrap_or(default)
+    }
+
+    /// Écrit une préférence persistée (mémoire + table kv).
+    pub fn set_pref(&mut self, key: &str, value: &str) {
+        self.kv.insert(key.to_string(), value.to_string());
+        self.persist(StorageCmd::SetKv {
+            k: key.to_string(),
+            v: value.to_string(),
+        });
     }
 
     /// Envoie une commande au thread de stockage (no-op sans stockage).

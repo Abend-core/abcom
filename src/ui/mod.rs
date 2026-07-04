@@ -27,6 +27,7 @@ mod settings;
 mod sidebar;
 mod snapshot;
 mod sound;
+pub(crate) mod tray;
 
 /// Nombre de messages affichés au départ et pas de chargement du fenêtrage
 /// façon Discord (le fil charge 100 messages de plus en remontant).
@@ -85,6 +86,21 @@ pub(crate) struct AbcomApp {
     pub(crate) identity_fingerprint: String,
     /// Une passphrase de salon est active (handshake XXpsk3).
     pub(crate) psk_active: bool,
+    /// Icône résidente (barre de menus / zone de notification). `None` si le
+    /// système n'a pas de tray : la croix quitte alors comme avant.
+    pub(crate) tray: Option<tray::Tray>,
+    /// La création du tray a échoué : ne pas réessayer à chaque frame.
+    pub(crate) tray_init_failed: bool,
+    /// Fenêtre repliée dans le tray : aucun rendu, aucun repaint programmé,
+    /// les événements réseau mettent l'état à jour et notifient nativement.
+    pub(crate) window_hidden: bool,
+    /// Fermeture réelle demandée (menu tray « Quitter ») : laisse passer le
+    /// close_requested au lieu de cacher.
+    pub(crate) really_quit: bool,
+    /// Les notifications natives montrent un aperçu du message (persisté).
+    pub(crate) notif_preview: bool,
+    /// Lancement au démarrage de session activé (persisté + état système).
+    pub(crate) autostart_enabled: bool,
     /// Résultat du décodage des PNG emoji, effectué dans un thread au
     /// démarrage : le premier frame n'attend plus les 323 décodages.
     pub(crate) emoji_decode_rx: Option<std::sync::mpsc::Receiver<Vec<(String, egui::ColorImage)>>>,
@@ -235,6 +251,15 @@ impl AbcomApp {
         // seront créées (rapide) quand le résultat arrive, sans geler l'UI.
         let emoji_decode_rx = Some(spawn_emoji_decoder());
 
+        // Préférences persistées (table kv).
+        let (notif_preview, autostart_enabled) = {
+            let s = state.lock().unwrap();
+            (
+                s.pref_bool("notif_preview", true),
+                s.pref_bool("autostart", false),
+            )
+        };
+
         Self {
             state,
             identity_fingerprint,
@@ -311,6 +336,12 @@ impl AbcomApp {
             highlight_message: None,
             typing_active: false,
             applied_dark_mode: None,
+            tray: None,
+            tray_init_failed: false,
+            window_hidden: false,
+            really_quit: false,
+            notif_preview,
+            autostart_enabled,
             chat_cache: snapshot::ChatCache::default(),
             sidebar_cache: snapshot::SidebarCache::default(),
             chat_visible_count: CHAT_WINDOW_STEP,
@@ -392,15 +423,134 @@ impl AbcomApp {
     }
 }
 
+impl AbcomApp {
+    /// Replie la fenêtre dans le tray : rendu stoppé, textures libérées
+    /// (elles seront rechargées paresseusement à la réouverture).
+    pub(crate) fn hide_to_tray(&mut self, ctx: &egui::Context) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        self.window_hidden = true;
+        self.window_focused = false;
+
+        // Purge mémoire : textures GPU et caches d'images.
+        self.media_textures.clear();
+        self.media_texture_lru.clear();
+        self.avatar_textures.clear();
+        self.viewer_texture = None;
+        self.media_viewer = None;
+        for url in &self.known_gif_urls {
+            ctx.forget_image(url);
+        }
+        self.forget_gif_previews(ctx);
+        // Emojis : libérés aussi, re-décodés en arrière-plan au retour.
+        self.emoji_textures.clear();
+        self.emoji_map.clear();
+        self.emoji_textures_loaded = false;
+        self.emoji_decode_rx = None;
+        self.chat_cache.invalidate();
+    }
+
+    /// Restaure la fenêtre depuis le tray et resynchronise l'affichage
+    /// (l'état est déjà à jour : seuls les caches de rendu se reconstruisent).
+    pub(crate) fn show_from_tray(&mut self, ctx: &egui::Context) {
+        if !self.window_hidden {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            return;
+        }
+        self.window_hidden = false;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        self.emoji_decode_rx = Some(spawn_emoji_decoder());
+        self.chat_cache.invalidate();
+        ctx.request_repaint();
+    }
+
+    /// Notification système native (fenêtre cachée/minimisée). Envoyée d'un
+    /// thread détaché : l'appel peut bloquer selon l'OS.
+    pub(crate) fn notify_native(summary: String, body: String) {
+        std::thread::Builder::new()
+            .name("abcom-notify".into())
+            .spawn(move || {
+                let _ = notify_rust::Notification::new()
+                    .appname("Abcom")
+                    .summary(&summary)
+                    .body(&body)
+                    .show();
+            })
+            .ok();
+    }
+
+    /// Corps de notification pour un message entrant, selon la préférence
+    /// « aperçu » (persistée).
+    pub(crate) fn native_body_for(&self, content: &str) -> String {
+        if self.notif_preview {
+            media::elide(content, 120)
+        } else {
+            self.tr("Nouveau message", "New message").to_string()
+        }
+    }
+}
+
 impl eframe::App for AbcomApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.apply_theme_preference(ctx);
-        self.window_focused = ctx.input(|i| i.focused);
+        // Icône résidente, créée paresseusement (macOS impose le thread
+        // principal avec l'event loop démarrée — c'est le cas ici).
+        if self.tray.is_none() && !self.tray_init_failed {
+            self.tray = tray::Tray::new(
+                self.tr("Ouvrir Abcom", "Open Abcom"),
+                self.tr("Quitter", "Quit"),
+            );
+            if self.tray.is_none() {
+                self.tray_init_failed = true;
+                eprintln!("[tray] Icône résidente indisponible : la croix quittera l'application");
+            }
+        }
 
-        self.lazy_load_emoji(ctx);
+        // Actions tray (les callbacks ont déjà réveillé l'UI).
+        if let Some(t) = &self.tray {
+            for action in t.poll() {
+                match action {
+                    tray::TrayAction::Open => self.show_from_tray(ctx),
+                    tray::TrayAction::Quit => {
+                        self.really_quit = true;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                }
+            }
+        }
+
+        // Croix / Cmd-W : cacher au lieu de quitter — uniquement si un tray
+        // existe pour rouvrir (sinon comportement historique).
+        if ctx.input(|i| i.viewport().close_requested())
+            && !self.really_quit
+            && self.tray.is_some()
+            && !self.window_hidden
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.hide_to_tray(ctx);
+        }
+
+        self.window_focused = !self.window_hidden && ctx.input(|i| i.focused);
         self.process_events();
         self.process_media_offers();
         self.periodic_tasks();
+
+        // Badge non-lus sur l'icône résidente.
+        let unread = self.has_unread;
+        if let Some(t) = &mut self.tray {
+            t.set_unread(unread);
+        }
+
+        // Cachée ou minimisée : l'état et SQLite sont à jour, les
+        // notifications natives sont parties — aucun rendu, aucun repaint
+        // programmé (CPU/GPU ~0). Le prochain réveil viendra du réseau, du
+        // tray ou de la restauration de la fenêtre.
+        let minimized = ctx.input(|i| i.viewport().minimized.unwrap_or(false));
+        if self.window_hidden || minimized {
+            return;
+        }
+
+        self.apply_theme_preference(ctx);
+        self.lazy_load_emoji(ctx);
 
         // Rafraîchit les caches dérivés si l'état a changé (génération) —
         // sinon la frame se rend sans reprendre le verrou ni rien re-dériver.
@@ -518,6 +668,8 @@ impl eframe::App for AbcomApp {
             Duration::from_millis(500) // expiration notification / flash de surlignage
         } else if self.typing_active {
             Duration::from_secs(1) // expiration de l'indicateur « écrit… »
+        } else if !self.window_focused {
+            Duration::from_secs(30) // visible en arrière-plan : quasi dormant
         } else {
             Duration::from_secs(5) // tick periodic_tasks
         };
@@ -603,6 +755,10 @@ pub fn run(
     send_media_tx: mpsc::Sender<MediaSendJob>,
     media_offer_rx: mpsc::Receiver<MediaStreamOffer>,
 ) -> anyhow::Result<()> {
+    // Handlers tray/menu globaux : chaque événement réveille l'UI via le
+    // contexte partagé (fonctionne même fenêtre cachée, sans rendu).
+    tray::install_event_handlers(ui_ctx.clone());
+
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Abcom")
         .with_inner_size([860.0, 600.0]);
