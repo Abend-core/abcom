@@ -80,14 +80,21 @@ impl AbcomApp {
                         let members: Vec<String> =
                             self.group_members_selected.iter().cloned().collect();
 
-                        if let Some(group) = self.state.lock().unwrap().create_group(name, members)
-                        {
+                        // Un seul passage sous verrou : le garde temporaire du
+                        // scrutinee d'un `if let` vit jusqu'à la fin du bloc
+                        // (édition 2021) ; reprendre le verrou dans le corps
+                        // gelait l'application à chaque création.
+                        let created = {
+                            let mut s = self.state.lock().unwrap();
+                            s.create_group(name, members)
+                                .map(|g| (g, s.get_online_peers()))
+                        };
+                        if let Some((group, online_peers)) = created {
                             let create_event = crate::message::GroupEvent {
                                 action: crate::message::GroupAction::Create {
                                     group: group.clone(),
                                 },
                             };
-                            let online_peers = self.state.lock().unwrap().get_online_peers();
                             for addr in online_peers {
                                 let _ = self.send_group_tx.try_send(SendGroupRequest {
                                     to_addr: addr,
