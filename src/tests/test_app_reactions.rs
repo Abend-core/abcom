@@ -103,6 +103,7 @@ fn find_message_by_hash_found() {
         to_user: None,
         media: None,
         reply_to: None,
+        nonce: None,
     };
     let hash = AppState::message_hash(&msg);
     s.messages.push(msg);

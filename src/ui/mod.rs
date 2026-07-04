@@ -165,8 +165,10 @@ pub(crate) struct AbcomApp {
     pub(crate) pending_media_offers: Vec<MediaStreamOffer>,
     /// Progression des transferts média en cours, par identifiant.
     pub(crate) media_progress: std::collections::HashMap<String, MediaProgress>,
-    /// Hash du message dont la barre d'actions au survol est actuellement affichée.
-    pub(crate) hover_toolbar_target: Option<u64>,
+    /// Ligne dont la barre d'actions au survol est affichée : (index absolu
+    /// dans le fil, hash du message). L'index désambiguïse les messages au
+    /// hash identique (anciens messages sans nonce) : une seule barre à la fois.
+    pub(crate) hover_toolbar_target: Option<(usize, u64)>,
     /// Message ciblé par le picker de réaction ouvert (None = fermé), avec le
     /// rectangle d'ancrage du bouton "+" pour positionner la popup.
     pub(crate) reaction_picker_open: Option<(u64, egui::Rect)>,

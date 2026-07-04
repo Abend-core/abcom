@@ -348,7 +348,7 @@ const HIGHLIGHT_SECS: f32 = 2.0;
 #[allow(clippy::too_many_arguments)]
 fn render_reply_quote(
     ui: &mut egui::Ui,
-    msg_hash: u64,
+    row_index: usize,
     resolved: Option<&ChatMessage>,
     author_name: &str,
     author_color: egui::Color32,
@@ -451,7 +451,7 @@ fn render_reply_quote(
             let hit = rect.expand2(egui::vec2(4.0, 2.0));
             let resp = ui.interact(
                 hit,
-                egui::Id::new(("reply_quote", msg_hash)),
+                egui::Id::new(("reply_quote", row_index)),
                 egui::Sense::click(),
             );
             if resp.hovered() {
@@ -493,6 +493,7 @@ impl AbcomApp {
     fn show_hover_toolbar(
         &mut self,
         ctx: &egui::Context,
+        row_index: usize,
         msg_hash: u64,
         row_rect: egui::Rect,
         reply_label: &str,
@@ -522,7 +523,7 @@ impl AbcomApp {
         let mut reply_clicked = false;
         let mut plus_rect = None;
 
-        let area = egui::Area::new(egui::Id::new(("msg_hover_toolbar", msg_hash)))
+        let area = egui::Area::new(egui::Id::new(("msg_hover_toolbar", row_index)))
             .order(egui::Order::Foreground)
             .fixed_pos(anchor);
         let resp = area.show(ctx, |ui| {
@@ -857,11 +858,13 @@ impl AbcomApp {
             let reply_label = self.tr("Répondre", "Reply");
             let add_reaction_label = self.tr("Ajouter une réaction", "Add reaction");
 
-            // Aire de messages
+            // Aire de messages. Le collage au bas est suspendu quand un saut
+            // vers un message est en attente : sinon il écrase le
+            // `scroll_to_rect` du saut et le fil reste en bas.
             let scroll_out = egui::ScrollArea::vertical()
                 .id_salt("chat_scroll")
                 .auto_shrink([false; 2])
-                .stick_to_bottom(true)
+                .stick_to_bottom(self.scroll_to_message.is_none())
                 .show(ui, |ui| {
                     if rows.is_empty() {
                         ui.add_space(50.0);
@@ -873,6 +876,11 @@ impl AbcomApp {
                     for (i, row) in rows[start..].iter().enumerate() {
                         let msg = &row.msg;
                         let hash = row.hash;
+                        // Index absolu dans le fil : désambiguïse les messages
+                        // au hash identique (anciens messages sans nonce) pour
+                        // tout ce qui est purement visuel (survol, barre
+                        // d'actions, identifiants egui).
+                        let abs_idx = start + i;
 
                         // Première ligne d'une fenêtre tronquée : séparateur
                         // de date forcé (situe la coupure) et en-tête forcé
@@ -910,13 +918,14 @@ impl AbcomApp {
                                 })
                         });
 
+                        let mut gutter_rect: Option<egui::Rect> = None;
                         let row_resp = if starts_group {
                             ui.add_space(GROUP_SPACING);
                             ui.vertical(|ui| {
                                 if let Some(reply) = &row.reply {
                                     if render_reply_quote(
                                         ui,
-                                        hash,
+                                        abs_idx,
                                         reply.resolved.as_ref(),
                                         &reply.author,
                                         reply.author_color,
@@ -981,19 +990,13 @@ impl AbcomApp {
                         } else {
                             ui.horizontal(|ui| {
                                 ui.spacing_mut().item_spacing.x = 0.0;
-                                let (gutter_rect, _) = ui.allocate_exact_size(
+                                let (rect, _) = ui.allocate_exact_size(
                                     egui::vec2(AVATAR_SIZE + AVATAR_GUTTER, 20.0),
                                     egui::Sense::hover(),
                                 );
-                                if ui.rect_contains_pointer(gutter_rect) {
-                                    ui.painter().text(
-                                        gutter_rect.center(),
-                                        egui::Align2::CENTER_CENTER,
-                                        &row.header_time,
-                                        egui::TextStyle::Small.resolve(ui.style()),
-                                        egui::Color32::from_gray(140),
-                                    );
-                                }
+                                // L'heure est peinte après le rendu de la
+                                // ligne, dès que celle-ci est survolée.
+                                gutter_rect = Some(rect);
                                 ui.vertical(|ui| {
                                     if let Some(action) = render_message_body(
                                         ui,
@@ -1045,7 +1048,27 @@ impl AbcomApp {
                         // éviter tout clignotement en s'y déplaçant.
                         let row_hovered = ui.rect_contains_pointer(row_rect);
                         if row_hovered {
-                            self.hover_toolbar_target = Some(hash);
+                            self.hover_toolbar_target = Some((abs_idx, hash));
+                        }
+                        // Ligne « active » : survolée, ou pointeur sur sa
+                        // barre d'actions flottante.
+                        let row_active = self.hover_toolbar_target == Some((abs_idx, hash));
+
+                        // Heure dans la gouttière des messages de continuation,
+                        // visible dès que la ligne est survolée (pas seulement
+                        // la gouttière), et centrée verticalement sur le
+                        // message — reste en face du contenu même pour un
+                        // grand média ou un long texte.
+                        if row_active {
+                            if let Some(rect) = gutter_rect {
+                                ui.painter().text(
+                                    egui::pos2(rect.center().x, row_rect.center().y),
+                                    egui::Align2::CENTER_CENTER,
+                                    &row.header_time,
+                                    egui::TextStyle::Small.resolve(ui.style()),
+                                    egui::Color32::from_gray(140),
+                                );
+                            }
                         }
 
                         // Fond de la ligne : flash de surlignage qui s'estompe
@@ -1069,7 +1092,7 @@ impl AbcomApp {
                             } else {
                                 self.highlight_message = None;
                             }
-                        } else if self.hover_toolbar_target == Some(hash) {
+                        } else if row_active {
                             let tint = if ui.visuals().dark_mode {
                                 egui::Color32::from_rgba_unmultiplied(255, 255, 255, 7)
                             } else {
@@ -1082,9 +1105,10 @@ impl AbcomApp {
                         }
 
                         let mut reply_requested = false;
-                        if self.hover_toolbar_target == Some(hash) {
+                        if row_active {
                             let result = self.show_hover_toolbar(
                                 ctx,
+                                abs_idx,
                                 hash,
                                 row_rect,
                                 reply_label,

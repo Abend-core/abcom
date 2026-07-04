@@ -28,6 +28,7 @@ fn chat(content: &str) -> NetworkPacket {
         to_user: None,
         media: None,
         reply_to: None,
+        nonce: None,
     })
 }
 

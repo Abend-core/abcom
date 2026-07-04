@@ -20,6 +20,7 @@ fn make_msg(from: &str, content: &str) -> ChatMessage {
         to_user: None,
         media: None,
         reply_to: None,
+        nonce: None,
     }
 }
 
@@ -55,6 +56,7 @@ fn test_message_hash_stable_known_value() {
         to_user: Some("bob".to_string()),
         media: None,
         reply_to: None,
+        nonce: None,
     };
     let expected = AppState::message_hash(&m);
     assert_eq!(AppState::message_hash(&m), expected);
@@ -74,6 +76,7 @@ fn test_duplicate_content_different_epoch_gives_different_hash() {
         to_user: None,
         media: None,
         reply_to: None,
+        nonce: None,
     };
     let m2 = ChatMessage {
         timestamp_epoch: Some(2_000),

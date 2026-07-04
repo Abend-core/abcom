@@ -73,6 +73,7 @@ fn network_message_dispatches_chat() {
         to_user: None,
         media: None,
         reply_to: None,
+        nonce: None,
     };
     let json = serde_json::to_string(&chat).unwrap();
     let nm: NetworkMessage = serde_json::from_str(&json).unwrap();

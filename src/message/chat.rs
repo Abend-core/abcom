@@ -24,6 +24,28 @@ pub struct ChatMessage {
     /// Volontairement exclu du calcul de `AppState::message_hash`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reply_to: Option<u64>,
+    /// Nonce d'unicité tiré à la création : deux messages identiques envoyés
+    /// dans la même seconde obtiennent quand même des hashs distincts
+    /// (réactions, réponses et accusés ne se mélangent plus). `None` pour les
+    /// anciens messages et pour les médias streamés (le hash du destinataire
+    /// est reconstruit depuis `MediaStreamHeader`, qui ne porte pas de nonce ;
+    /// leur `media.id` suffit à les distinguer).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<u64>,
+}
+
+impl ChatMessage {
+    /// Nonce frais pour un nouveau message : nanosecondes de l'horloge
+    /// mélangées à un compteur de processus (pas de dépendance `rand`).
+    pub fn fresh_nonce() -> u64 {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static COUNTER: AtomicU64 = AtomicU64::new(0);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0);
+        nanos ^ COUNTER.fetch_add(1, Ordering::Relaxed).rotate_left(32)
+    }
 }
 
 /// Demande d'envoi d'un message à une adresse TCP

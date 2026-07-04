@@ -10,6 +10,7 @@ fn msg(from: &str, content: &str, to: Option<&str>) -> ChatMessage {
         to_user: to.map(|s| s.to_string()),
         media: None,
         reply_to: None,
+        nonce: None,
     }
 }
 
@@ -78,6 +79,7 @@ fn timestamp_epoch_round_trips_and_is_omitted_when_none() {
         to_user: None,
         media: None,
         reply_to: None,
+        nonce: None,
     };
     let json = serde_json::to_string(&with).unwrap();
     assert!(json.contains("timestamp_epoch"));
@@ -103,6 +105,7 @@ fn reply_to_omitted_when_none() {
 fn reply_to_round_trips_when_present() {
     let with = ChatMessage {
         reply_to: Some(1234),
+        nonce: None,
         ..msg("alice", "salut", None)
     };
     let json = serde_json::to_string(&with).unwrap();

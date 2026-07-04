@@ -43,6 +43,7 @@ fn remove_media_message_drops_message_and_file() {
             height: None,
         }),
         reply_to: None,
+        nonce: None,
     });
 
     s.remove_media_message("z.bin");

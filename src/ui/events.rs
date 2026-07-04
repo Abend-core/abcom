@@ -254,6 +254,9 @@ impl AbcomApp {
                         to_user: header.to_user,
                         media: Some(header.media),
                         reply_to: None,
+                        // Pas de nonce : le hash doit coïncider avec celui de
+                        // la copie locale de l'émetteur (cf. ChatMessage::nonce).
+                        nonce: None,
                     };
                     s.add_message(msg.clone());
                     if from != s.my_username {
