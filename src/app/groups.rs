@@ -119,7 +119,7 @@ impl AppState {
     }
 
     /// Quitte un groupe : il disparaît de la liste et l'historique local du
-    /// salon est effacé (politique documentée dans docs/10_groupe.md — les
+    /// salon est effacé (politique documentée dans docs/05-fonctionnalites.md — les
     /// autres membres conservent les messages, attribués à leur auteur).
     pub fn leave_group(&mut self, group_name: &str) -> bool {
         let before = self.groups.len();

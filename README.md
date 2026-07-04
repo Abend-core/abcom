@@ -1,83 +1,53 @@
 # Abcom
 
-> 📅 **Généré le** : 2026-04-28
-> 🔖 **Stack analysée** : Rust 2021, tokio 1, serde 1, serde_json 1, eframe 0.31, egui 0.31, chrono 0.4, anyhow 1
-> 🔄 **À régénérer si** : refonte de l’architecture, ajout d’un service ou d’un composant, migration vers un backend central
+Messagerie instantanée pour réseau local, écrite en Rust. Les machines d'un même LAN se découvrent automatiquement et échangent messages, fichiers et médias en pair-à-pair, sans serveur, sans compte, sans connexion Internet. Tout le trafic est chiffré de bout en bout (Noise XX) et l'historique est stocké localement en SQLite.
 
-## 🎯 Pitch projet
-Abcom est une application de messagerie instantanée conçue pour un réseau local (LAN). Le client fonctionne en mode peer-to-peer, découvre automatiquement les pairs via UDP broadcast et échange les messages au format JSON par TCP.
+Interface graphique native (egui), pensée pour tourner en permanence : la fenêtre se replie dans la barre de menus / zone de notification, l'application reste joignable et consomme quasiment rien au repos.
 
-> Ancienne documentation archivée dans les fichiers `.old.md` pour assurer traçabilité.
+## Fonctionnalités
 
-## 🏗️ Architecture globale
-Le projet est un monolithe Rust à exécution locale. L’application combine un runtime Tokio, un serveur TCP, un émetteur UDP de découverte, et une interface graphique native `egui`.
+- **Conversations** : fil public « Tous », messages privés, salons de groupe avec gestion des membres
+- **Messages riches** : Markdown, emojis (picker + `:shortcodes:`), réactions, réponses citées, indicateur de frappe
+- **Accusés** : livraison (✓✓ gris) et lecture (✓✓ bleu) en privé, avec retransmission automatique
+- **Fichiers et médias** : envoi de fichiers et dossiers (> 1 Go), acceptation par le destinataire, vignettes et visionneuse
+- **GIF, mèmes, stickers** : sélecteur Klipy intégré
+- **Sécurité** : identité X25519 par machine, chiffrement Noise XX, épinglage des clés (TOFU), passphrase de salon optionnelle
+- **Résident** : fermeture = repli dans le tray, notifications système, badge non-lus, lancement automatique à l'ouverture de session
+- **Bilingue** : interface FR/EN, thème clair/sombre
 
-```mermaid
-C4Context
-    title Abcom — Vue système
-    Person(user, "Utilisateur LAN", "Utilisateur d’une machine sur le LAN")
-    System(abcom, "Abcom", "Application de chat LAN en Rust")
-    System_Ext(network, "Réseau local", "Méthode de transport et de découverte")
-    Rel(user, abcom, "utilise")
-    Rel(abcom, network, "découvre et échange des messages via")
-```
+## Démarrage rapide
 
-## 🚀 Quick start
-
-### Développement
 ```bash
-cargo run --release -- <username>
-```
-
-### Installation locale
-```bash
-make install
-```
-
-### Setup (une fois après le clone)
-```bash
+# Une fois après le clone : active le hook pre-commit (cargo fmt)
 git config core.hooksPath .githooks
-```
-Active le hook pre-commit qui bloque les commits non formatés (`cargo fmt`).
 
-### Déploiement utilisateur
-```bash
-bash scripts/abcom-install.sh ./target/release/abcom
-systemctl --user enable --now abcom.service
-```
+# Lancer
+cargo run --release -- <pseudo>
 
-### Mode distribution Docker
-```bash
-cd scripts/docker
-docker compose up --build
+# Tester le P2P en local : deux instances sur la même machine
+ABCOM_INSTANCE=1 cargo run --release -- alice   # terminal 1
+ABCOM_INSTANCE=2 cargo run --release -- bob     # terminal 2
+# ou : bash scripts/run-multi.sh
 ```
 
-## 📚 Sommaire exhaustif
+Installation par plateforme (Linux/systemd, Windows, Docker) : voir [docs/06-installation.md](docs/06-installation.md).
 
-- **Documentation globale**
-  - [Architecture globale](docs/01-architecture-globale.md)
-  - [Developer Experience](docs/02-developer-experience.md)
-  - [CICD et déploiement](docs/03-cicd-et-deploiement.md)
-  - [Sécurité globale](docs/04-securite-globale.md)
-  - [Glossaire](docs/05-glossaire.md)
-  - [Groupes — Phase 10](docs/10_groupe.md)
-  - [Installation Windows](docs/INSTALL_WINDOWS.md)
-  - [Notes de migration](docs/_MIGRATION_NOTES.md)
-- **Décisions (ADR)**
-  - [Choix du langage Rust et de la stack](docs/adr/ADR-001-langage-et-stack-rust.md)
-  - [Architecture peer-to-peer sur LAN](docs/adr/ADR-002-architecture-lan-peer-to-peer.md)
-- **Composant Abcom**
-  - [Présentation du composant](docs/abcom/README.md)
-  - [Architecture et structure](docs/abcom/01-architecture-et-structure.md)
-  - [Mécanismes et données](docs/abcom/02-mecanismes-et-donnees.md)
-  - [Performances et optimisations](docs/abcom/03-performances-et-optimisations.md)
-  - [Fiabilité et tests](docs/abcom/04-fiabilite-et-tests.md)
+## Documentation
 
-## 🧭 Glossaire express
+| Document | Contenu |
+|---|---|
+| [01 — Présentation](docs/01-presentation.md) | Ce qu'est Abcom, comment ça marche, décisions fondatrices, vocabulaire |
+| [02 — Architecture](docs/02-architecture.md) | Modules, threads, flux d'événements, rendu et caches UI |
+| [03 — Réseau et sécurité](docs/03-reseau-et-securite.md) | Découverte, protocole, chiffrement, modèle de menace |
+| [04 — Stockage](docs/04-stockage.md) | Base SQLite, schéma, médias, fichiers de données |
+| [05 — Fonctionnalités](docs/05-fonctionnalites.md) | Comportement détaillé : conversations, groupes, accusés, médias, tray |
+| [06 — Installation](docs/06-installation.md) | Linux, macOS, Windows, Docker, variables d'environnement |
+| [07 — Développement](docs/07-developpement.md) | Build, tests, CI, workflow Git, dépendances et licences |
+| [08 — Historique et audits](docs/08-historique-et-audits.md) | Phases du projet, audits menés, résultats mesurés |
+| [09 — Limites et pistes](docs/09-limites-et-pistes.md) | Limites connues et travaux envisagés |
 
-- [LAN](docs/05-glossaire.md#lan)
-- [UDP broadcast](docs/05-glossaire.md#udp-broadcast)
-- [TCP](docs/05-glossaire.md#tcp)
-- [Tokio](docs/05-glossaire.md#tokio)
-- [egui / eframe](docs/05-glossaire.md#egui--eframe)
-- [systemd user](docs/05-glossaire.md#systemd-user)
+Le suivi au fil de l'eau est dans [CHANGELOG.md](CHANGELOG.md) et [AVANCEMENT.md](AVANCEMENT.md). Les documents historiques (audits et plans d'origine, ADR, anciennes versions) sont conservés tels quels dans [old/](old/).
+
+## État du projet
+
+Version 0.0.1, pas encore de release publiée. 226 tests automatisés, CI GitHub Actions sur `dev` et `main` (format, clippy, build, tests, audit de sécurité). Licence MIT.
