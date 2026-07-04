@@ -28,8 +28,12 @@ pub const OLDER_PAGE: u32 = 100;
 /// appliquées).
 pub enum StorageCmd {
     InsertMessage(ChatMessage),
-    /// Efface une conversation : `None` = fil « Tous » (broadcast).
+    /// Efface une conversation : `None` = fil « Tous » (broadcast),
+    /// `Some("#nom")` = salon de groupe, `Some(pair)` = conversation privée.
     DeleteConversation { me: String, conv: Option<String> },
+    /// Migre l'historique d'un salon renommé (`to_user` : ancienne clé
+    /// `#ancien` vers la nouvelle `#nouveau`).
+    RenameConversation { old: String, new: String },
     DeleteMessageByMediaId(String),
     /// Remplace l'ensemble des réactions d'un message (vide = suppression).
     ReplaceReactions { hash: u64, entries: Vec<ReactionEntry> },
@@ -155,6 +159,12 @@ impl Storage {
                 self.conn
                     .execute("DELETE FROM messages WHERE to_user IS NULL", [])?;
             }
+            // Salon de groupe : tous les messages portent la clé en `to_user`,
+            // quel que soit l'auteur.
+            Some(conv) if conv.starts_with('#') => {
+                self.conn
+                    .execute("DELETE FROM messages WHERE to_user = ?1", params![conv])?;
+            }
             Some(user) => {
                 self.conn.execute(
                     "DELETE FROM messages
@@ -164,6 +174,14 @@ impl Storage {
                 )?;
             }
         }
+        Ok(())
+    }
+
+    pub fn rename_conversation(&self, old: &str, new: &str) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE messages SET to_user = ?2 WHERE to_user = ?1",
+            params![old, new],
+        )?;
         Ok(())
     }
 
@@ -529,6 +547,7 @@ fn run(storage: Storage, rx: Receiver<StorageCmd>, event_tx: tokio::sync::mpsc::
             StorageCmd::DeleteConversation { me, conv } => {
                 storage.delete_conversation(&me, conv.as_deref())
             }
+            StorageCmd::RenameConversation { old, new } => storage.rename_conversation(&old, &new),
             StorageCmd::DeleteMessageByMediaId(id) => storage.delete_by_media_id(&id),
             StorageCmd::ReplaceReactions { hash, entries } => {
                 storage.replace_reactions(hash, &entries)
