@@ -874,14 +874,18 @@ impl AbcomApp {
                         let msg = &row.msg;
                         let hash = row.hash;
 
-                        if let Some(label) = &row.day_divider {
+                        // Première ligne d'une fenêtre tronquée : séparateur
+                        // de date forcé (situe la coupure) et en-tête forcé
+                        // (pas de continuation orpheline sans avatar).
+                        let window_head = i == 0 && start > 0;
+                        let divider = row
+                            .day_divider
+                            .as_ref()
+                            .or(if window_head { row.day_label.as_ref() } else { None });
+                        if let Some(label) = divider {
                             render_day_divider(ui, label);
                         }
-
-                        // Première ligne d'une fenêtre tronquée : en-tête
-                        // forcé pour ne pas afficher une continuation
-                        // orpheline (sans avatar ni auteur).
-                        let starts_group = row.starts_group || (i == 0 && start > 0);
+                        let starts_group = row.starts_group || window_head;
 
                         let mut reaction_clicked: Option<String> = None;
                         let mut reply_quote_clicked = false;

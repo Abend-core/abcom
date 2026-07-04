@@ -24,6 +24,15 @@ pub struct NetContext {
     pub username: String,
     pub trust: Arc<TrustStore>,
     pub event_tx: Sender<AppEvent>,
+    /// Passphrase de salon dérivée (32 octets) : si présente, le handshake
+    /// utilise XXpsk3 — un pair sans la passphrase ne peut pas se connecter.
+    pub psk: Option<Vec<u8>>,
+}
+
+impl NetContext {
+    pub fn psk_bytes(&self) -> Option<&[u8]> {
+        self.psk.as_deref()
+    }
 }
 
 impl NetContext {

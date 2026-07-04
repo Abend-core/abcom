@@ -27,17 +27,34 @@ Mesures release après implémentation : **CPU ~0,2 % au repos, RSS ~155 Mo,
 8 threads, binaire 10,8 Mo**, 216 tests verts. Un client en clair (ancienne
 version) est rejeté proprement au handshake.
 
-**Reste à faire** (hors périmètre de cette passe, par priorité) :
-1. **R4** — atlas emoji (323 PNG décodés au 1er frame, ~7 Mo de textures) ;
-2. **R7** — expériences : renderer `wgpu`/Metal vs Glow, mode barre de menus
-   (zéro rendu fenêtre fermée), notifications système natives ;
-3. **S4** — multiplexage du flux média sur la connexion chat unique
-   (aujourd'hui : deux listeners, tous deux chiffrés) ;
-4. **S6** — passphrase de salon optionnelle (`XXpsk3`) ;
-5. Divers §3-N4 : memoïsation de `message_hash` sur `ChatMessage`,
-   shortcodes emoji recalculés par frame menu ouvert, séparateur de date
-   absent en tête de fenêtre tronquée (cosmétique), QA manuelle du
-   fenêtrage (compensation d'offset) et re-mesure GPU/`powermetrics`.
+**Complété ensuite (même journée)** :
+- ✅ **S6** — passphrase de salon : `ABCOM_PASSPHRASE` (env ou `.env`) bascule
+  le handshake en `XXpsk3` (PSK = BLAKE2s de la passphrase). Sans la bonne
+  passphrase, aucun handshake ne peut aboutir (« decrypt error », vérifié en
+  conditions réelles). Statut affiché dans Paramètres → Profil. 3 tests.
+- ✅ **R4 (révisé)** — le gel du premier frame venait du **décodage** des
+  323 PNG, pas du nombre de textures : le décodage part maintenant dans un
+  thread au démarrage, l'UI s'ouvre immédiatement et crée les textures à
+  l'arrivée du résultat (cache du fil invalidé pour recalculer la détection
+  « message 100 % emoji »). L'atlas proprement dit est **abandonné** : la
+  mémoire pixel serait identique (~7 Mo) et le gain en bindings négligeable
+  pour egui — risque de régression visuelle non justifié.
+- ✅ Séparateur de date affiché en tête de fenêtre tronquée (fenêtrage).
+- ❌ (assumé) memo des suggestions de shortcodes : coût réel trivial
+  (préfixe sur ~300 alias, menu ouvert uniquement), 3 sites d'appel sans
+  état partagé — non rentable.
+
+**Reste à faire — nécessite une décision ou une mesure interactive** :
+1. **R7** — renderer `wgpu`/Metal vs Glow (`powermetrics` à comparer), mode
+   barre de menus (zéro rendu fenêtre fermée — le plus gros levier pour une
+   app d'arrière-plan, mais choix produit + dépendance tray), notifications
+   système natives.
+2. **S4** — multiplexage du média sur la connexion chat unique.
+   **Volontairement différé** : c'est une seconde refonte du protocole
+   juste après la première ; le gain est architectural (un port de moins),
+   pas de la perf ni de la sécurité (les deux ports sont déjà chiffrés).
+   À faire une fois le transport actuel validé par l'usage réel.
+3. QA manuelle (checklist ci-dessous) et re-mesure GPU.
 
 ---
 

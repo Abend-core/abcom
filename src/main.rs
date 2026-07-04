@@ -78,11 +78,24 @@ fn main() -> anyhow::Result<()> {
         loaded.peer_keys.clone(),
         Some(storage_tx.clone()),
     ));
+    // Passphrase de salon optionnelle (variable ABCOM_PASSPHRASE, chargeable
+    // depuis .env) : durcit le handshake en XXpsk3 — tous les pairs du salon
+    // doivent la partager.
+    let psk = std::env::var("ABCOM_PASSPHRASE")
+        .ok()
+        .filter(|p| !p.trim().is_empty())
+        .map(|p| network::secure::derive_psk(p.trim()));
+    let psk_active = psk.is_some();
+    if psk_active {
+        eprintln!("[secure] Passphrase de salon active (handshake XXpsk3)");
+    }
+
     let net_ctx = Arc::new(network::NetContext {
         identity: local_identity.clone(),
         username: username.clone(),
         trust,
         event_tx: event_tx.clone(),
+        psk,
     });
     let pool = network::ConnectionPool::new(net_ctx.clone());
 
@@ -126,6 +139,7 @@ fn main() -> anyhow::Result<()> {
         state,
         ui_ctx,
         identity_fingerprint,
+        psk_active,
         event_rx,
         send_tx,
         send_group_tx,

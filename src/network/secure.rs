@@ -25,6 +25,18 @@ use tokio::net::TcpStream;
 use crate::app::StorageCmd;
 use crate::identity::{Identity, NOISE_PATTERN};
 
+/// Motif Noise avec passphrase de salon (PSK au message 3) : en plus de
+/// l'authentification par clés, seuls les pairs connaissant la passphrase
+/// peuvent terminer le handshake — un inconnu sur le LAN ne peut même pas
+/// établir de session.
+pub const NOISE_PATTERN_PSK: &str = "Noise_XXpsk3_25519_ChaChaPoly_BLAKE2s";
+
+/// Dérive le secret partagé 32 octets d'une passphrase de salon.
+pub fn derive_psk(passphrase: &str) -> Vec<u8> {
+    use blake2::{Blake2s256, Digest};
+    Blake2s256::digest(passphrase.as_bytes()).to_vec()
+}
+
 /// Taille maximale d'un message Noise (limite du protocole).
 const MAX_NOISE_MESSAGE: usize = 65535;
 /// Charge utile maximale par frame (tag AEAD de 16 octets déduit).
@@ -58,20 +70,37 @@ async fn read_frame(stream: &mut TcpStream) -> std::io::Result<Vec<u8>> {
 
 // ── Handshake ────────────────────────────────────────────────────────────
 
-fn builder(identity: &Identity) -> Result<Builder<'_>, std::io::Error> {
-    let params = NOISE_PATTERN.parse().map_err(to_io)?;
-    Builder::new(params)
+fn builder<'a>(
+    identity: &'a Identity,
+    psk: Option<&'a [u8]>,
+) -> Result<Builder<'a>, std::io::Error> {
+    let pattern = if psk.is_some() {
+        NOISE_PATTERN_PSK
+    } else {
+        NOISE_PATTERN
+    };
+    let params = pattern.parse().map_err(to_io)?;
+    let mut b = Builder::new(params)
         .local_private_key(&identity.private)
-        .map_err(to_io)
+        .map_err(to_io)?;
+    if let Some(psk) = psk {
+        let psk: &[u8; 32] = psk
+            .try_into()
+            .map_err(|_| to_io("la passphrase dérivée doit faire 32 octets"))?;
+        b = b.psk(3, psk).map_err(to_io)?;
+    }
+    Ok(b)
 }
 
 /// Handshake côté appelant. Renvoie le canal chiffré et la clé statique du
-/// pair distant.
+/// pair distant. `psk` : passphrase de salon dérivée (les deux côtés doivent
+/// avoir la même, ou aucune).
 pub async fn handshake_initiator(
     stream: &mut TcpStream,
     identity: &Identity,
+    psk: Option<&[u8]>,
 ) -> std::io::Result<(TransportState, Vec<u8>)> {
-    let mut hs = builder(identity)?.build_initiator().map_err(to_io)?;
+    let mut hs = builder(identity, psk)?.build_initiator().map_err(to_io)?;
     let mut buf = vec![0u8; MAX_NOISE_MESSAGE];
 
     // -> e
@@ -96,8 +125,9 @@ pub async fn handshake_initiator(
 pub async fn handshake_responder(
     stream: &mut TcpStream,
     identity: &Identity,
+    psk: Option<&[u8]>,
 ) -> std::io::Result<(TransportState, Vec<u8>)> {
-    let mut hs = builder(identity)?.build_responder().map_err(to_io)?;
+    let mut hs = builder(identity, psk)?.build_responder().map_err(to_io)?;
     let mut buf = vec![0u8; MAX_NOISE_MESSAGE];
     let mut payload = vec![0u8; MAX_NOISE_MESSAGE];
 
