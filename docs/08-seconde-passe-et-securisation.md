@@ -6,6 +6,41 @@
 
 # Seconde passe d'audit & plan de sécurisation du transport
 
+## ✅ Statut d'exécution (2026-07-04, fin de journée)
+
+Le plan ci-dessous a été **implémenté** (commits locaux `e87c818`,
+`c6531d1`, `5d7dda7` — non poussés) :
+
+| Fait | Contenu |
+|---|---|
+| ✅ N1 | Découverte silencieuse : `PeerDiscovered` émis uniquement sur changement, la tâche discovery est autoritaire sur la présence |
+| ✅ N2 | Générations contenu/présence scindées : la frappe d'un pair ne reconstruit plus le fil |
+| ✅ N3/N4 | Feed GIF en `Arc`, modale groupe sur cache, hover-toolbar indexée (le repaint 300 ms du picker était en fait déjà conditionnel — constat corrigé) |
+| ✅ R5/R8 | `resvg` optionnel (feature `avatar-svg`, off par défaut), micro-coûts |
+| ✅ R1 | **SQLite** : historique complet en base, thread d'écriture dédié, migration JSON auto (vérifiée sur 401 messages réels), pagination du fil depuis la base, avatars en BLOB |
+| ✅ R2/S2 | **Connexions persistantes** par pair (pool), plus de connexion par paquet |
+| ✅ S1 | Identité X25519 (`identity.key` 0600), empreinte dans Paramètres > Profil et dans l'annonce de découverte |
+| ✅ S3 | **Chiffrement Noise XX** (snow) : chat ET médias, frames ChaCha20-Poly1305, messages multi-frames (les avatars > 64 Ko passent — R3 corrigé) |
+| ✅ S5 | **TOFU** : clés épinglées en base, connexion refusée + alerte UI « clé changée » |
+
+Mesures release après implémentation : **CPU ~0,2 % au repos, RSS ~155 Mo,
+8 threads, binaire 10,8 Mo**, 216 tests verts. Un client en clair (ancienne
+version) est rejeté proprement au handshake.
+
+**Reste à faire** (hors périmètre de cette passe, par priorité) :
+1. **R4** — atlas emoji (323 PNG décodés au 1er frame, ~7 Mo de textures) ;
+2. **R7** — expériences : renderer `wgpu`/Metal vs Glow, mode barre de menus
+   (zéro rendu fenêtre fermée), notifications système natives ;
+3. **S4** — multiplexage du flux média sur la connexion chat unique
+   (aujourd'hui : deux listeners, tous deux chiffrés) ;
+4. **S6** — passphrase de salon optionnelle (`XXpsk3`) ;
+5. Divers §3-N4 : memoïsation de `message_hash` sur `ChatMessage`,
+   shortcodes emoji recalculés par frame menu ouvert, séparateur de date
+   absent en tête de fenêtre tronquée (cosmétique), QA manuelle du
+   fenêtrage (compensation d'offset) et re-mesure GPU/`powermetrics`.
+
+---
+
 Ce document fait trois choses :
 1. **§2 — le reste à faire** : tout ce qui a été détecté dans les audits
    précédents ([06](06-audit-performance.md), [07](07-plan-optimisation.md))
