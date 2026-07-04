@@ -123,14 +123,18 @@ fn show_feed_grid(
                     let col = &mut cols[i % 2];
                     let size =
                         super::media::gif_display_size(item.width, item.height, col_w, col_w * 2.0);
-                    let resp = col
-                        .add(
+                    // Gel hors écran : seuls les aperçus visibles dans la
+                    // grille sont décodés/animés (la place reste réservée).
+                    let (rect, resp) = col.allocate_exact_size(size, egui::Sense::click());
+                    if col.is_rect_visible(rect) {
+                        col.put(
+                            rect,
                             egui::Image::from_uri(item.preview_url.clone())
                                 .fit_to_exact_size(size)
-                                .corner_radius(6.0)
-                                .sense(egui::Sense::click()),
-                        )
-                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                .corner_radius(6.0),
+                        );
+                    }
+                    let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
                     if resp.clicked() {
                         chosen = Some(item.clone());
                     }
@@ -159,10 +163,26 @@ fn needs_init(feed: &GifFeed) -> bool {
 }
 
 impl AbcomApp {
+    /// Libère du cache d'images egui les aperçus des trois feeds Klipy
+    /// (appelé à la fermeture du picker : les frames WebP décodées des
+    /// aperçus représentent plusieurs dizaines de Mo par page).
+    fn forget_gif_previews(&self, ctx: &egui::Context) {
+        for feed in [&self.gif_feed, &self.meme_feed, &self.sticker_feed] {
+            for item in feed.lock().items.iter() {
+                ctx.forget_image(&item.preview_url);
+            }
+        }
+    }
+
     pub(crate) fn show_gif_picker_window(&mut self, ctx: &egui::Context, gif_button_clicked: bool) {
         if !self.show_gif_picker {
+            if self.gif_picker_was_open {
+                self.gif_picker_was_open = false;
+                self.forget_gif_previews(ctx);
+            }
             return;
         }
+        self.gif_picker_was_open = true;
         let Some(key) = crate::config::klipy_api_key() else {
             self.show_gif_picker = false;
             return;

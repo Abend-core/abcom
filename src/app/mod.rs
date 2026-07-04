@@ -6,7 +6,7 @@ use crate::message::{ChatMessage, Group, PeerRecord, ReactionEntry};
 
 mod avatar;
 mod groups;
-mod media;
+pub mod media;
 mod messages;
 mod peers;
 mod persistence;
@@ -17,6 +17,22 @@ mod typing;
 
 pub use peers::Peer;
 pub use receipts::PendingMessage;
+
+/// Structures modifiées depuis la dernière écriture disque. La persistance
+/// est débouncée : les mutations marquent, l'UI déclenche périodiquement une
+/// écriture hors thread de rendu (cf. `AbcomApp::periodic_tasks`).
+#[derive(Default)]
+pub struct DirtyFlags {
+    pub messages: bool,
+    pub read_counts: bool,
+    pub reactions: bool,
+}
+
+impl DirtyFlags {
+    pub fn any(&self) -> bool {
+        self.messages || self.read_counts || self.reactions
+    }
+}
 
 pub struct AppState {
     pub my_username: String,
@@ -35,6 +51,16 @@ pub struct AppState {
     pub peer_avatars: HashMap<String, Vec<u8>>,
     /// Réactions emoji par message, indexées par `AppState::message_hash`.
     pub reactions: HashMap<u64, Vec<ReactionEntry>>,
+    /// Compteur incrémenté à chaque mutation du **contenu** (messages,
+    /// réactions, accusés, avatars, alias). Le cache du fil ne se
+    /// reconstruit que lorsqu'il change.
+    pub content_generation: u64,
+    /// Compteur incrémenté sur les changements de **présence** (pairs en
+    /// ligne/hors ligne, frappe) : n'invalide que la barre latérale, pas le
+    /// fil (la frappe d'un pair ne doit pas reconstruire 500 lignes).
+    pub presence_generation: u64,
+    /// Structures en attente d'écriture disque (persistance débouncée).
+    pub dirty: DirtyFlags,
     history_path: PathBuf,
     read_counts_path: PathBuf,
     groups_path: PathBuf,
@@ -72,6 +98,9 @@ impl AppState {
             my_avatar: None,
             peer_avatars: HashMap::new(),
             reactions: HashMap::new(),
+            content_generation: 0,
+            presence_generation: 0,
+            dirty: DirtyFlags::default(),
             history_path,
             read_counts_path,
             groups_path,
@@ -118,6 +147,9 @@ impl AppState {
             my_avatar: None,
             peer_avatars: HashMap::new(),
             reactions: HashMap::new(),
+            content_generation: 0,
+            presence_generation: 0,
+            dirty: DirtyFlags::default(),
             history_path,
             read_counts_path,
             groups_path,
@@ -127,5 +159,15 @@ impl AppState {
             reactions_path,
             media_dir,
         }
+    }
+
+    /// Mutation du contenu : invalide le cache du fil et de la barre latérale.
+    pub fn bump_content(&mut self) {
+        self.content_generation = self.content_generation.wrapping_add(1);
+    }
+
+    /// Mutation de présence (pairs, frappe) : n'invalide que la barre latérale.
+    pub fn bump_presence(&mut self) {
+        self.presence_generation = self.presence_generation.wrapping_add(1);
     }
 }

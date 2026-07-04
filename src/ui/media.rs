@@ -173,15 +173,23 @@ pub(crate) fn render_media_block(
 ) -> Option<MediaAction> {
     // GIF : animé via les loaders egui_extras, chargé depuis l'URL Klipy.
     // Taille forcée d'après le ratio HD pour un affichage net et non riquiqui.
+    // Gel hors écran : la place est réservée (pas de saut de layout), mais le
+    // widget animé n'est émis que si le rectangle intersecte le viewport —
+    // un GIF invisible ne décode rien, ne s'anime pas et ne déclenche aucun
+    // repaint. Dès qu'un pixel entre à l'écran, il s'anime immédiatement.
     if media.kind == MediaKind::Gif {
         if let Some(url) = &media.url {
             let max_w = GIF_MAX_WIDTH.min(ui.available_width());
             let size = gif_display_size(media.width, media.height, max_w, GIF_MAX_HEIGHT);
-            ui.add(
-                egui::Image::from_uri(url.clone())
-                    .fit_to_exact_size(size)
-                    .corner_radius(8.0),
-            );
+            let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+            if ui.is_rect_visible(rect) {
+                ui.put(
+                    rect,
+                    egui::Image::from_uri(url.clone())
+                        .fit_to_exact_size(size)
+                        .corner_radius(8.0),
+                );
+            }
             return None;
         }
         return file_card(ui, media);
@@ -374,35 +382,92 @@ pub(crate) fn render_reply_thumb(
     );
 }
 
+/// Côté maximal (px) d'une texture affichée dans le fil. Le rendu y est borné
+/// à ~320 px : 1024 couvre largement les écrans retina sans stocker la pleine
+/// résolution (une photo 12 Mpx ferait ~48 Mo de texture GPU). La visionneuse
+/// charge sa propre texture pleine résolution, libérée à sa fermeture.
+const FEED_TEXTURE_MAX_PX: u32 = 1024;
+/// Nombre maximal de textures médias conservées en cache (éviction LRU).
+const MEDIA_TEXTURE_CACHE_MAX: usize = 32;
+
 impl AbcomApp {
-    /// Texture d'un média image, chargée paresseusement puis mise en cache.
+    /// Texture d'un média image pour le fil : chargée paresseusement,
+    /// réduite à [`FEED_TEXTURE_MAX_PX`], mise en cache avec éviction LRU.
     pub(crate) fn media_texture(
         &mut self,
         ctx: &egui::Context,
         id: &str,
     ) -> Option<egui::TextureHandle> {
         if let Some(cached) = self.media_textures.get(id) {
-            return cached.clone();
+            let cached = cached.clone();
+            self.touch_media_texture(id);
+            return cached;
         }
-        let texture = self.load_media_texture(ctx, id);
+        let texture = self.load_media_texture(ctx, id, Some(FEED_TEXTURE_MAX_PX));
         self.media_textures.insert(id.to_string(), texture.clone());
+        self.touch_media_texture(id);
+        self.evict_media_textures();
         texture
     }
 
-    fn load_media_texture(&self, ctx: &egui::Context, id: &str) -> Option<egui::TextureHandle> {
+    /// Place `id` en tête de l'ordre d'accès LRU.
+    fn touch_media_texture(&mut self, id: &str) {
+        if let Some(pos) = self.media_texture_lru.iter().position(|x| x == id) {
+            self.media_texture_lru.remove(pos);
+        }
+        self.media_texture_lru.push(id.to_string());
+    }
+
+    /// Évince les textures les moins récemment affichées au-delà du plafond
+    /// (les handles droppés libèrent la mémoire GPU côté egui).
+    fn evict_media_textures(&mut self) {
+        while self.media_texture_lru.len() > MEDIA_TEXTURE_CACHE_MAX {
+            let oldest = self.media_texture_lru.remove(0);
+            self.media_textures.remove(&oldest);
+        }
+    }
+
+    /// Texture pleine résolution pour la visionneuse, conservée uniquement
+    /// tant qu'elle est ouverte.
+    fn viewer_texture_for(
+        &mut self,
+        ctx: &egui::Context,
+        id: &str,
+    ) -> Option<egui::TextureHandle> {
+        if let Some((cached_id, texture)) = &self.viewer_texture {
+            if cached_id == id {
+                return Some(texture.clone());
+            }
+        }
+        let texture = self.load_media_texture(ctx, id, None)?;
+        self.viewer_texture = Some((id.to_string(), texture.clone()));
+        Some(texture)
+    }
+
+    fn load_media_texture(
+        &self,
+        ctx: &egui::Context,
+        id: &str,
+        max_px: Option<u32>,
+    ) -> Option<egui::TextureHandle> {
         let bytes = self.state.lock().unwrap().media_bytes(id)?;
-        let image = image::load_from_memory(&bytes).ok()?;
+        let mut image = image::load_from_memory(&bytes).ok()?;
+        let name = match max_px {
+            Some(max) => {
+                if image.width().max(image.height()) > max {
+                    image = image.thumbnail(max, max);
+                }
+                format!("media_{id}")
+            }
+            None => format!("media_full_{id}"),
+        };
         let rgba = image.to_rgba8();
         let (width, height) = rgba.dimensions();
         let color_image = egui::ColorImage::from_rgba_unmultiplied(
             [width as usize, height as usize],
             rgba.as_raw(),
         );
-        Some(ctx.load_texture(
-            format!("media_{id}"),
-            color_image,
-            egui::TextureOptions::LINEAR,
-        ))
+        Some(ctx.load_texture(name, color_image, egui::TextureOptions::LINEAR))
     }
 
     /// Nom d'origine d'un média retrouvé dans l'historique (sinon son `id`).
@@ -448,9 +513,11 @@ impl AbcomApp {
     /// Visionneuse plein écran : image agrandie + bouton de téléchargement.
     pub(crate) fn show_media_viewer(&mut self, ctx: &egui::Context) {
         let Some(id) = self.media_viewer.clone() else {
+            // Visionneuse fermée : libère la texture pleine résolution.
+            self.viewer_texture = None;
             return;
         };
-        let texture = self.media_texture(ctx, &id);
+        let texture = self.viewer_texture_for(ctx, &id);
         let filename = self.media_filename(&id);
         let title = self.tr("Aperçu", "Preview");
         let download_label = self.tr("⬇ Télécharger", "⬇ Download");
@@ -492,6 +559,7 @@ impl AbcomApp {
         }
         if !open {
             self.media_viewer = None;
+            self.viewer_texture = None;
         }
     }
 

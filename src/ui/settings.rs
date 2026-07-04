@@ -20,6 +20,12 @@ impl AbcomApp {
             ThemePreference::Dark => true,
         };
 
+        // `set_visuals` reconstruit tout le style : ne l'appliquer qu'au
+        // changement effectif, pas à chaque frame.
+        if self.applied_dark_mode == Some(dark_mode) {
+            return;
+        }
+        self.applied_dark_mode = Some(dark_mode);
         ctx.set_visuals(if dark_mode {
             egui::Visuals::dark()
         } else {

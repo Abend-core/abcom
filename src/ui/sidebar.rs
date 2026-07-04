@@ -14,20 +14,13 @@ impl AbcomApp {
             .show(ctx, |ui| {
                 ui.add_space(6.0);
 
-                let (peers, selected_conv, unread_counts, peer_records) = {
-                    let s = self.state.lock().unwrap();
-                    let peers = s.peers.clone();
-                    let unread = peers
-                        .iter()
-                        .map(|p| s.unread_count(&p.username))
-                        .collect::<Vec<_>>();
-                    (
-                        peers,
-                        s.selected_conversation.clone(),
-                        unread,
-                        s.peer_records.clone(),
-                    )
-                };
+                // Instantané depuis le cache dérivé : pairs, compteurs
+                // non-lus et alias ne sont recalculés qu'au changement de
+                // génération, pas à chaque frame.
+                let peers = self.sidebar_cache.peers.clone();
+                let selected_conv = self.sidebar_cache.selected_conversation.clone();
+                let unread_counts = self.sidebar_cache.unread.clone();
+                let display_names = self.sidebar_cache.display_names.clone();
 
                 // Section conversations
                 ui.heading(self.tr("👥 Conversations", "👥 Conversations"));
@@ -71,10 +64,9 @@ impl AbcomApp {
                             dot_color,
                         );
 
-                        let display_name = peer_records
-                            .iter()
-                            .find(|r| r.username == peer.username)
-                            .and_then(|r| r.alias.clone())
+                        let display_name = display_names
+                            .get(idx)
+                            .cloned()
                             .unwrap_or_else(|| peer.username.clone());
                         let font_id = egui::TextStyle::Button.resolve(ui.style());
                         ui.painter().text(
@@ -177,11 +169,11 @@ impl AbcomApp {
                 });
                 ui.add_space(4.0);
 
-                let groups = self.state.lock().unwrap().groups.clone();
+                let groups = self.sidebar_cache.groups.clone();
                 if groups.is_empty() {
                     ui.weak(self.tr("Aucun groupe", "No group"));
                 } else {
-                    for group in &groups {
+                    for group in groups.iter() {
                         let is_selected = selected_conv
                             .as_ref()
                             .map(|c| c == &format!("#{}", group.name))
@@ -251,7 +243,7 @@ impl AbcomApp {
                 }
 
                 ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                    let my_name = self.state.lock().unwrap().my_username.clone();
+                    let my_name = self.sidebar_cache.my_username.clone();
                     let settings_tip = self.tr("Paramètres", "Settings");
                     let you_label = self.tr("Vous", "You");
                     ui.separator();

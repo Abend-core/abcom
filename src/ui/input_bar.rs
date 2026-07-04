@@ -416,14 +416,9 @@ impl AbcomApp {
     /// Barre de saisie en bas de fenêtre. Retourne `(emoji_cliqué, gif_cliqué)`
     /// pour piloter l'ouverture des sélecteurs respectifs.
     pub(crate) fn show_input_bar(&mut self, ctx: &egui::Context) -> (bool, bool) {
-        let selected_peer_online = {
-            let s = self.state.lock().unwrap();
-            match &s.selected_conversation {
-                None => true,
-                Some(conv) if conv.starts_with('#') => true,
-                Some(u) => s.is_peer_online(u),
-            }
-        };
+        // Présence et frappe lues depuis le cache dérivé : aucune prise de
+        // verrou par frame dans la barre de saisie.
+        let selected_peer_online = self.sidebar_cache.selected_peer_online;
 
         if !selected_peer_online {
             egui::TopBottomPanel::bottom("input_panel")
@@ -446,7 +441,7 @@ impl AbcomApp {
         let mut emoji_button_clicked = false;
         let mut gif_button_clicked = false;
         let mut picker_action: Option<AttachmentMenuAction> = None;
-        let typing_list = self.state.lock().unwrap().typing_users_list();
+        let typing_list = self.sidebar_cache.typing.clone();
         let add_files_label = self.tr("Ajouter des fichiers", "Add files");
         let add_folder_label = self.tr("Ajouter un dossier", "Add folder");
 
@@ -474,38 +469,77 @@ impl AbcomApp {
                                 )
                             });
                             if let Some((author, snippet, media)) = reply_preview {
-                                let reply_to_label = self.tr("Réponse à", "Replying to");
+                                let reply_to_label = self.tr("Répondre à", "Replying to");
                                 let texture = media
                                     .as_ref()
                                     .filter(|m| m.kind == crate::message::MediaKind::Image)
                                     .and_then(|m| self.media_texture(ctx, &m.id));
+                                // Bandeau façon Discord : liseré d'accent,
+                                // « Répondre à » discret, nom en gras, extrait
+                                // tronqué, croix collée à droite.
                                 egui::Frame::default()
-                                    .fill(egui::Color32::from_rgba_unmultiplied(255, 255, 255, 16))
-                                    .corner_radius(egui::CornerRadius::same(8))
-                                    .inner_margin(egui::Margin::symmetric(8, 4))
+                                    .fill(egui::Color32::from_rgb(52, 53, 58))
+                                    .corner_radius(egui::CornerRadius::same(10))
+                                    .inner_margin(egui::Margin::symmetric(10, 6))
                                     .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
                                         ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 6.0;
+                                            let (accent, _) = ui.allocate_exact_size(
+                                                egui::vec2(3.0, 16.0),
+                                                egui::Sense::hover(),
+                                            );
+                                            ui.painter().rect_filled(
+                                                accent,
+                                                2.0,
+                                                egui::Color32::from_rgb(88, 101, 242),
+                                            );
+                                            ui.label(
+                                                egui::RichText::new(reply_to_label)
+                                                    .small()
+                                                    .color(egui::Color32::from_gray(160)),
+                                            );
+                                            ui.label(
+                                                egui::RichText::new(&author)
+                                                    .small()
+                                                    .color(egui::Color32::from_rgb(100, 180, 255))
+                                                    .family(egui::FontFamily::Name(
+                                                        super::BOLD_FAMILY.into(),
+                                                    )),
+                                            );
                                             if media.is_some() {
                                                 super::media::render_reply_thumb(
                                                     ui,
                                                     texture.as_ref(),
-                                                    28.0,
+                                                    20.0,
                                                 );
                                             }
-                                            ui.label(
-                                                egui::RichText::new(format!(
-                                                    "{} {}",
-                                                    reply_to_label, author
-                                                ))
-                                                .small(),
-                                            );
-                                            ui.label(egui::RichText::new(&snippet).weak().small());
                                             ui.with_layout(
                                                 egui::Layout::right_to_left(egui::Align::Center),
                                                 |ui| {
                                                     if chip_remove_button(ui) {
                                                         self.replying_to = None;
                                                     }
+                                                    ui.add_space(4.0);
+                                                    ui.with_layout(
+                                                        egui::Layout::left_to_right(
+                                                            egui::Align::Center,
+                                                        ),
+                                                        |ui| {
+                                                            ui.add(
+                                                                egui::Label::new(
+                                                                    egui::RichText::new(&snippet)
+                                                                        .small()
+                                                                        .color(
+                                                                            egui::Color32::from_gray(
+                                                                                150,
+                                                                            ),
+                                                                        ),
+                                                                )
+                                                                .truncate(),
+                                                            );
+                                                        },
+                                                    );
                                                 },
                                             );
                                         });
@@ -569,10 +603,8 @@ impl AbcomApp {
                                     self.show_attachment_menu = !self.show_attachment_menu;
                                 }
 
-                                let (selected_addr, all_peers) = {
-                                    let s = self.state.lock().unwrap();
-                                    (s.selected_peer_addr(), s.peers.clone())
-                                };
+                                let selected_addr = self.sidebar_cache.selected_peer_addr;
+                                let all_peers = self.sidebar_cache.peers.clone();
 
                                 let actions_width = 168.0;
                                 let available_w = (ui.available_width() - actions_width).max(180.0);

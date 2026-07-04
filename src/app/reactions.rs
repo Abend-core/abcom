@@ -33,7 +33,8 @@ impl AppState {
                 ReactionAction::Add
             }
         };
-        self.save_reactions();
+        self.dirty.reactions = true;
+        self.bump_content();
         action
     }
 
@@ -60,7 +61,8 @@ impl AppState {
                 entries.retain(|e| !e.users.is_empty());
             }
         }
-        self.save_reactions();
+        self.dirty.reactions = true;
+        self.bump_content();
     }
 
     pub fn reactions_for(&self, message_hash: u64) -> &[ReactionEntry] {

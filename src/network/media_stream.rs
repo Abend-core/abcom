@@ -22,6 +22,42 @@ use crate::message::{AppEvent, MediaProgress, MediaSendJob, MediaStreamHeader, M
 const BUFFER_SIZE: usize = 64 * 1024;
 const MAX_HEADER_BYTES: usize = 1024 * 1024;
 const DECISION_TIMEOUT: Duration = Duration::from_secs(120);
+/// Intervalle minimal entre deux événements de progression vers l'UI.
+/// Sans ce throttle, un événement partait par chunk de 64 Ko (~16 000/Go) :
+/// le canal mpsc (256 places) saturait et le `send().await` mettait le
+/// transfert lui-même en attente de la boucle de rendu.
+const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
+
+/// Émetteur de progression throttlé : relaie au plus un événement par
+/// [`PROGRESS_INTERVAL`], plus systématiquement le dernier (fin de transfert).
+struct ProgressReporter {
+    last_emit: Option<std::time::Instant>,
+}
+
+impl ProgressReporter {
+    fn new() -> Self {
+        Self { last_emit: None }
+    }
+
+    async fn report(
+        &mut self,
+        tx: &Sender<AppEvent>,
+        id: &str,
+        done: u64,
+        total: u64,
+        finished: bool,
+    ) {
+        let now = std::time::Instant::now();
+        let due = match self.last_emit {
+            None => true,
+            Some(prev) => now.duration_since(prev) >= PROGRESS_INTERVAL,
+        };
+        if finished || due {
+            self.last_emit = Some(now);
+            let _ = tx.send(progress(id, done, total, finished)).await;
+        }
+    }
+}
 
 fn to_io(e: impl std::fmt::Display) -> std::io::Error {
     std::io::Error::other(e.to_string())
@@ -108,6 +144,7 @@ async fn stream_out(job: &MediaSendJob, event_tx: &Sender<AppEvent>) -> std::io:
     let mut file = tokio::fs::File::open(&job.source_path).await?;
     let mut buffer = vec![0u8; BUFFER_SIZE];
     let mut sent = 0u64;
+    let mut reporter = ProgressReporter::new();
     loop {
         let read = file.read(&mut buffer).await?;
         if read == 0 {
@@ -115,11 +152,11 @@ async fn stream_out(job: &MediaSendJob, event_tx: &Sender<AppEvent>) -> std::io:
         }
         stream.write_all(&buffer[..read]).await?;
         sent += read as u64;
-        let _ = event_tx.send(progress(id, sent, total, false)).await;
+        reporter.report(event_tx, id, sent, total, false).await;
     }
     stream.flush().await?;
     stream.shutdown().await?;
-    let _ = event_tx.send(progress(id, total, total, true)).await;
+    reporter.report(event_tx, id, total, total, true).await;
     Ok(())
 }
 
@@ -218,6 +255,7 @@ async fn receive_body(
     let mut file = tokio::fs::File::create(path).await?;
     let mut buffer = vec![0u8; BUFFER_SIZE];
     let mut received = 0u64;
+    let mut reporter = ProgressReporter::new();
     while received < total {
         let to_read = std::cmp::min((total - received) as usize, buffer.len());
         let read = stream.read(&mut buffer[..to_read]).await?;
@@ -226,10 +264,10 @@ async fn receive_body(
         }
         file.write_all(&buffer[..read]).await?;
         received += read as u64;
-        let _ = event_tx.send(progress(id, received, total, false)).await;
+        reporter.report(event_tx, id, received, total, false).await;
     }
     file.flush().await?;
-    let _ = event_tx.send(progress(id, total, total, true)).await;
+    reporter.report(event_tx, id, total, total, true).await;
     Ok(())
 }
 

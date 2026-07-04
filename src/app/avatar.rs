@@ -33,6 +33,7 @@ impl AppState {
     pub fn set_my_avatar(&mut self, png: Vec<u8>) {
         self.my_avatar = Some(png);
         self.save_avatar();
+        self.bump_content();
     }
 
     /// Retire notre avatar et supprime le fichier associé.
@@ -49,6 +50,7 @@ impl AppState {
             self.peer_avatars.insert(username, png);
         }
         self.save_peer_avatars();
+        self.bump_content();
     }
 
     pub(super) fn load_avatar(&mut self) {

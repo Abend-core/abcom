@@ -44,6 +44,7 @@ impl AppState {
             .entry(message_hash)
             .or_default()
             .insert(username);
+        self.bump_content();
     }
 
     #[allow(dead_code)]
@@ -71,10 +72,13 @@ impl AppState {
                 retry_count: 0,
             },
         );
+        self.bump_content();
     }
 
     pub fn mark_message_acked(&mut self, message_hash: u64) {
-        self.pending_messages.remove(&message_hash);
+        if self.pending_messages.remove(&message_hash).is_some() {
+            self.bump_content();
+        }
     }
 
     /// Retourne les messages qui doivent être retransmis (backoff exponentiel)

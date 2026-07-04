@@ -23,9 +23,15 @@ impl AppState {
 
         for peer in &mut self.peers {
             if peer.username == username {
+                // `last_seen` sert au timeout interne : sa mise à jour seule
+                // ne change rien à l'affichage, pas d'invalidation de cache.
+                let changed = peer.addr != addr || !peer.online;
                 peer.addr = addr;
                 peer.last_seen = now;
                 peer.online = true;
+                if changed {
+                    self.bump_presence();
+                }
                 return;
             }
         }
@@ -35,9 +41,14 @@ impl AppState {
             last_seen: now,
             online: true,
         });
+        self.bump_presence();
     }
 
-    /// Nettoie les pairs inactifs et retourne les usernames déconnectés
+    /// Nettoie les pairs inactifs et retourne les usernames déconnectés.
+    /// N'est plus appelé en production : la tâche discovery est autoritaire
+    /// sur la présence (elle émet `PeerDisconnected`). Conservé comme filet
+    /// de sécurité testé, réutilisable si la politique change.
+    #[allow(dead_code)]
     pub fn cleanup_inactive_peers(&mut self, timeout_secs: u64) -> Vec<String> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -50,6 +61,9 @@ impl AppState {
                 peer.online = false;
                 disconnected.push(peer.username.clone());
             }
+        }
+        if !disconnected.is_empty() {
+            self.bump_presence();
         }
         disconnected
     }
@@ -102,13 +116,16 @@ impl AppState {
             });
         }
         self.save_peer_records();
+        self.bump_content();
     }
 
     /// Reconstruit les pairs connus depuis l'historique (hors ligne par défaut)
     pub(super) fn restore_peers_from_history(&mut self) {
         let mut known: Vec<String> = Vec::new();
         for msg in &self.messages {
-            if msg.to_user == Some(self.my_username.clone()) && !known.contains(&msg.from) {
+            if msg.to_user.as_deref() == Some(self.my_username.as_str())
+                && !known.contains(&msg.from)
+            {
                 known.push(msg.from.clone());
             }
             if msg.from == self.my_username {
