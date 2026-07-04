@@ -126,19 +126,14 @@ fn show_feed_grid(
                         super::media::gif_display_size(item.width, item.height, col_w, col_w * 2.0);
                     // Gel hors écran : seuls les aperçus visibles dans la
                     // grille sont décodés/animés (la place reste réservée).
-                    // Hors focus : cadre statique (pause fiable).
                     let (rect, resp) = col.allocate_exact_size(size, egui::Sense::click());
                     if col.is_rect_visible(rect) {
-                        if col.ctx().input(|i| i.focused) {
-                            col.put(
-                                rect,
-                                egui::Image::from_uri(item.preview_url.clone())
-                                    .fit_to_exact_size(size)
-                                    .corner_radius(6.0),
-                            );
-                        } else {
-                            super::media::paint_paused_gif(col, rect);
-                        }
+                        col.put(
+                            rect,
+                            egui::Image::from_uri(item.preview_url.clone())
+                                .fit_to_exact_size(size)
+                                .corner_radius(6.0),
+                        );
                     }
                     let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
                     if resp.clicked() {

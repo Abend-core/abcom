@@ -185,21 +185,13 @@ pub(crate) fn render_media_block(
             let max_w = GIF_MAX_WIDTH.min(ui.available_width());
             let size = gif_display_size(media.width, media.height, max_w, GIF_MAX_HEIGHT);
             let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
-            // Pause hors focus : une image animée peinte replanifie sans fin
-            // son propre repaint — fenêtre en arrière-plan, on affiche un
-            // cadre statique à la place (reprise instantanée au focus).
-            let focused = ui.ctx().input(|i| i.focused);
             if ui.is_rect_visible(rect) {
-                if focused {
-                    ui.put(
-                        rect,
-                        egui::Image::from_uri(url.clone())
-                            .fit_to_exact_size(size)
-                            .corner_radius(8.0),
-                    );
-                } else {
-                    paint_paused_gif(ui, rect);
-                }
+                ui.put(
+                    rect,
+                    egui::Image::from_uri(url.clone())
+                        .fit_to_exact_size(size)
+                        .corner_radius(8.0),
+                );
             }
             return None;
         }
@@ -336,24 +328,6 @@ fn download_button(ui: &mut egui::Ui) -> bool {
         );
     }
     response.on_hover_text("Télécharger").clicked()
-}
-
-/// Cadre statique affiché à la place d'un GIF quand la fenêtre n'a pas le
-/// focus (pause fiable : on n'émet pas le widget animé).
-pub(crate) fn paint_paused_gif(ui: &mut egui::Ui, rect: egui::Rect) {
-    let painter = ui.painter();
-    painter.rect_filled(
-        rect,
-        egui::CornerRadius::same(8),
-        egui::Color32::from_rgb(43, 45, 49),
-    );
-    painter.text(
-        rect.center(),
-        egui::Align2::CENTER_CENTER,
-        "▶ GIF",
-        egui::FontId::proportional(16.0),
-        egui::Color32::from_gray(150),
-    );
 }
 
 /// Raccourcit un texte trop long avec une ellipse finale.

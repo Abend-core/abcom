@@ -13,7 +13,7 @@ fn launcher() -> anyhow::Result<auto_launch::AutoLaunch> {
     let mut builder = AutoLaunchBuilder::new();
     builder.set_app_name("Abcom").set_app_path(&exe);
     #[cfg(target_os = "macos")]
-    builder.set_use_launch_agent(true);
+    builder.set_macos_launch_mode(auto_launch::MacOSLaunchMode::LaunchAgent);
     builder
         .build()
         .map_err(|e| anyhow::anyhow!("autostart : {e}"))
@@ -31,6 +31,7 @@ pub fn set_enabled(enabled: bool) -> anyhow::Result<()> {
 }
 
 /// État système actuel (pour refléter la réalité dans Paramètres).
+#[allow(dead_code)] // exposé pour un futur affichage de diagnostic
 pub fn is_enabled() -> bool {
     launcher().and_then(|a| Ok(a.is_enabled()?)).unwrap_or(false)
 }
