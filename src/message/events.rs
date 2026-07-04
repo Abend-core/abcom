@@ -33,4 +33,10 @@ pub enum AppEvent {
     MediaDeclined(MediaStreamHeader),
     /// Un pair a ajouté ou retiré une réaction emoji sur un message.
     ReactionReceived(ReactionEvent),
+    /// Page d'historique plus ancienne chargée depuis SQLite (pagination du
+    /// fil vers le haut). `oldest_rowid` = None si le début est atteint.
+    OlderMessagesLoaded {
+        messages: Vec<ChatMessage>,
+        oldest_rowid: Option<i64>,
+    },
 }

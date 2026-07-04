@@ -3,7 +3,7 @@ use crate::app::AppState;
 use crate::message::ChatMessage;
 
 fn state(username: &str) -> AppState {
-    let mut s = AppState::new(username.to_string());
+    let mut s = AppState::new(username.to_string(), Default::default(), None);
     s.messages.clear();
     s.peers.clear();
     s.read_counts.clear();

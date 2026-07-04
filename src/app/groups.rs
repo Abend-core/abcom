@@ -3,6 +3,11 @@ use crate::message::Group;
 
 #[allow(dead_code)]
 impl AppState {
+    /// Persiste la liste des groupes (remplacement complet, table petite).
+    pub fn save_groups(&self) {
+        self.persist(super::StorageCmd::ReplaceGroups(self.groups.clone()));
+    }
+
     fn validate_group_name(name: &str) -> bool {
         !name.is_empty()
             && name.len() <= 50

@@ -33,7 +33,11 @@ impl AppState {
                 ReactionAction::Add
             }
         };
-        self.dirty.reactions = true;
+        let entries = self.reactions.get(&message_hash).cloned().unwrap_or_default();
+        self.persist(super::StorageCmd::ReplaceReactions {
+            hash: message_hash,
+            entries,
+        });
         self.bump_content();
         action
     }
@@ -61,7 +65,15 @@ impl AppState {
                 entries.retain(|e| !e.users.is_empty());
             }
         }
-        self.dirty.reactions = true;
+        let entries = self
+            .reactions
+            .get(&event.message_hash)
+            .cloned()
+            .unwrap_or_default();
+        self.persist(super::StorageCmd::ReplaceReactions {
+            hash: event.message_hash,
+            entries,
+        });
         self.bump_content();
     }
 

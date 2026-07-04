@@ -178,8 +178,6 @@ pub(crate) struct AbcomApp {
     /// Dernier mode sombre effectivement appliqué à egui (évite de
     /// reconstruire les `Visuals` à chaque frame).
     pub(crate) applied_dark_mode: Option<bool>,
-    /// Dernière écriture débouncée de la persistance (cf. `periodic_tasks`).
-    pub(crate) last_persist_time: std::time::Instant,
     /// Cache dérivé du fil (lignes pré-calculées, markdown memoïsé).
     pub(crate) chat_cache: snapshot::ChatCache,
     /// Cache dérivé de la barre latérale et de la barre de saisie.
@@ -189,6 +187,9 @@ pub(crate) struct AbcomApp {
     /// Hauteur de contenu avant extension de la fenêtre : sert à compenser
     /// l'offset de scroll à la frame suivante (pas de saut visuel).
     pub(crate) chat_prepend_fix: Option<f32>,
+    /// Une page d'historique plus ancienne est en cours de chargement
+    /// (évite les demandes répétées pendant le vol de la requête).
+    pub(crate) loading_older: bool,
     /// Le picker GIF était ouvert à la frame précédente (détection de la
     /// fermeture pour libérer les aperçus du cache d'images egui).
     pub(crate) gif_picker_was_open: bool,
@@ -291,11 +292,11 @@ impl AbcomApp {
             highlight_message: None,
             typing_active: false,
             applied_dark_mode: None,
-            last_persist_time: std::time::Instant::now(),
             chat_cache: snapshot::ChatCache::default(),
             sidebar_cache: snapshot::SidebarCache::default(),
             chat_visible_count: CHAT_WINDOW_STEP,
             chat_prepend_fix: None,
+            loading_older: false,
             gif_picker_was_open: false,
             known_gif_urls: std::collections::HashSet::new(),
             media_texture_lru: Vec::new(),
@@ -504,19 +505,10 @@ impl eframe::App for AbcomApp {
         ctx.request_repaint_after(fallback);
     }
 
-    /// Flush final de la persistance débouncée : tout ce qui est encore
-    /// marqué dirty est écrit de façon synchrone avant la fermeture.
+    /// Flush final du stockage : attend que toutes les écritures en file
+    /// soient appliquées avant la fermeture.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        let s = self.state.lock().unwrap();
-        if s.dirty.messages {
-            s.save_messages();
-        }
-        if s.dirty.read_counts {
-            s.save_read_counts();
-        }
-        if s.dirty.reactions {
-            s.save_reactions();
-        }
+        self.state.lock().unwrap().flush_storage();
     }
 }
 

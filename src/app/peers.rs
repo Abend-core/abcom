@@ -107,15 +107,18 @@ impl AppState {
             .iter_mut()
             .find(|r| r.username == username)
         {
-            rec.alias = alias;
+            rec.alias = alias.clone();
         } else {
             use crate::message::PeerRecord;
             self.peer_records.push(PeerRecord {
                 username: username.to_string(),
-                alias,
+                alias: alias.clone(),
             });
         }
-        self.save_peer_records();
+        self.persist(super::StorageCmd::UpsertPeerAlias {
+            username: username.to_string(),
+            alias,
+        });
         self.bump_content();
     }
 

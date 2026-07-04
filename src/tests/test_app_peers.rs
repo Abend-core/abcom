@@ -3,7 +3,7 @@ use crate::app::{AppState, Peer};
 use std::net::SocketAddr;
 
 fn state(username: &str) -> AppState {
-    let mut s = AppState::new(username.to_string());
+    let mut s = AppState::new(username.to_string(), Default::default(), None);
     s.peers.clear();
     s.messages.clear();
     s.groups.clear();

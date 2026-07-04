@@ -10,15 +10,20 @@ impl AppState {
             .unwrap_or(false);
         let from = msg.from.clone();
 
+        self.persist(super::StorageCmd::InsertMessage(msg.clone()));
         self.messages.push(msg);
         if incoming_from_selected {
             self.mark_conversation_read(&from);
         }
-        if self.messages.len() > 500 {
-            self.messages.drain(0..100);
+        // La fenêtre mémoire reste bornée ; l'historique complet vit en base
+        // (les messages drainés restent chargeables par pagination).
+        if self.messages.len() > self.history_cap() {
+            let overflow = self.messages.len() - self.history_cap() + 99;
+            let n = overflow.min(self.messages.len());
+            self.messages.drain(0..n);
+            self.oldest_loaded_rowid = None; // rowids inconnus après drain
             self.purge_stale_message_state();
         }
-        self.dirty.messages = true;
         self.bump_content();
     }
 
@@ -28,11 +33,7 @@ impl AppState {
     fn purge_stale_message_state(&mut self) {
         let live: std::collections::HashSet<u64> =
             self.messages.iter().map(Self::message_hash).collect();
-        let before = self.reactions.len();
         self.reactions.retain(|hash, _| live.contains(hash));
-        if self.reactions.len() != before {
-            self.dirty.reactions = true;
-        }
         self.read_receipts.retain(|hash, _| live.contains(hash));
         self.pending_messages.retain(|hash, _| live.contains(hash));
     }
@@ -45,7 +46,10 @@ impl AppState {
             .filter(|m| m.from == peer_username && m.to_user.as_deref() == Some(me))
             .count();
         self.read_counts.insert(peer_username.to_string(), count);
-        self.dirty.read_counts = true;
+        self.persist(super::StorageCmd::SetReadCount {
+            username: peer_username.to_string(),
+            count: count as u64,
+        });
         self.bump_content();
     }
 
@@ -102,7 +106,10 @@ impl AppState {
                 });
             }
         }
-        self.dirty.messages = true;
+        self.persist(super::StorageCmd::DeleteConversation {
+            me: self.my_username.clone(),
+            conv: self.selected_conversation.clone(),
+        });
         self.bump_content();
     }
 }
