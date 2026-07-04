@@ -60,6 +60,7 @@ docker compose up --build
   - [CICD et déploiement](docs/03-cicd-et-deploiement.md)
   - [Sécurité globale](docs/04-securite-globale.md)
   - [Glossaire](docs/05-glossaire.md)
+  - [Groupes — Phase 10](docs/10_groupe.md)
   - [Installation Windows](docs/INSTALL_WINDOWS.md)
   - [Notes de migration](docs/_MIGRATION_NOTES.md)
 - **Décisions (ADR)**

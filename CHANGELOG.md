@@ -27,8 +27,12 @@ Format basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/), versi
 - Modale de paramètres (thème, langue, notifications)
 - Support multilingue FR/EN
 - 111 tests unitaires couvrant tous les modules
+- Groupes (Phase 10) : messagerie de salon réservée aux membres, gestion des membres (ajout, exclusion, départ avec succession du propriétaire, suppression), compteurs non-lus et sourdine par salon, modal de gestion — voir `docs/10_groupe.md`
 
 ### Corrigé
+- Gel de l'application à la création d'un groupe (deadlock sur le verrou d'état dans le modal)
+- Messages de groupe diffusés à tous les pairs du réseau au lieu des seuls membres
+- Fil de salon vide : les messages des autres membres n'apparaissaient jamais
 - Boucle infinie CPU causée par `has_unread` en arrière-plan
 - Son de notification bloquant le thread UI (`sleep_until_end` → thread dédié)
 - Crash au démarrage lors de la détection réseau sans pairs
