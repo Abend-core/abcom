@@ -2,7 +2,7 @@
 use crate::app::{AppState, Peer};
 
 fn new_test_state(username: &str) -> AppState {
-    let mut s = AppState::new(username.to_string());
+    let mut s = AppState::new(username.to_string(), Default::default(), None);
     s.groups.clear();
     s.messages.clear();
     s.peers.clear();

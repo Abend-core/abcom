@@ -1119,21 +1119,32 @@ impl AbcomApp {
                 });
 
             // Pagination façon Discord : arrivé près du haut, charger les 100
-            // messages précédents, puis compenser l'offset de la hauteur
-            // ajoutée à la frame suivante (aucun saut visuel, pas de bouton).
-            if let Some(prev_height) = self.chat_prepend_fix.take() {
+            // messages précédents — d'abord depuis la fenêtre mémoire, puis
+            // depuis SQLite quand elle est épuisée — et compenser l'offset de
+            // la hauteur ajoutée (aucun saut visuel, pas de bouton).
+            if let Some(prev_height) = self.chat_prepend_fix {
                 let delta = scroll_out.content_size.y - prev_height;
                 if delta > 0.0 {
+                    // Le contenu ajouté est arrivé : compenser l'offset.
+                    self.chat_prepend_fix = None;
                     let mut state = scroll_out.state.clone();
                     state.offset.y += delta;
                     state.store(ctx, scroll_out.id);
                     ctx.request_repaint();
                 }
-            } else if start > 0 && scroll_out.state.offset.y < 400.0 {
-                self.chat_visible_count =
-                    (self.chat_visible_count + super::CHAT_WINDOW_STEP).min(total);
-                self.chat_prepend_fix = Some(scroll_out.content_size.y);
-                ctx.request_repaint();
+                // delta == 0 : requête SQLite encore en vol, on attend.
+            } else if scroll_out.state.offset.y < 400.0 && !rows.is_empty() {
+                if start > 0 {
+                    self.chat_visible_count =
+                        (self.chat_visible_count + super::CHAT_WINDOW_STEP).min(total);
+                    self.chat_prepend_fix = Some(scroll_out.content_size.y);
+                    ctx.request_repaint();
+                } else if !self.loading_older
+                    && self.state.lock().unwrap().request_older_messages()
+                {
+                    self.loading_older = true;
+                    self.chat_prepend_fix = Some(scroll_out.content_size.y);
+                }
             }
 
             // Application des actions médias collectées pendant le rendu.

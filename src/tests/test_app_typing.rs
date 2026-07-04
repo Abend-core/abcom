@@ -3,7 +3,7 @@ use crate::app::AppState;
 use std::time::{Duration, SystemTime};
 
 fn state() -> AppState {
-    let mut s = AppState::new("alice".to_string());
+    let mut s = AppState::new("alice".to_string(), Default::default(), None);
     s.typing_users.clear();
     s
 }

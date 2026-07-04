@@ -5,8 +5,6 @@
 //! hors ligne ou après un redémarrage. Les octets manipulés ici sont toujours
 //! des images PNG normalisées (voir `ui::avatar`).
 
-use std::collections::HashMap;
-
 use crate::message::AvatarAnnounce;
 
 use super::AppState;
@@ -44,12 +42,14 @@ impl AppState {
 
     /// Enregistre (ou retire, si `png` est vide) l'avatar d'un pair, puis persiste.
     pub fn set_peer_avatar(&mut self, username: String, png: Vec<u8>) {
-        if png.is_empty() {
+        let avatar = if png.is_empty() {
             self.peer_avatars.remove(&username);
+            None
         } else {
-            self.peer_avatars.insert(username, png);
-        }
-        self.save_peer_avatars();
+            self.peer_avatars.insert(username.clone(), png.clone());
+            Some(png)
+        };
+        self.persist(super::StorageCmd::UpsertPeerAvatar { username, avatar });
         self.bump_content();
     }
 
@@ -61,13 +61,6 @@ impl AppState {
         }
     }
 
-    pub(super) fn load_peer_avatars(&mut self) {
-        if let Ok(content) = std::fs::read_to_string(&self.peer_avatars_path) {
-            if let Ok(map) = serde_json::from_str::<HashMap<String, Vec<u8>>>(&content) {
-                self.peer_avatars = map;
-            }
-        }
-    }
 
     fn save_avatar(&self) {
         let Some(png) = &self.my_avatar else { return };
@@ -79,16 +72,6 @@ impl AppState {
         }
     }
 
-    fn save_peer_avatars(&self) {
-        if let Some(parent) = self.peer_avatars_path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        if let Ok(json) = serde_json::to_string(&self.peer_avatars) {
-            if let Err(e) = std::fs::write(&self.peer_avatars_path, json) {
-                eprintln!("[app] Erreur écriture peer_avatars.json: {}", e);
-            }
-        }
-    }
 }
 
 #[cfg(test)]

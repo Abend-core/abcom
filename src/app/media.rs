@@ -78,7 +78,9 @@ impl AppState {
         let _ = std::fs::remove_file(self.media_path(media_id));
         self.messages
             .retain(|m| m.media.as_ref().is_none_or(|x| x.id != media_id));
-        self.dirty.messages = true;
+        self.persist(super::StorageCmd::DeleteMessageByMediaId(
+            media_id.to_string(),
+        ));
         self.bump_content();
     }
 }

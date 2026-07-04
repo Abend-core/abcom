@@ -3,7 +3,7 @@ use crate::app::AppState;
 use crate::message::{ChatMessage, ReactionAction, ReactionEvent};
 
 fn state() -> AppState {
-    let mut s = AppState::new("alice".to_string());
+    let mut s = AppState::new("alice".to_string(), Default::default(), None);
     s.messages.clear();
     s.peers.clear();
     s.reactions.clear();

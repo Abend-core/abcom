@@ -9,30 +9,15 @@ mod groups;
 pub mod media;
 mod messages;
 mod peers;
-mod persistence;
 mod reactions;
 mod receipts;
+pub mod storage;
 mod transfers;
 mod typing;
 
 pub use peers::Peer;
 pub use receipts::PendingMessage;
-
-/// Structures modifiées depuis la dernière écriture disque. La persistance
-/// est débouncée : les mutations marquent, l'UI déclenche périodiquement une
-/// écriture hors thread de rendu (cf. `AbcomApp::periodic_tasks`).
-#[derive(Default)]
-pub struct DirtyFlags {
-    pub messages: bool,
-    pub read_counts: bool,
-    pub reactions: bool,
-}
-
-impl DirtyFlags {
-    pub fn any(&self) -> bool {
-        self.messages || self.read_counts || self.reactions
-    }
-}
+pub use storage::{LoadedState, Storage, StorageCmd};
 
 pub struct AppState {
     pub my_username: String,
@@ -49,6 +34,8 @@ pub struct AppState {
     pub my_avatar: Option<Vec<u8>>,
     /// Avatars des pairs, indexés par nom d'utilisateur.
     pub peer_avatars: HashMap<String, Vec<u8>>,
+    /// Clés publiques épinglées des pairs (TOFU, transport chiffré).
+    pub peer_keys: HashMap<String, Vec<u8>>,
     /// Réactions emoji par message, indexées par `AppState::message_hash`.
     pub reactions: HashMap<u64, Vec<ReactionEntry>>,
     /// Compteur incrémenté à chaque mutation du **contenu** (messages,
@@ -59,80 +46,64 @@ pub struct AppState {
     /// ligne/hors ligne, frappe) : n'invalide que la barre latérale, pas le
     /// fil (la frappe d'un pair ne doit pas reconstruire 500 lignes).
     pub presence_generation: u64,
-    /// Structures en attente d'écriture disque (persistance débouncée).
-    pub dirty: DirtyFlags,
-    history_path: PathBuf,
-    read_counts_path: PathBuf,
-    groups_path: PathBuf,
-    peer_records_path: PathBuf,
+    /// Émetteur vers le thread de stockage SQLite (`None` en tests isolés :
+    /// les mutations restent purement en mémoire).
+    storage: Option<std::sync::mpsc::Sender<StorageCmd>>,
+    /// rowid du plus ancien message chargé en mémoire (pagination) ;
+    /// `None` = tout l'historique est déjà en mémoire.
+    pub oldest_loaded_rowid: Option<i64>,
+    /// Plafond de messages conservés en mémoire ; grandit quand l'historique
+    /// est paginé vers le haut, borné par [`Self::MAX_WINDOW`].
+    history_cap: usize,
     avatar_path: PathBuf,
-    peer_avatars_path: PathBuf,
-    reactions_path: PathBuf,
     media_dir: PathBuf,
 }
 
 impl AppState {
-    pub fn new(username: String) -> Self {
-        let base = crate::config::data_dir();
+    /// Fenêtre mémoire maximale (au-delà, la pagination vers le haut
+    /// s'arrête : l'historique plus ancien reste en base).
+    pub const MAX_WINDOW: usize = 2000;
 
-        let history_path = base.join("messages.json");
-        let read_counts_path = base.join("read_counts.json");
-        let groups_path = base.join("groups.json");
-        let peer_records_path = base.join("peer_records.json");
-        let avatar_path = base.join("avatar.png");
-        let peer_avatars_path = base.join("peer_avatars.json");
-        let reactions_path = base.join("reactions.json");
-        let media_dir = base.join("media");
+    pub fn new(
+        username: String,
+        loaded: LoadedState,
+        storage: Option<std::sync::mpsc::Sender<StorageCmd>>,
+    ) -> Self {
+        let base = crate::config::data_dir();
+        let history_cap = loaded.messages.len().max(storage::INITIAL_WINDOW as usize);
 
         let mut state = Self {
             my_username: username,
             peers: Vec::new(),
-            messages: Vec::new(),
-            groups: Vec::new(),
+            messages: loaded.messages,
+            groups: loaded.groups,
             selected_conversation: None,
             typing_users: HashMap::new(),
-            read_counts: HashMap::new(),
+            read_counts: loaded.read_counts,
             read_receipts: HashMap::new(),
             pending_messages: HashMap::new(),
-            peer_records: Vec::new(),
+            peer_records: loaded.peer_records,
             my_avatar: None,
-            peer_avatars: HashMap::new(),
-            reactions: HashMap::new(),
+            peer_avatars: loaded.peer_avatars,
+            peer_keys: loaded.peer_keys,
+            reactions: loaded.reactions,
             content_generation: 0,
             presence_generation: 0,
-            dirty: DirtyFlags::default(),
-            history_path,
-            read_counts_path,
-            groups_path,
-            peer_records_path,
-            avatar_path,
-            peer_avatars_path,
-            reactions_path,
-            media_dir,
+            storage,
+            oldest_loaded_rowid: loaded.oldest_rowid,
+            history_cap,
+            avatar_path: base.join("avatar.png"),
+            media_dir: base.join("media"),
         };
 
-        state.load_messages();
-        state.load_read_counts();
-        state.load_groups();
-        state.load_peer_records();
         state.load_avatar();
-        state.load_peer_avatars();
-        state.load_reactions();
         state.restore_peers_from_history();
         state
     }
 
-    /// Constructeur de test avec un répertoire de données personnalisé (isolation du disque)
+    /// Constructeur de test : aucun stockage, répertoire de données isolé.
     #[cfg(test)]
     pub fn new_with_base(username: &str, base: &std::path::Path) -> Self {
-        let history_path = base.join("messages.json");
-        let read_counts_path = base.join("read_counts.json");
-        let groups_path = base.join("groups.json");
-        let peer_records_path = base.join("peer_records.json");
-        let avatar_path = base.join("avatar.png");
-        let peer_avatars_path = base.join("peer_avatars.json");
-        let reactions_path = base.join("reactions.json");
-        let media_dir = base.join("media");
         Self {
             my_username: username.to_string(),
             peers: Vec::new(),
@@ -146,18 +117,15 @@ impl AppState {
             peer_records: Vec::new(),
             my_avatar: None,
             peer_avatars: HashMap::new(),
+            peer_keys: HashMap::new(),
             reactions: HashMap::new(),
             content_generation: 0,
             presence_generation: 0,
-            dirty: DirtyFlags::default(),
-            history_path,
-            read_counts_path,
-            groups_path,
-            peer_records_path,
-            avatar_path,
-            peer_avatars_path,
-            reactions_path,
-            media_dir,
+            storage: None,
+            oldest_loaded_rowid: None,
+            history_cap: storage::INITIAL_WINDOW as usize,
+            avatar_path: base.join("avatar.png"),
+            media_dir: base.join("media"),
         }
     }
 
@@ -169,5 +137,60 @@ impl AppState {
     /// Mutation de présence (pairs, frappe) : n'invalide que la barre latérale.
     pub fn bump_presence(&mut self) {
         self.presence_generation = self.presence_generation.wrapping_add(1);
+    }
+
+    /// Envoie une commande au thread de stockage (no-op sans stockage).
+    pub(crate) fn persist(&self, cmd: StorageCmd) {
+        if let Some(tx) = &self.storage {
+            let _ = tx.send(cmd);
+        }
+    }
+
+    /// Demande la page précédente de l'historique au thread de stockage.
+    /// Renvoie `false` s'il n'y a plus rien à charger (début de l'historique
+    /// atteint ou fenêtre mémoire pleine).
+    pub fn request_older_messages(&self) -> bool {
+        if self.messages.len() >= Self::MAX_WINDOW {
+            return false;
+        }
+        let Some(before_rowid) = self.oldest_loaded_rowid else {
+            return false;
+        };
+        if self.storage.is_none() {
+            return false;
+        }
+        self.persist(StorageCmd::LoadOlder { before_rowid });
+        true
+    }
+
+    /// Insère une page d'historique plus ancienne en tête de la fenêtre
+    /// mémoire (résultat de [`Self::request_older_messages`]).
+    pub fn prepend_older_messages(
+        &mut self,
+        older: Vec<ChatMessage>,
+        oldest_rowid: Option<i64>,
+    ) {
+        self.oldest_loaded_rowid = oldest_rowid;
+        if older.is_empty() {
+            return;
+        }
+        self.history_cap = (self.history_cap + older.len()).min(Self::MAX_WINDOW);
+        self.messages.splice(0..0, older);
+        self.bump_content();
+    }
+
+    /// Flush synchrone du stockage (fermeture de l'application) : attend que
+    /// toutes les commandes en file soient écrites.
+    pub fn flush_storage(&self) {
+        if let Some(tx) = &self.storage {
+            let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(1);
+            if tx.send(StorageCmd::Flush(ack_tx)).is_ok() {
+                let _ = ack_rx.recv_timeout(std::time::Duration::from_secs(3));
+            }
+        }
+    }
+
+    pub(crate) fn history_cap(&self) -> usize {
+        self.history_cap
     }
 }

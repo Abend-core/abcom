@@ -31,8 +31,6 @@ fn main() -> anyhow::Result<()> {
             .unwrap_or_else(|_| "anonymous".to_string())
     });
 
-    let state = Arc::new(Mutex::new(app::AppState::new(username.clone())));
-
     // Contexte egui partagé avec les tâches de fond : renseigné au lancement
     // de l'UI, il permet de la réveiller à chaque événement (cf. notify.rs).
     let ui_ctx: notify::UiContext = Arc::new(std::sync::OnceLock::new());
@@ -49,20 +47,6 @@ fn main() -> anyhow::Result<()> {
 
     let media_dir = config::data_dir().join("media");
 
-    // GC du cache disque des médias (orphelins + plafond), hors chemin de
-    // démarrage : l'UI s'ouvre sans attendre le parcours du dossier.
-    {
-        let referenced: std::collections::HashSet<String> = state
-            .lock()
-            .unwrap()
-            .messages
-            .iter()
-            .filter_map(|m| m.media.as_ref().map(|x| x.id.clone()))
-            .collect();
-        let dir = media_dir.clone();
-        std::thread::spawn(move || app::media::gc_media_dir(dir, referenced));
-    }
-
     // Runtime tokio multi-thread — tourne en arrière-plan pendant qu'egui
     // occupe le thread principal. Deux workers suffisent largement : les
     // tâches sont du réseau/disque bufferisé, pas du calcul.
@@ -76,6 +60,27 @@ fn main() -> anyhow::Result<()> {
         notify::ui_channel::<message::AppEvent>(256, ui_ctx.clone(), &rt);
     let (media_offer_tx, media_offer_rx) =
         notify::ui_channel::<message::MediaStreamOffer>(16, ui_ctx.clone(), &rt);
+
+    // Stockage SQLite : ouverture (migration JSON au premier lancement),
+    // chargement de la fenêtre récente, puis thread d'écriture dédié.
+    let storage = app::Storage::open(&config::data_dir())
+        .map_err(|e| anyhow::anyhow!("ouverture du stockage : {e}"))?;
+    let loaded = storage.load_all(app::storage::INITIAL_WINDOW);
+    let referenced_media = storage.all_media_ids().unwrap_or_default();
+    let storage_tx = app::storage::spawn(storage, event_tx.clone());
+
+    let state = Arc::new(Mutex::new(app::AppState::new(
+        username.clone(),
+        loaded,
+        Some(storage_tx),
+    )));
+
+    // GC du cache disque des médias (orphelins + plafond), hors chemin de
+    // démarrage : l'UI s'ouvre sans attendre le parcours du dossier.
+    {
+        let dir = media_dir.clone();
+        std::thread::spawn(move || app::media::gc_media_dir(dir, referenced_media));
+    }
 
     rt.spawn(discovery::run(username.clone(), event_tx.clone()));
     rt.spawn(network::run_server(event_tx.clone()));

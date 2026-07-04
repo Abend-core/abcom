@@ -188,6 +188,22 @@ impl AbcomApp {
                 AppEvent::ReactionReceived(event) => {
                     s.apply_reaction_event(&event);
                 }
+                AppEvent::OlderMessagesLoaded {
+                    messages,
+                    oldest_rowid,
+                } => {
+                    // Page d'historique demandée par le scroll vers le haut :
+                    // préfixée à la fenêtre mémoire, la compensation d'offset
+                    // du fil évite tout saut visuel.
+                    if messages.is_empty() {
+                        // Début de l'historique atteint : ne plus rien attendre.
+                        self.chat_prepend_fix = None;
+                    } else {
+                        self.chat_visible_count += messages.len();
+                    }
+                    s.prepend_older_messages(messages, oldest_rowid);
+                    self.loading_older = false;
+                }
                 AppEvent::AvatarReceived(announce) => {
                     let from = announce.from.clone();
                     s.set_peer_avatar(announce.from, announce.png);
@@ -291,22 +307,5 @@ impl AbcomApp {
             }
         }
 
-        // Persistance débouncée : les mutations n'écrivent plus rien
-        // elles-mêmes ; au plus toutes les 2 s, un instantané des structures
-        // modifiées part vers un thread d'écriture. Le thread UI ne fait
-        // jamais de sérialisation ni d'I/O disque.
-        if self.last_persist_time.elapsed().as_secs_f32() >= 2.0 {
-            let job = {
-                let mut s = self.state.lock().unwrap();
-                if !s.dirty.any() {
-                    return;
-                }
-                self.last_persist_time = std::time::Instant::now();
-                s.take_persist_job()
-            };
-            if !job.is_empty() {
-                std::thread::spawn(move || job.write());
-            }
-        }
     }
 }
