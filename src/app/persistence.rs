@@ -1,18 +1,79 @@
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use super::AppState;
-use crate::message::{Group, PeerRecord, ReactionEntry};
+use crate::message::{ChatMessage, Group, PeerRecord, ReactionEntry};
+
+/// Écriture atomique via fichier temporaire.
+fn persist_json_atomic(path: &std::path::Path, json: &str) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json)?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+fn write_json<T: serde::Serialize>(path: &std::path::Path, value: &T, label: &str) {
+    match serde_json::to_string(value) {
+        Ok(json) => {
+            if let Err(e) = persist_json_atomic(path, &json) {
+                eprintln!("[app] Erreur écriture {}: {}", label, e);
+            }
+        }
+        Err(e) => eprintln!("[app] Erreur sérialisation {}: {}", label, e),
+    }
+}
+
+/// Instantané des structures modifiées, à écrire **hors du thread UI** (les
+/// données sont clonées sous verrou, la sérialisation et l'I/O se font dans
+/// un thread détaché, cf. `AbcomApp::periodic_tasks`).
+pub struct PersistJob {
+    messages: Option<(Vec<ChatMessage>, PathBuf)>,
+    read_counts: Option<(HashMap<String, usize>, PathBuf)>,
+    reactions: Option<(HashMap<u64, Vec<ReactionEntry>>, PathBuf)>,
+}
+
+impl PersistJob {
+    pub fn is_empty(&self) -> bool {
+        self.messages.is_none() && self.read_counts.is_none() && self.reactions.is_none()
+    }
+
+    /// Écrit l'instantané sur disque (appelé depuis un thread détaché).
+    pub fn write(self) {
+        if let Some((messages, path)) = self.messages {
+            write_json(&path, &messages, "messages.json");
+        }
+        if let Some((counts, path)) = self.read_counts {
+            write_json(&path, &counts, "read_counts.json");
+        }
+        if let Some((reactions, path)) = self.reactions {
+            write_json(&path, &reactions, "reactions.json");
+        }
+    }
+}
 
 impl AppState {
-    /// Écriture atomique via fichier temporaire
-    fn persist_json_atomic(&self, path: &std::path::Path, json: &str) -> std::io::Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, json)?;
-        std::fs::rename(&tmp, path)?;
-        Ok(())
+    /// Prélève un instantané des structures marquées dirty et efface les
+    /// marqueurs. Renvoyé au thread d'écriture ; `is_empty()` si rien à faire.
+    pub fn take_persist_job(&mut self) -> PersistJob {
+        let job = PersistJob {
+            messages: self
+                .dirty
+                .messages
+                .then(|| (self.messages.clone(), self.history_path.clone())),
+            read_counts: self
+                .dirty
+                .read_counts
+                .then(|| (self.read_counts.clone(), self.read_counts_path.clone())),
+            reactions: self
+                .dirty
+                .reactions
+                .then(|| (self.reactions.clone(), self.reactions_path.clone())),
+        };
+        self.dirty = super::DirtyFlags::default();
+        job
     }
 
     pub(super) fn load_messages(&mut self) {
@@ -67,36 +128,24 @@ impl AppState {
         }
     }
 
+    /// Écriture synchrone immédiate (sortie de l'application et tests) ; le
+    /// chemin nominal passe par [`AppState::take_persist_job`] (débouncé).
     pub(crate) fn save_messages(&self) {
-        if let Ok(json) = serde_json::to_string_pretty(&self.messages) {
-            if let Err(e) = self.persist_json_atomic(&self.history_path, &json) {
-                eprintln!("[app] Erreur écriture messages.json: {}", e);
-            }
-        }
+        write_json(&self.history_path, &self.messages, "messages.json");
     }
 
+    /// Écriture synchrone immédiate (sortie de l'application et tests).
     pub(crate) fn save_read_counts(&self) {
-        if let Ok(json) = serde_json::to_string_pretty(&self.read_counts) {
-            if let Err(e) = self.persist_json_atomic(&self.read_counts_path, &json) {
-                eprintln!("[app] Erreur écriture read_counts.json: {}", e);
-            }
-        }
+        write_json(&self.read_counts_path, &self.read_counts, "read_counts.json");
     }
 
     pub fn save_groups(&self) {
-        if let Ok(json) = serde_json::to_string_pretty(&self.groups) {
-            if let Err(e) = self.persist_json_atomic(&self.groups_path, &json) {
-                eprintln!("[app] Erreur écriture groups.json: {}", e);
-            }
-        }
+        write_json(&self.groups_path, &self.groups, "groups.json");
     }
 
+    /// Écriture synchrone immédiate (sortie de l'application et tests).
     pub(crate) fn save_reactions(&self) {
-        if let Ok(json) = serde_json::to_string_pretty(&self.reactions) {
-            if let Err(e) = self.persist_json_atomic(&self.reactions_path, &json) {
-                eprintln!("[app] Erreur écriture reactions.json: {}", e);
-            }
-        }
+        write_json(&self.reactions_path, &self.reactions, "reactions.json");
     }
 
     pub fn save_peer_records(&self) {

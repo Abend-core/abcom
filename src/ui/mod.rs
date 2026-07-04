@@ -25,7 +25,12 @@ mod media;
 mod reactions;
 mod settings;
 mod sidebar;
+mod snapshot;
 mod sound;
+
+/// Nombre de messages affichés au départ et pas de chargement du fenêtrage
+/// façon Discord (le fil charge 100 messages de plus en remontant).
+pub(crate) const CHAT_WINDOW_STEP: usize = 100;
 
 /// Emojis de réaction par défaut proposés avant tout historique d'usage,
 /// façon Discord.
@@ -118,7 +123,6 @@ pub(crate) struct AbcomApp {
     pub(crate) emoji_alias_to_char: std::collections::HashMap<String, String>,
     pub(crate) emoji_aliases: Vec<String>,
     pub(crate) shortcode_selected: usize,
-    pub(crate) last_cleanup_time: std::time::Instant,
     pub(crate) show_group_modal: bool,
     pub(crate) group_name_input: String,
     pub(crate) group_members_selected: std::collections::HashSet<String>,
@@ -162,6 +166,40 @@ pub(crate) struct AbcomApp {
     pub(crate) recent_reaction_emojis: Vec<String>,
     /// Message ciblé par une réponse en cours de composition (None = aucune).
     pub(crate) replying_to: Option<ReplyTarget>,
+    /// Message vers lequel faire défiler le fil au prochain rendu (clic sur
+    /// une citation de réponse, façon Discord).
+    pub(crate) scroll_to_message: Option<u64>,
+    /// Message brièvement surligné après un saut (flash qui s'estompe).
+    pub(crate) highlight_message: Option<(u64, std::time::Instant)>,
+    /// Des pairs sont en train d'écrire (instantané mis à jour par
+    /// `process_events`) : impose un repaint de repli court pour faire
+    /// expirer l'indicateur même sans nouvel événement réseau.
+    pub(crate) typing_active: bool,
+    /// Dernier mode sombre effectivement appliqué à egui (évite de
+    /// reconstruire les `Visuals` à chaque frame).
+    pub(crate) applied_dark_mode: Option<bool>,
+    /// Dernière écriture débouncée de la persistance (cf. `periodic_tasks`).
+    pub(crate) last_persist_time: std::time::Instant,
+    /// Cache dérivé du fil (lignes pré-calculées, markdown memoïsé).
+    pub(crate) chat_cache: snapshot::ChatCache,
+    /// Cache dérivé de la barre latérale et de la barre de saisie.
+    pub(crate) sidebar_cache: snapshot::SidebarCache,
+    /// Fenêtrage du fil : nombre de messages rendus (les plus récents).
+    pub(crate) chat_visible_count: usize,
+    /// Hauteur de contenu avant extension de la fenêtre : sert à compenser
+    /// l'offset de scroll à la frame suivante (pas de saut visuel).
+    pub(crate) chat_prepend_fix: Option<f32>,
+    /// Le picker GIF était ouvert à la frame précédente (détection de la
+    /// fermeture pour libérer les aperçus du cache d'images egui).
+    pub(crate) gif_picker_was_open: bool,
+    /// URLs des GIFs actuellement dans le fil rendu : celles qui en sortent
+    /// (changement de conversation, drain) sont retirées du cache d'images.
+    pub(crate) known_gif_urls: std::collections::HashSet<String>,
+    /// Ordre d'accès des textures médias (éviction LRU, cf. `media_texture`).
+    pub(crate) media_texture_lru: Vec<String>,
+    /// Texture pleine résolution de la visionneuse, libérée à sa fermeture
+    /// (le fil n'affiche que des textures réduites).
+    pub(crate) viewer_texture: Option<(String, egui::TextureHandle)>,
 }
 
 impl AbcomApp {
@@ -221,7 +259,6 @@ impl AbcomApp {
             emoji_alias_to_char: std::collections::HashMap::new(),
             emoji_aliases: Vec::new(),
             shortcode_selected: 0,
-            last_cleanup_time: std::time::Instant::now(),
             show_group_modal: false,
             group_name_input: String::new(),
             group_members_selected: std::collections::HashSet::new(),
@@ -250,6 +287,19 @@ impl AbcomApp {
                 .map(|s| s.to_string())
                 .collect(),
             replying_to: None,
+            scroll_to_message: None,
+            highlight_message: None,
+            typing_active: false,
+            applied_dark_mode: None,
+            last_persist_time: std::time::Instant::now(),
+            chat_cache: snapshot::ChatCache::default(),
+            sidebar_cache: snapshot::SidebarCache::default(),
+            chat_visible_count: CHAT_WINDOW_STEP,
+            chat_prepend_fix: None,
+            gif_picker_was_open: false,
+            known_gif_urls: std::collections::HashSet::new(),
+            media_texture_lru: Vec::new(),
+            viewer_texture: None,
         }
     }
 
@@ -332,9 +382,30 @@ impl eframe::App for AbcomApp {
         self.process_media_offers();
         self.periodic_tasks();
 
+        // Rafraîchit les caches dérivés si l'état a changé (génération) —
+        // sinon la frame se rend sans reprendre le verrou ni rien re-dériver.
+        {
+            let s = self.state.lock().unwrap();
+            self.sidebar_cache.refresh(&s);
+            let rebuilt = self.chat_cache.refresh(&s, self.ui_language, &self.emoji_map);
+            drop(s);
+            if let Some(conv_changed) = rebuilt {
+                if conv_changed {
+                    self.chat_visible_count = CHAT_WINDOW_STEP;
+                    self.chat_prepend_fix = None;
+                }
+                // Les GIFs sortis du fil (changement de conversation ou
+                // expiration du ring-buffer) libèrent leurs frames décodées.
+                for url in self.known_gif_urls.difference(&self.chat_cache.gif_urls) {
+                    ctx.forget_image(url);
+                }
+                self.known_gif_urls = self.chat_cache.gif_urls.clone();
+            }
+        }
+
         // Flash barre des tâches si message non lu — réinitialisé une seule fois
         // quand la fenêtre reprend le focus (pas d'envoi répété en boucle).
-        if self.has_unread && ctx.input(|i| i.focused) {
+        if self.has_unread && self.window_focused {
             self.has_unread = false;
             ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
                 egui::UserAttentionType::Reset,
@@ -419,7 +490,33 @@ impl eframe::App for AbcomApp {
         self.render_settings(ctx);
         self.show_media_viewer(ctx);
 
-        ctx.request_repaint_after(Duration::from_millis(500));
+        // Repaint de repli : les événements réseau réveillent déjà l'UI
+        // (cf. notify.rs), il ne reste à couvrir que les états transitoires
+        // à expiration temporelle. Au repos : une frame toutes les 5 s
+        // (nettoyage des pairs inactifs), soit un CPU/GPU quasi nul.
+        let fallback = if self.last_notification.is_some() || self.highlight_message.is_some() {
+            Duration::from_millis(500) // expiration notification / flash de surlignage
+        } else if self.typing_active {
+            Duration::from_secs(1) // expiration de l'indicateur « écrit… »
+        } else {
+            Duration::from_secs(5) // tick periodic_tasks
+        };
+        ctx.request_repaint_after(fallback);
+    }
+
+    /// Flush final de la persistance débouncée : tout ce qui est encore
+    /// marqué dirty est écrit de façon synchrone avant la fermeture.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        let s = self.state.lock().unwrap();
+        if s.dirty.messages {
+            s.save_messages();
+        }
+        if s.dirty.read_counts {
+            s.save_read_counts();
+        }
+        if s.dirty.reactions {
+            s.save_reactions();
+        }
     }
 }
 
@@ -481,6 +578,7 @@ fn app_icon_data() -> Option<egui::IconData> {
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     state: Arc<Mutex<AppState>>,
+    ui_ctx: crate::notify::UiContext,
     event_rx: mpsc::Receiver<AppEvent>,
     send_tx: mpsc::Sender<SendRequest>,
     send_group_tx: mpsc::Sender<SendGroupRequest>,
@@ -509,7 +607,10 @@ pub fn run(
     eframe::run_native(
         "Abcom",
         options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
+            // Publie le contexte egui vers les tâches de fond : chaque
+            // événement relayé peut désormais réveiller la boucle de rendu.
+            let _ = ui_ctx.set(cc.egui_ctx.clone());
             cc.egui_ctx.set_fonts(build_fonts());
             // Loaders d'images egui_extras : HTTP (récupération depuis le CDN
             // Klipy) + décodage GIF/WebP animés pour les vignettes et le fil.

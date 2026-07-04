@@ -180,7 +180,9 @@ pub enum GifStatus {
 
 #[derive(Default)]
 pub struct GifFeedState {
-    pub items: Vec<GifItem>,
+    /// Items partagés avec l'UI via `Arc` : l'affichage par frame clone un
+    /// pointeur, pas la liste.
+    pub items: Arc<Vec<GifItem>>,
     pub status: GifStatus,
     pub query: String,
     pub page: u32,
@@ -262,7 +264,13 @@ impl GifFeed {
             s.generation += 1;
             s.status = GifStatus::Loading;
             if replace {
-                s.items.clear();
+                // Libère les frames décodées des anciens aperçus du cache
+                // d'images egui — sans quoi chaque recherche empile ses
+                // aperçus animés en mémoire pour toute la session.
+                for item in s.items.iter() {
+                    ctx.forget_image(&item.preview_url);
+                }
+                s.items = Arc::new(Vec::new());
             }
             s.generation
         };
@@ -276,7 +284,9 @@ impl GifFeed {
             match result {
                 Ok(resp) if resp.ok => match parse(&resp.bytes) {
                     Ok((items, has_next)) => {
-                        s.items.extend(items);
+                        let mut merged = (*s.items).clone();
+                        merged.extend(items);
+                        s.items = Arc::new(merged);
                         s.has_next = has_next;
                         s.status = GifStatus::Loaded;
                     }

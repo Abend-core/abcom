@@ -34,7 +34,14 @@ pub(crate) fn load_normalized_avatar(path: &Path) -> anyhow::Result<Vec<u8>> {
         .and_then(|e| e.to_str())
         .is_some_and(|e| e.eq_ignore_ascii_case("svg"));
     let image = if is_svg {
-        rasterize_svg(&std::fs::read(path)?)?
+        #[cfg(feature = "avatar-svg")]
+        {
+            rasterize_svg(&std::fs::read(path)?)?
+        }
+        #[cfg(not(feature = "avatar-svg"))]
+        {
+            anyhow::bail!("support SVG non compilé (feature `avatar-svg`)")
+        }
     } else {
         image::open(path)?
     };
@@ -48,6 +55,7 @@ pub(crate) fn load_normalized_avatar(path: &Path) -> anyhow::Result<Vec<u8>> {
 }
 
 /// Rasterise un SVG en image RGBA via resvg/usvg, à sa taille intrinsèque.
+#[cfg(feature = "avatar-svg")]
 fn rasterize_svg(data: &[u8]) -> anyhow::Result<image::DynamicImage> {
     let tree = resvg::usvg::Tree::from_data(data, &resvg::usvg::Options::default())?;
     let size = tree.size().to_int_size();

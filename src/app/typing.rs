@@ -4,15 +4,20 @@ use std::time::SystemTime;
 impl AppState {
     pub fn set_user_typing(&mut self, username: String) {
         self.typing_users.insert(username, SystemTime::now());
+        self.bump_presence();
     }
 
     pub fn clear_typing_if_old(&mut self) {
         let now = SystemTime::now();
+        let before = self.typing_users.len();
         self.typing_users.retain(|_, time| {
             now.duration_since(*time)
                 .map(|d| d.as_secs() < 3)
                 .unwrap_or(false)
         });
+        if self.typing_users.len() != before {
+            self.bump_presence();
+        }
     }
 
     pub fn typing_users_list(&self) -> Vec<String> {

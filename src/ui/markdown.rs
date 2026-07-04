@@ -348,16 +348,37 @@ fn push_text(spans: &mut Vec<MarkdownSpan>, text: &str) {
     }
 }
 
-pub(crate) fn render_message_markdown(
-    ui: &mut egui::Ui,
+/// Résultat du parse d'un message, mis en cache par le fil (le parse ne se
+/// fait qu'une fois par message, pas à chaque frame).
+#[derive(Clone, Debug)]
+pub(crate) struct ParsedMarkdown {
+    pub(crate) blocks: Vec<MarkdownBlock>,
+    pub(crate) emoji_only: bool,
+}
+
+/// Parse un message : blocs markdown + détection « uniquement des emojis »
+/// (affichés en grand dans ce cas, façon Discord).
+pub(crate) fn parse_message(
     text: &str,
+    emoji_map: &std::collections::HashMap<String, usize>,
+) -> ParsedMarkdown {
+    ParsedMarkdown {
+        blocks: parse_markdown(text),
+        emoji_only: is_text_emoji_only(text, emoji_map),
+    }
+}
+
+/// Rend des blocs déjà parsés (chemin chaud du fil : aucune allocation de
+/// parse par frame).
+pub(crate) fn render_parsed_markdown(
+    ui: &mut egui::Ui,
+    parsed: &ParsedMarkdown,
     emoji_map: &std::collections::HashMap<String, usize>,
     emoji_textures: &[(String, egui::TextureHandle)],
 ) {
-    let is_emoji_only = is_text_emoji_only(text, emoji_map);
-    let emoji_size = if is_emoji_only { 44.0 } else { 22.0 };
+    let emoji_size = if parsed.emoji_only { 44.0 } else { 22.0 };
 
-    for block in parse_markdown(text) {
+    for block in &parsed.blocks {
         match block {
             MarkdownBlock::Blank => {
                 ui.add_space(6.0);

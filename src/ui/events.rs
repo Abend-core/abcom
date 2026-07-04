@@ -257,6 +257,7 @@ impl AbcomApp {
             }
         }
         s.clear_typing_if_old();
+        self.typing_active = !s.typing_users.is_empty();
     }
 
     /// Récupère les offres de médias volumineux (> 1 Go) en attente d'accord et
@@ -277,19 +278,34 @@ impl AbcomApp {
         }
     }
 
-    /// Tâches périodiques : nettoyage des pairs inactifs et retry ACK
+    /// Tâches périodiques : retry ACK et écriture débouncée de la
+    /// persistance (hors thread UI). La présence des pairs n'est plus
+    /// vérifiée ici : la tâche discovery est autoritaire et émet
+    /// `PeerDisconnected` (l'UI n'est réveillée que sur changement).
     pub(crate) fn periodic_tasks(&mut self) {
-        if self.last_cleanup_time.elapsed().as_secs() >= 5 {
-            self.last_cleanup_time = std::time::Instant::now();
-            let mut s = self.state.lock().unwrap();
-            s.cleanup_inactive_peers(10);
-        }
-
         if self.last_retry_time.elapsed().as_secs_f32() >= 2.0 {
             self.last_retry_time = std::time::Instant::now();
             let retry_messages = self.state.lock().unwrap().get_retry_messages();
             for (_hash, addr) in retry_messages {
                 eprintln!("[ui] Retry message delivery vers {}", addr);
+            }
+        }
+
+        // Persistance débouncée : les mutations n'écrivent plus rien
+        // elles-mêmes ; au plus toutes les 2 s, un instantané des structures
+        // modifiées part vers un thread d'écriture. Le thread UI ne fait
+        // jamais de sérialisation ni d'I/O disque.
+        if self.last_persist_time.elapsed().as_secs_f32() >= 2.0 {
+            let job = {
+                let mut s = self.state.lock().unwrap();
+                if !s.dirty.any() {
+                    return;
+                }
+                self.last_persist_time = std::time::Instant::now();
+                s.take_persist_job()
+            };
+            if !job.is_empty() {
+                std::thread::spawn(move || job.write());
             }
         }
     }

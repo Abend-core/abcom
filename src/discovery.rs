@@ -73,8 +73,10 @@ pub async fn run(username: String, tx: Sender<AppEvent>) {
     let mut tick_cleanup = interval(Duration::from_secs(CLEANUP_INTERVAL));
     let mut buf = vec![0u8; 1024];
 
-    // Tracker les timestamps des peers découverts
+    // Tracker les timestamps et adresses des peers découverts (la fraîcheur
+    // est gérée ici : l'UI n'est réveillée que sur changement d'état).
     let mut peer_timestamps: HashMap<String, u64> = HashMap::new();
+    let mut peer_addrs: HashMap<String, SocketAddr> = HashMap::new();
 
     loop {
         tokio::select! {
@@ -98,6 +100,7 @@ pub async fn run(username: String, tx: Sender<AppEvent>) {
 
                 for username in disconnected {
                     peer_timestamps.remove(&username);
+                    peer_addrs.remove(&username);
                     let _ = tx.send(AppEvent::PeerDisconnected { username }).await;
                 }
             }
@@ -111,16 +114,22 @@ pub async fn run(username: String, tx: Sender<AppEvent>) {
                                 .unwrap_or_default()
                                 .as_secs();
 
-                            peer_timestamps.insert(pkt.username.clone(), now);
-
                             // Adresse TCP du pair = IP source + port de chat annoncé
                             let tcp_addr = SocketAddr::new(addr.ip(), pkt.port);
 
-                            // On envoie PeerDiscovered à chaque fois, l'UI gère les doublons
-                            let _ = tx.send(AppEvent::PeerDiscovered {
-                                username: pkt.username,
-                                addr: tcp_addr,
-                            }).await;
+                            // N'émettre PeerDiscovered que sur changement réel
+                            // (nouveau pair, adresse changée, retour après
+                            // déconnexion) : chaque événement réveille l'UI,
+                            // les annonces périodiques ne doivent pas.
+                            let is_new = peer_timestamps.insert(pkt.username.clone(), now).is_none();
+                            let addr_changed = peer_addrs.insert(pkt.username.clone(), tcp_addr)
+                                != Some(tcp_addr);
+                            if is_new || addr_changed {
+                                let _ = tx.send(AppEvent::PeerDiscovered {
+                                    username: pkt.username,
+                                    addr: tcp_addr,
+                                }).await;
+                            }
                         }
                     }
                 }

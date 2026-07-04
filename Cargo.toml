@@ -11,7 +11,15 @@ name = "abcom"
 path = "src/main.rs"
 
 [dependencies]
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "net",
+    "time",
+    "sync",
+    "io-util",
+    "fs",
+    "macros",
+] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 eframe = "0.31"
@@ -25,11 +33,25 @@ image = { version = "0.25", default-features = false, features = ["png", "jpeg",
 rfd = "0.15"
 walkdir = "2"
 socket2 = { version = "0.5", features = ["all"] }
-resvg = "0.47.0"
+resvg = { version = "0.47.0", optional = true }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+
+[features]
+default = []
+# Import d'un avatar SVG (rasterisation via resvg — dépendance lourde,
+# désactivée par défaut : binaire et compilation nettement plus légers).
+avatar-svg = ["dep:resvg"]
 
 [target.'cfg(windows)'.dependencies]
 rodio = { version = "0.19", default-features = false, features = ["symphonia-wav"] }
 
 [target.'cfg(not(windows))'.dependencies]
 rodio = { version = "0.19", default-features = false }
+
+# Binaire compact et rapide : LTO inter-crates, une seule unité de codegen,
+# symboles retirés, pas de tables de déroulement de panique.
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true
+panic = "abort"
