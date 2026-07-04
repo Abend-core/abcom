@@ -1,14 +1,16 @@
-//! Streaming des médias par morceaux (disque à disque, sans charger le fichier
-//! en mémoire), ce qui vaut aussi bien pour quelques Ko que pour plusieurs Go.
+//! Streaming des médias par morceaux (disque à disque, sans charger le
+//! fichier en mémoire), sur une connexion **chiffrée Noise XX** dédiée au
+//! transfert.
 //!
 //! Protocole : l'émetteur se connecte au port média du destinataire
-//! (`chat_port + 1`), envoie un en-tête (`u32` de longueur + JSON
-//! [`MediaStreamHeader`]) puis les octets du fichier. Pour les médias > 1 Go,
-//! l'en-tête porte `requires_ack` et le destinataire renvoie un octet
-//! d'acceptation (1) ou de refus (0) avant toute écriture.
+//! (`chat_port + 1`), fait le handshake Noise + échange Hello (TOFU), envoie
+//! l'en-tête JSON [`MediaStreamHeader`] puis les chunks du fichier en
+//! messages chiffrés. Pour les médias > 1 Go, l'en-tête porte `requires_ack`
+//! et le destinataire renvoie un octet d'acceptation (1) ou de refus (0)
+//! avant tout envoi de données.
 
-use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -19,45 +21,18 @@ use tokio::sync::oneshot;
 use crate::config;
 use crate::message::{AppEvent, MediaProgress, MediaSendJob, MediaStreamHeader, MediaStreamOffer};
 
-const BUFFER_SIZE: usize = 64 * 1024;
-const MAX_HEADER_BYTES: usize = 1024 * 1024;
+use super::secure::{exchange_hello, handshake_initiator, handshake_responder, SecureStream, Trust};
+use super::NetContext;
+
+/// Taille d'un chunk de fichier : tient dans un seul message Noise
+/// (65 535 octets max, tag AEAD et en-tête de longueur déduits).
+const BUFFER_SIZE: usize = 60 * 1024;
 const DECISION_TIMEOUT: Duration = Duration::from_secs(120);
 /// Intervalle minimal entre deux événements de progression vers l'UI.
-/// Sans ce throttle, un événement partait par chunk de 64 Ko (~16 000/Go) :
-/// le canal mpsc (256 places) saturait et le `send().await` mettait le
-/// transfert lui-même en attente de la boucle de rendu.
+/// Sans ce throttle, un événement partait par chunk (~17 000/Go) : le canal
+/// mpsc (256 places) saturait et le `send().await` mettait le transfert
+/// lui-même en attente de la boucle de rendu.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
-
-/// Émetteur de progression throttlé : relaie au plus un événement par
-/// [`PROGRESS_INTERVAL`], plus systématiquement le dernier (fin de transfert).
-struct ProgressReporter {
-    last_emit: Option<std::time::Instant>,
-}
-
-impl ProgressReporter {
-    fn new() -> Self {
-        Self { last_emit: None }
-    }
-
-    async fn report(
-        &mut self,
-        tx: &Sender<AppEvent>,
-        id: &str,
-        done: u64,
-        total: u64,
-        finished: bool,
-    ) {
-        let now = std::time::Instant::now();
-        let due = match self.last_emit {
-            None => true,
-            Some(prev) => now.duration_since(prev) >= PROGRESS_INTERVAL,
-        };
-        if finished || due {
-            self.last_emit = Some(now);
-            let _ = tx.send(progress(id, done, total, finished)).await;
-        }
-    }
-}
 
 fn to_io(e: impl std::fmt::Display) -> std::io::Error {
     std::io::Error::other(e.to_string())
@@ -97,40 +72,86 @@ fn failed(id: &str, total: u64) -> AppEvent {
     })
 }
 
+/// Émetteur de progression throttlé : relaie au plus un événement par
+/// [`PROGRESS_INTERVAL`], plus systématiquement le dernier (fin de transfert).
+struct ProgressReporter {
+    last_emit: Option<std::time::Instant>,
+}
+
+impl ProgressReporter {
+    fn new() -> Self {
+        Self { last_emit: None }
+    }
+
+    async fn report(
+        &mut self,
+        tx: &Sender<AppEvent>,
+        id: &str,
+        done: u64,
+        total: u64,
+        finished: bool,
+    ) {
+        let now = std::time::Instant::now();
+        let due = match self.last_emit {
+            None => true,
+            Some(prev) => now.duration_since(prev) >= PROGRESS_INTERVAL,
+        };
+        if finished || due {
+            self.last_emit = Some(now);
+            let _ = tx.send(progress(id, done, total, finished)).await;
+        }
+    }
+}
+
 /// Émetteur : pour chaque tâche, streame le fichier vers le destinataire.
-pub async fn run_media_sender(mut rx: Receiver<MediaSendJob>, event_tx: Sender<AppEvent>) {
+pub async fn run_media_sender(mut rx: Receiver<MediaSendJob>, ctx: Arc<NetContext>) {
     while let Some(job) = rx.recv().await {
-        let event_tx = event_tx.clone();
+        let ctx = ctx.clone();
         tokio::spawn(async move {
             let id = job.header.media.id.clone();
             let total = job.header.media.size_bytes;
-            if let Err(e) = stream_out(&job, &event_tx).await {
+            if let Err(e) = stream_out(&job, &ctx).await {
                 eprintln!("[media] envoi échoué ({}): {}", id, e);
-                let _ = event_tx.send(failed(&id, total)).await;
+                let _ = ctx.event_tx.send(failed(&id, total)).await;
             }
         });
     }
 }
 
-async fn stream_out(job: &MediaSendJob, event_tx: &Sender<AppEvent>) -> std::io::Result<()> {
+/// Établit la connexion média chiffrée vers `addr` (handshake + Hello + TOFU).
+async fn connect_secure(
+    addr: std::net::SocketAddr,
+    ctx: &NetContext,
+) -> std::io::Result<SecureStream> {
+    let mut stream = TcpStream::connect(addr).await?;
+    let (transport, remote_key) = handshake_initiator(&mut stream, &ctx.identity).await?;
+    let mut secure = SecureStream::new(stream, transport);
+    let peer = exchange_hello(&mut secure, &ctx.username, true).await?;
+    if ctx.trust.verify_and_pin(&peer, &remote_key) == Trust::Mismatch {
+        ctx.report_key_mismatch(&peer).await;
+        return Err(to_io("clé du pair inattendue (TOFU)"));
+    }
+    Ok(secure)
+}
+
+async fn stream_out(job: &MediaSendJob, ctx: &NetContext) -> std::io::Result<()> {
     // Port média du destinataire = son port de chat + 1 (cf. config::media_port).
-    let media_addr = SocketAddr::new(job.to_addr.ip(), job.to_addr.port() + 1);
+    let media_addr = std::net::SocketAddr::new(job.to_addr.ip(), job.to_addr.port() + 1);
     let id = &job.header.media.id;
     let total = job.header.media.size_bytes;
+    let event_tx = &ctx.event_tx;
 
-    let mut stream = TcpStream::connect(media_addr).await?;
+    let mut secure = connect_secure(media_addr, ctx).await?;
     let header = serde_json::to_vec(&job.header).map_err(to_io)?;
-    stream.write_u32(header.len() as u32).await?;
-    stream.write_all(&header).await?;
-    stream.flush().await?;
+    secure.send(&header).await?;
 
     if job.header.requires_ack {
         // Côté émetteur : « en attente d'envoi » tant que le destinataire n'a
         // pas répondu.
         let _ = event_tx.send(waiting(id, total)).await;
         let accepted = matches!(
-            tokio::time::timeout(DECISION_TIMEOUT, stream.read_u8()).await,
-            Ok(Ok(1))
+            tokio::time::timeout(DECISION_TIMEOUT, secure.recv()).await,
+            Ok(Ok(reply)) if reply == [1]
         );
         if !accepted {
             // Refus (ou absence de réponse) : on annote le fil côté émetteur.
@@ -150,19 +171,18 @@ async fn stream_out(job: &MediaSendJob, event_tx: &Sender<AppEvent>) -> std::io:
         if read == 0 {
             break;
         }
-        stream.write_all(&buffer[..read]).await?;
+        secure.send(&buffer[..read]).await?;
         sent += read as u64;
         reporter.report(event_tx, id, sent, total, false).await;
     }
-    stream.flush().await?;
-    stream.shutdown().await?;
     reporter.report(event_tx, id, total, total, true).await;
     Ok(())
 }
 
-/// Serveur : reçoit les flux média entrants et les écrit dans `media/<id>`.
+/// Serveur : reçoit les flux média entrants (chiffrés) et les écrit dans
+/// `media/<id>`.
 pub async fn run_media_server(
-    event_tx: Sender<AppEvent>,
+    ctx: Arc<NetContext>,
     offer_tx: Sender<MediaStreamOffer>,
     media_dir: PathBuf,
 ) {
@@ -176,11 +196,11 @@ pub async fn run_media_server(
 
     loop {
         if let Ok((stream, _)) = listener.accept().await {
-            let event_tx = event_tx.clone();
+            let ctx = ctx.clone();
             let offer_tx = offer_tx.clone();
             let media_dir = media_dir.clone();
             tokio::spawn(async move {
-                if let Err(e) = stream_in(stream, event_tx, offer_tx, media_dir).await {
+                if let Err(e) = stream_in(stream, ctx, offer_tx, media_dir).await {
                     eprintln!("[media] réception échouée: {}", e);
                 }
             });
@@ -190,17 +210,21 @@ pub async fn run_media_server(
 
 async fn stream_in(
     mut stream: TcpStream,
-    event_tx: Sender<AppEvent>,
+    ctx: Arc<NetContext>,
     offer_tx: Sender<MediaStreamOffer>,
     media_dir: PathBuf,
 ) -> std::io::Result<()> {
-    let header_len = stream.read_u32().await? as usize;
-    if header_len == 0 || header_len > MAX_HEADER_BYTES {
-        return Err(to_io("en-tête média de taille invalide"));
+    let (transport, remote_key) = handshake_responder(&mut stream, &ctx.identity).await?;
+    let mut secure = SecureStream::new(stream, transport);
+    let peer = exchange_hello(&mut secure, &ctx.username, false).await?;
+    if ctx.trust.verify_and_pin(&peer, &remote_key) == Trust::Mismatch {
+        ctx.report_key_mismatch(&peer).await;
+        return Err(to_io("clé du pair inattendue (TOFU)"));
     }
-    let mut header_bytes = vec![0u8; header_len];
-    stream.read_exact(&mut header_bytes).await?;
+
+    let header_bytes = secure.recv().await?;
     let header: MediaStreamHeader = serde_json::from_slice(&header_bytes).map_err(to_io)?;
+    let event_tx = ctx.event_tx.clone();
 
     // Médias volumineux : demander l'accord avant d'écrire le moindre octet.
     if header.requires_ack {
@@ -212,15 +236,14 @@ async fn stream_in(
             decision_tx,
         };
         if offer_tx.send(offer).await.is_err() {
-            let _ = stream.write_u8(0).await;
+            let _ = secure.send(&[0]).await;
             return Ok(());
         }
         let accepted = matches!(
             tokio::time::timeout(DECISION_TIMEOUT, decision_rx).await,
             Ok(Ok(true))
         );
-        stream.write_u8(u8::from(accepted)).await?;
-        stream.flush().await?;
+        secure.send(&[u8::from(accepted)]).await?;
         if !accepted {
             return Ok(());
         }
@@ -235,7 +258,7 @@ async fn stream_in(
 
     // En cas d'échec en cours de réception : on signale l'interruption (la carte
     // est retirée côté UI) et on supprime le fichier partiel.
-    if let Err(e) = receive_body(&mut stream, &media_dir, &path, &id, total, &event_tx).await {
+    if let Err(e) = receive_body(&mut secure, &media_dir, &path, &id, total, &event_tx).await {
         let _ = event_tx.send(failed(&id, total)).await;
         let _ = tokio::fs::remove_file(&path).await;
         return Err(e);
@@ -244,7 +267,7 @@ async fn stream_in(
 }
 
 async fn receive_body(
-    stream: &mut TcpStream,
+    secure: &mut SecureStream,
     media_dir: &std::path::Path,
     path: &std::path::Path,
     id: &str,
@@ -253,17 +276,15 @@ async fn receive_body(
 ) -> std::io::Result<()> {
     tokio::fs::create_dir_all(media_dir).await?;
     let mut file = tokio::fs::File::create(path).await?;
-    let mut buffer = vec![0u8; BUFFER_SIZE];
     let mut received = 0u64;
     let mut reporter = ProgressReporter::new();
     while received < total {
-        let to_read = std::cmp::min((total - received) as usize, buffer.len());
-        let read = stream.read(&mut buffer[..to_read]).await?;
-        if read == 0 {
+        let chunk = secure.recv().await?;
+        if chunk.is_empty() {
             return Err(to_io("fin de flux média prématurée"));
         }
-        file.write_all(&buffer[..read]).await?;
-        received += read as u64;
+        file.write_all(&chunk).await?;
+        received += chunk.len() as u64;
         reporter.report(event_tx, id, received, total, false).await;
     }
     file.flush().await?;

@@ -6,6 +6,7 @@ fn discovery_packet_round_trip() {
     let pkt = DiscoveryPacket {
         username: "alice".to_string(),
         port: 9000,
+        pubkey: "abcd".to_string(),
     };
     let json = serde_json::to_string(&pkt).unwrap();
     let decoded: DiscoveryPacket = serde_json::from_str(&json).unwrap();
