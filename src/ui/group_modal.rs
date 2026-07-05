@@ -12,6 +12,26 @@ pub(crate) enum GroupConfirmAction {
     Delete,
 }
 
+/// Petite croix peinte pour exclure un membre (glyphe « ✕ » non rendu de
+/// façon fiable par la police, voir `input_bar::chip_remove_button`).
+fn kick_button(ui: &mut egui::Ui) -> egui::Response {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let color = if resp.hovered() {
+            ui.visuals().widgets.hovered.fg_stroke.color
+        } else {
+            ui.visuals().widgets.inactive.fg_stroke.color
+        };
+        let stroke = egui::Stroke::new(1.6, color);
+        let c = rect.center();
+        let d = 5.0;
+        let p = ui.painter();
+        p.line_segment([c + egui::vec2(-d, -d), c + egui::vec2(d, d)], stroke);
+        p.line_segment([c + egui::vec2(d, -d), c + egui::vec2(-d, d)], stroke);
+    }
+    resp
+}
+
 /// Pastille de présence (vert = en ligne, rouge = hors ligne).
 fn presence_dot(ui: &mut egui::Ui, online: bool) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
@@ -281,7 +301,7 @@ impl AbcomApp {
         let lbl_you = self.tr("(vous)", "(you)");
         let lbl_kick = self.tr("Exclure ce membre", "Remove this member");
         let lbl_add_section = self.tr("Ajouter un membre", "Add a member");
-        let lbl_add = self.tr("＋ Ajouter", "＋ Add");
+        let lbl_add = self.tr("+ Ajouter", "+ Add");
         let lbl_leave = self.tr("🚪 Quitter le groupe", "🚪 Leave group");
         let lbl_delete = self.tr("🗑 Supprimer le groupe", "🗑 Delete group");
         let lbl_confirm = self.tr("Confirmer", "Confirm");
@@ -352,10 +372,7 @@ impl AbcomApp {
                                         ui.with_layout(
                                             egui::Layout::right_to_left(egui::Align::Center),
                                             |ui| {
-                                                if ui
-                                                    .small_button("✕")
-                                                    .on_hover_text(lbl_kick)
-                                                    .clicked()
+                                                if kick_button(ui).on_hover_text(lbl_kick).clicked()
                                                 {
                                                     kick = Some(member.clone());
                                                 }

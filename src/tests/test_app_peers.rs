@@ -138,6 +138,61 @@ fn test_peer_display_name_with_alias() {
 }
 
 #[test]
+fn test_restore_peers_from_history_ignores_group_messages() {
+    use crate::message::ChatMessage;
+
+    let mut s = state("alice");
+    // Message que « je » envoie dans un groupe : to_user porte la clé
+    // `#nomdugroupe`, ce n'est pas un pair.
+    s.messages.push(ChatMessage {
+        from: "alice".to_string(),
+        to_user: Some("#projet".to_string()),
+        content: "salut".to_string(),
+        timestamp: "12:00".to_string(),
+        timestamp_epoch: Some(0),
+        reply_to: None,
+        media: None,
+        nonce: None,
+    });
+    // Message privé légitime : doit toujours être restauré comme pair.
+    s.messages.push(ChatMessage {
+        from: "alice".to_string(),
+        to_user: Some("bob".to_string()),
+        content: "hey".to_string(),
+        timestamp: "12:01".to_string(),
+        timestamp_epoch: Some(0),
+        reply_to: None,
+        media: None,
+        nonce: None,
+    });
+
+    s.restore_peers_from_history();
+
+    assert!(
+        !s.peers.iter().any(|p| p.username == "#projet"),
+        "un groupe ne doit jamais apparaître dans la liste des pairs/conversations"
+    );
+    assert!(s.peers.iter().any(|p| p.username == "bob"));
+}
+
+#[test]
+fn test_toggle_pinned_persists_and_toggles() {
+    let mut s = state("alice");
+    assert!(!s.is_pinned("bob"));
+    s.toggle_pinned("bob");
+    assert!(s.is_pinned("bob"));
+    s.toggle_pinned("#projet");
+    assert!(s.is_pinned("#projet"));
+    assert!(
+        s.is_pinned("bob"),
+        "un second épinglage ne doit pas effacer le premier"
+    );
+    s.toggle_pinned("bob");
+    assert!(!s.is_pinned("bob"));
+    assert!(s.is_pinned("#projet"));
+}
+
+#[test]
 fn test_set_peer_alias_then_clear() {
     // new_with_base isole les écritures disque dans un répertoire temporaire
     let dir = std::env::temp_dir().join(format!("abcom_alias_{}", std::process::id()));
