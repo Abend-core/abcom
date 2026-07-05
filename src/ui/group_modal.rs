@@ -11,7 +11,7 @@ impl AbcomApp {
             return;
         }
 
-        let peers = self.state.lock().unwrap().peers.clone();
+        let peers = self.sidebar_cache.peers.clone();
         let all_peers: Vec<String> = peers.iter().map(|p| p.username.clone()).collect();
         let mut is_open = true;
 

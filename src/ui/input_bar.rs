@@ -52,6 +52,42 @@ fn attachment_label(path: &Path) -> String {
         .unwrap_or_else(|| path.display().to_string())
 }
 
+/// Chip de pièce jointe à largeur fixe : icône, nom tronqué (chemin complet
+/// en infobulle) et croix de retrait collée à droite. Renvoie `true` si la
+/// croix est cliquée. La largeur fixe permet une grille qui se replie sur
+/// plusieurs lignes sans jamais déborder.
+fn attachment_chip(ui: &mut egui::Ui, path: &Path, width: f32) -> bool {
+    let mut removed = false;
+    egui::Frame::default()
+        .fill(egui::Color32::from_rgb(66, 66, 70))
+        .corner_radius(egui::CornerRadius::same(8))
+        .inner_margin(egui::Margin::symmetric(8, 4))
+        .show(ui, |ui| {
+            ui.set_width(width - 16.0);
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 5.0;
+                ui.label(if path.is_dir() { "📁" } else { "📄" });
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if chip_remove_button(ui) {
+                        removed = true;
+                    }
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(attachment_label(path))
+                                    .small()
+                                    .color(egui::Color32::from_rgb(244, 245, 247)),
+                            )
+                            .truncate(),
+                        )
+                        .on_hover_text(path.display().to_string());
+                    });
+                });
+            });
+        });
+    removed
+}
+
 fn action_button_chrome(selected: bool) -> (egui::Color32, egui::Stroke) {
     let fill = if selected {
         egui::Color32::from_rgb(88, 122, 255)
@@ -291,6 +327,10 @@ fn prepare_and_stream(
         timestamp_epoch: header.timestamp_epoch,
         to_user: to_user.clone(),
         media: Some(media),
+        reply_to: None,
+        // Pas de nonce : le destinataire reconstruit ce message depuis
+        // MediaStreamHeader et doit retomber sur le même hash.
+        nonce: None,
     });
 
     for (_, addr) in targets {
@@ -337,6 +377,8 @@ fn send_current_message(
             timestamp_epoch: Some(now.timestamp() as u64),
             to_user: selected_peer_name.clone(),
             media: None,
+            reply_to: app.replying_to.as_ref().map(|r| r.message_hash),
+            nonce: Some(ChatMessage::fresh_nonce()),
         };
 
         {
@@ -405,6 +447,7 @@ fn send_current_message(
     app.input_has_focus = true;
     app.input_scroll_lines = 0.0;
     app.pending_attachments.clear();
+    app.replying_to = None;
 
     true
 }
@@ -413,14 +456,9 @@ impl AbcomApp {
     /// Barre de saisie en bas de fenêtre. Retourne `(emoji_cliqué, gif_cliqué)`
     /// pour piloter l'ouverture des sélecteurs respectifs.
     pub(crate) fn show_input_bar(&mut self, ctx: &egui::Context) -> (bool, bool) {
-        let selected_peer_online = {
-            let s = self.state.lock().unwrap();
-            match &s.selected_conversation {
-                None => true,
-                Some(conv) if conv.starts_with('#') => true,
-                Some(u) => s.is_peer_online(u),
-            }
-        };
+        // Présence et frappe lues depuis le cache dérivé : aucune prise de
+        // verrou par frame dans la barre de saisie.
+        let selected_peer_online = self.sidebar_cache.selected_peer_online;
 
         if !selected_peer_online {
             egui::TopBottomPanel::bottom("input_panel")
@@ -443,7 +481,7 @@ impl AbcomApp {
         let mut emoji_button_clicked = false;
         let mut gif_button_clicked = false;
         let mut picker_action: Option<AttachmentMenuAction> = None;
-        let typing_list = self.state.lock().unwrap().typing_users_list();
+        let typing_list = self.sidebar_cache.typing.clone();
         let add_files_label = self.tr("Ajouter des fichiers", "Add files");
         let add_folder_label = self.tr("Ajouter un dossier", "Add folder");
 
@@ -459,42 +497,199 @@ impl AbcomApp {
                     .inner_margin(egui::Margin::symmetric(10, 8))
                     .show(ui, |ui| {
                         ui.vertical(|ui| {
-                            if !self.pending_attachments.is_empty() {
-                                ui.horizontal_wrapped(|ui| {
-                                    ui.spacing_mut().item_spacing = egui::vec2(6.0, 6.0);
-                                    let mut remove_index = None;
-                                    for (index, path) in self.pending_attachments.iter().enumerate()
-                                    {
-                                        egui::Frame::default()
-                                            .fill(egui::Color32::from_rgba_unmultiplied(
-                                                255, 255, 255, 24,
-                                            ))
-                                            .corner_radius(egui::CornerRadius::same(10))
-                                            .inner_margin(egui::Margin::symmetric(8, 4))
-                                            .show(ui, |ui| {
-                                                ui.horizontal(|ui| {
-                                                    ui.label(if path.is_dir() {
-                                                        "📁"
-                                                    } else {
-                                                        "📄"
-                                                    });
-                                                    ui.label(
-                                                        egui::RichText::new(attachment_label(path))
-                                                            .color(egui::Color32::from_rgb(
-                                                                244, 245, 247,
-                                                            ))
-                                                            .small(),
-                                                    );
+                            // Aperçu de réponse : extrait les données possédées
+                            // avant tout appel `&mut self` (chargement de
+                            // texture), pour ne pas garder `self.replying_to`
+                            // emprunté pendant l'appel.
+                            let reply_preview = self.replying_to.as_ref().map(|r| {
+                                (
+                                    r.author.clone(),
+                                    r.content_snippet.clone(),
+                                    r.media_thumb.clone(),
+                                )
+                            });
+                            if let Some((author, snippet, media)) = reply_preview {
+                                let reply_to_label = self.tr("Répondre à", "Replying to");
+                                let texture = media
+                                    .as_ref()
+                                    .filter(|m| m.kind == crate::message::MediaKind::Image)
+                                    .and_then(|m| self.media_texture(ctx, &m.id));
+                                // Bandeau façon Discord : liseré d'accent,
+                                // « Répondre à » discret, nom en gras, extrait
+                                // tronqué, croix collée à droite.
+                                egui::Frame::default()
+                                    .fill(egui::Color32::from_rgb(52, 53, 58))
+                                    .corner_radius(egui::CornerRadius::same(10))
+                                    .inner_margin(egui::Margin::symmetric(10, 6))
+                                    .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 6.0;
+                                            let (accent, _) = ui.allocate_exact_size(
+                                                egui::vec2(3.0, 16.0),
+                                                egui::Sense::hover(),
+                                            );
+                                            ui.painter().rect_filled(
+                                                accent,
+                                                2.0,
+                                                egui::Color32::from_rgb(88, 101, 242),
+                                            );
+                                            ui.label(
+                                                egui::RichText::new(reply_to_label)
+                                                    .small()
+                                                    .color(egui::Color32::from_gray(160)),
+                                            );
+                                            ui.label(
+                                                egui::RichText::new(&author)
+                                                    .small()
+                                                    .color(egui::Color32::from_rgb(100, 180, 255))
+                                                    .family(egui::FontFamily::Name(
+                                                        super::BOLD_FAMILY.into(),
+                                                    )),
+                                            );
+                                            if media.is_some() {
+                                                super::media::render_reply_thumb(
+                                                    ui,
+                                                    texture.as_ref(),
+                                                    20.0,
+                                                );
+                                            }
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
                                                     if chip_remove_button(ui) {
-                                                        remove_index = Some(index);
+                                                        self.replying_to = None;
                                                     }
-                                                });
+                                                    ui.add_space(4.0);
+                                                    ui.with_layout(
+                                                        egui::Layout::left_to_right(
+                                                            egui::Align::Center,
+                                                        ),
+                                                        |ui| {
+                                                            ui.add(
+                                                                egui::Label::new(
+                                                                    egui::RichText::new(&snippet)
+                                                                        .small()
+                                                                        .color(
+                                                                            egui::Color32::from_gray(
+                                                                                150,
+                                                                            ),
+                                                                        ),
+                                                                )
+                                                                .truncate(),
+                                                            );
+                                                        },
+                                                    );
+                                                },
+                                            );
+                                        });
+                                    });
+                                ui.add_space(6.0);
+                            }
+
+                            if !self.pending_attachments.is_empty() {
+                                // Bandeau uniforme avec l'aperçu de réponse :
+                                // même fond, même liseré d'accent, croix par
+                                // pièce, boutons d'ajout, liste qui s'étend
+                                // (défilement au-delà de quelques lignes).
+                                let count = self.pending_attachments.len();
+                                let attachments_label =
+                                    self.tr("Pièces jointes", "Attachments");
+                                let add_files_btn_label = self.tr("+ Fichiers", "+ Files");
+                                let add_folder_btn_label = self.tr("+ Dossier", "+ Folder");
+                                egui::Frame::default()
+                                    .fill(egui::Color32::from_rgb(52, 53, 58))
+                                    .corner_radius(egui::CornerRadius::same(10))
+                                    .inner_margin(egui::Margin::symmetric(10, 6))
+                                    .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.horizontal(|ui| {
+                                            ui.spacing_mut().item_spacing.x = 6.0;
+                                            let (accent, _) = ui.allocate_exact_size(
+                                                egui::vec2(3.0, 16.0),
+                                                egui::Sense::hover(),
+                                            );
+                                            ui.painter().rect_filled(
+                                                accent,
+                                                2.0,
+                                                egui::Color32::from_rgb(88, 101, 242),
+                                            );
+                                            ui.label(
+                                                egui::RichText::new(attachments_label)
+                                                    .small()
+                                                    .color(egui::Color32::from_gray(160)),
+                                            );
+                                            ui.label(
+                                                egui::RichText::new(count.to_string())
+                                                    .small()
+                                                    .color(egui::Color32::from_rgb(100, 180, 255))
+                                                    .family(egui::FontFamily::Name(
+                                                        super::BOLD_FAMILY.into(),
+                                                    )),
+                                            );
+                                            ui.with_layout(
+                                                egui::Layout::right_to_left(egui::Align::Center),
+                                                |ui| {
+                                                    if ui.small_button(add_folder_btn_label).clicked()
+                                                    {
+                                                        picker_action = Some(
+                                                            AttachmentMenuAction::AddFolder,
+                                                        );
+                                                    }
+                                                    if ui.small_button(add_files_btn_label).clicked()
+                                                    {
+                                                        picker_action =
+                                                            Some(AttachmentMenuAction::AddFiles);
+                                                    }
+                                                },
+                                            );
+                                        });
+                                        ui.add_space(4.0);
+                                        // Grille manuelle de chips à largeur
+                                        // fixe : `horizontal_wrapped` ne
+                                        // replie pas les conteneurs `Frame`
+                                        // (largeur inconnue au placement), on
+                                        // calcule donc nous-mêmes le nombre de
+                                        // chips par ligne — ça ne déborde
+                                        // jamais de la fenêtre.
+                                        const CHIP_W: f32 = 200.0;
+                                        const CHIP_GAP: f32 = 6.0;
+                                        let per_row = ((ui.available_width() + CHIP_GAP)
+                                            / (CHIP_W + CHIP_GAP))
+                                            .floor()
+                                            .max(1.0)
+                                            as usize;
+                                        let mut remove_index = None;
+                                        egui::ScrollArea::vertical()
+                                            .id_salt("attachments_scroll")
+                                            .max_height(100.0)
+                                            .show(ui, |ui| {
+                                                ui.spacing_mut().item_spacing =
+                                                    egui::vec2(CHIP_GAP, CHIP_GAP);
+                                                let paths: Vec<_> = self
+                                                    .pending_attachments
+                                                    .iter()
+                                                    .cloned()
+                                                    .enumerate()
+                                                    .collect();
+                                                for line in paths.chunks(per_row) {
+                                                    ui.horizontal(|ui| {
+                                                        for (index, path) in line {
+                                                            if attachment_chip(
+                                                                ui,
+                                                                path,
+                                                                CHIP_W,
+                                                            ) {
+                                                                remove_index = Some(*index);
+                                                            }
+                                                        }
+                                                    });
+                                                }
                                             });
-                                    }
-                                    if let Some(index) = remove_index {
-                                        self.pending_attachments.remove(index);
-                                    }
-                                });
+                                        if let Some(index) = remove_index {
+                                            self.pending_attachments.remove(index);
+                                        }
+                                    });
                                 ui.add_space(6.0);
                             }
 
@@ -515,10 +710,8 @@ impl AbcomApp {
                                     self.show_attachment_menu = !self.show_attachment_menu;
                                 }
 
-                                let (selected_addr, all_peers) = {
-                                    let s = self.state.lock().unwrap();
-                                    (s.selected_peer_addr(), s.peers.clone())
-                                };
+                                let selected_addr = self.sidebar_cache.selected_peer_addr;
+                                let all_peers = self.sidebar_cache.peers.clone();
 
                                 let actions_width = 168.0;
                                 let available_w = (ui.available_width() - actions_width).max(180.0);
@@ -836,64 +1029,5 @@ impl AbcomApp {
 }
 
 #[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    use super::{attachment_label, push_unique_paths, should_send_message};
-
-    #[test]
-    fn enter_from_composer_sends_when_shortcode_menu_is_closed() {
-        assert!(should_send_message(true, false, false, "hello"));
-    }
-
-    #[test]
-    fn enter_fallback_does_not_send_when_shortcode_menu_is_open() {
-        assert!(!should_send_message(false, true, true, ":jo"));
-    }
-
-    #[test]
-    fn enter_fallback_sends_when_shortcode_menu_is_closed() {
-        assert!(should_send_message(false, true, false, "hello"));
-    }
-
-    #[test]
-    fn empty_message_never_sends() {
-        assert!(!should_send_message(true, true, false, "   "));
-    }
-
-    #[test]
-    fn push_unique_paths_ignores_duplicates() {
-        let mut paths = vec![PathBuf::from("/tmp/alpha.txt")];
-
-        push_unique_paths(
-            &mut paths,
-            [
-                PathBuf::from("/tmp/alpha.txt"),
-                PathBuf::from("/tmp/beta.txt"),
-                PathBuf::from("/tmp/beta.txt"),
-            ],
-        );
-
-        assert_eq!(
-            paths,
-            vec![
-                PathBuf::from("/tmp/alpha.txt"),
-                PathBuf::from("/tmp/beta.txt")
-            ]
-        );
-    }
-
-    #[test]
-    fn attachment_label_prefers_file_name() {
-        assert_eq!(
-            attachment_label(PathBuf::from("/tmp/subdir/report.pdf").as_path()),
-            "report.pdf"
-        );
-    }
-
-    #[test]
-    fn attachment_label_falls_back_to_full_path_when_needed() {
-        let path = PathBuf::from("/");
-        assert_eq!(attachment_label(path.as_path()), "/");
-    }
-}
+#[path = "../tests/test_ui_input_bar.rs"]
+mod tests;

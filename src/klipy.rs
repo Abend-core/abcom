@@ -81,7 +81,7 @@ struct FileMeta {
 
 impl KlipyGif {
     fn to_item(&self) -> Option<GifItem> {
-        let preview = variant(&self.file, &["sm", "xs", "md", "hd"])?;
+        let preview = variant(&self.file, &["xs", "sm", "md", "hd"])?;
         let full = variant(&self.file, &["hd", "md", "sm", "xs"])?;
         let id = value_to_string(&self.id).unwrap_or_else(|| full.url.clone());
         Some(GifItem {
@@ -180,7 +180,9 @@ pub enum GifStatus {
 
 #[derive(Default)]
 pub struct GifFeedState {
-    pub items: Vec<GifItem>,
+    /// Items partagés avec l'UI via `Arc` : l'affichage par frame clone un
+    /// pointeur, pas la liste.
+    pub items: Arc<Vec<GifItem>>,
     pub status: GifStatus,
     pub query: String,
     pub page: u32,
@@ -262,7 +264,13 @@ impl GifFeed {
             s.generation += 1;
             s.status = GifStatus::Loading;
             if replace {
-                s.items.clear();
+                // Libère les frames décodées des anciens aperçus du cache
+                // d'images egui — sans quoi chaque recherche empile ses
+                // aperçus animés en mémoire pour toute la session.
+                for item in s.items.iter() {
+                    ctx.forget_image(&item.preview_url);
+                }
+                s.items = Arc::new(Vec::new());
             }
             s.generation
         };
@@ -276,7 +284,9 @@ impl GifFeed {
             match result {
                 Ok(resp) if resp.ok => match parse(&resp.bytes) {
                     Ok((items, has_next)) => {
-                        s.items.extend(items);
+                        let mut merged = (*s.items).clone();
+                        merged.extend(items);
+                        s.items = Arc::new(merged);
                         s.has_next = has_next;
                         s.status = GifStatus::Loaded;
                     }
@@ -300,80 +310,5 @@ impl GifFeed {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn trending_url_contains_key_and_pagination() {
-        let url = trending_url(ContentKind::Gif, "MYKEY", "fr", 2);
-        assert!(url.contains("/MYKEY/gifs/trending"));
-        assert!(url.contains("page=2"));
-        assert!(url.contains(&format!("per_page={PER_PAGE}")));
-        assert!(url.contains("locale=fr"));
-    }
-
-    #[test]
-    fn meme_trending_url_uses_static_memes_segment() {
-        let url = trending_url(ContentKind::Meme, "K", "fr", 1);
-        assert!(url.contains("/K/static-memes/trending"));
-    }
-
-    #[test]
-    fn sticker_search_url_uses_stickers_segment() {
-        let url = search_url(ContentKind::Sticker, "K", "en", "cute", 1);
-        assert!(url.contains("/K/stickers/search"));
-        assert!(url.contains("q=cute"));
-    }
-
-    #[test]
-    fn search_url_encodes_query() {
-        let url = search_url(ContentKind::Gif, "K", "en", "happy cat", 1);
-        assert!(url.contains("/K/gifs/search"));
-        assert!(url.contains("q=happy%20cat"));
-        assert!(url.contains("page=1"));
-    }
-
-    #[test]
-    fn parse_extracts_xs_and_hd_webp() {
-        let body = br#"{
-            "result": true,
-            "data": {
-                "data": [
-                    {
-                        "id": 123,
-                        "file": {
-                            "xs": {"webp": {"url": "https://x/xs.webp", "width": 90, "height": 60}},
-                            "hd": {"webp": {"url": "https://x/hd.webp", "width": 480, "height": 320}}
-                        }
-                    }
-                ],
-                "current_page": 1,
-                "per_page": 24,
-                "has_next": true
-            }
-        }"#;
-        let (items, has_next) = parse(body).unwrap();
-        assert!(has_next);
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].id, "123");
-        assert_eq!(items[0].preview_url, "https://x/xs.webp");
-        assert_eq!(items[0].full_url, "https://x/hd.webp");
-        assert_eq!(items[0].width, Some(480));
-        assert_eq!(items[0].height, Some(320));
-    }
-
-    #[test]
-    fn parse_falls_back_to_gif_when_no_webp() {
-        let body = br#"{"data":{"data":[{"id":"abc","file":{"sm":{"gif":{"url":"https://x/sm.gif"}}}}],"has_next":false}}"#;
-        let (items, _) = parse(body).unwrap();
-        assert_eq!(items.len(), 1);
-        assert_eq!(items[0].preview_url, "https://x/sm.gif");
-    }
-
-    #[test]
-    fn parse_skips_items_without_files() {
-        let body = br#"{"data":{"data":[{"id":"empty","file":{}}],"has_next":false}}"#;
-        let (items, _) = parse(body).unwrap();
-        assert!(items.is_empty());
-    }
-}
+#[path = "tests/test_klipy.rs"]
+mod tests;

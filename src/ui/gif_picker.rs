@@ -44,6 +44,8 @@ fn send_gif(app: &mut AbcomApp, gif: &GifItem) {
         timestamp_epoch: Some(now.timestamp() as u64),
         to_user: selected_peer_name.clone(),
         media: Some(media),
+        reply_to: None,
+        nonce: Some(ChatMessage::fresh_nonce()),
     };
     {
         let msg_hash = AppState::message_hash(&msg);
@@ -122,14 +124,18 @@ fn show_feed_grid(
                     let col = &mut cols[i % 2];
                     let size =
                         super::media::gif_display_size(item.width, item.height, col_w, col_w * 2.0);
-                    let resp = col
-                        .add(
+                    // Gel hors écran : seuls les aperçus visibles dans la
+                    // grille sont décodés/animés (la place reste réservée).
+                    let (rect, resp) = col.allocate_exact_size(size, egui::Sense::click());
+                    if col.is_rect_visible(rect) {
+                        col.put(
+                            rect,
                             egui::Image::from_uri(item.preview_url.clone())
                                 .fit_to_exact_size(size)
-                                .corner_radius(6.0)
-                                .sense(egui::Sense::click()),
-                        )
-                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                                .corner_radius(6.0),
+                        );
+                    }
+                    let resp = resp.on_hover_cursor(egui::CursorIcon::PointingHand);
                     if resp.clicked() {
                         chosen = Some(item.clone());
                     }
@@ -158,10 +164,26 @@ fn needs_init(feed: &GifFeed) -> bool {
 }
 
 impl AbcomApp {
+    /// Libère du cache d'images egui les aperçus des trois feeds Klipy
+    /// (appelé à la fermeture du picker : les frames WebP décodées des
+    /// aperçus représentent plusieurs dizaines de Mo par page).
+    pub(crate) fn forget_gif_previews(&self, ctx: &egui::Context) {
+        for feed in [&self.gif_feed, &self.meme_feed, &self.sticker_feed] {
+            for item in feed.lock().items.iter() {
+                ctx.forget_image(&item.preview_url);
+            }
+        }
+    }
+
     pub(crate) fn show_gif_picker_window(&mut self, ctx: &egui::Context, gif_button_clicked: bool) {
         if !self.show_gif_picker {
+            if self.gif_picker_was_open {
+                self.gif_picker_was_open = false;
+                self.forget_gif_previews(ctx);
+            }
             return;
         }
+        self.gif_picker_was_open = true;
         let Some(key) = crate::config::klipy_api_key() else {
             self.show_gif_picker = false;
             return;
@@ -179,7 +201,7 @@ impl AbcomApp {
         let tab_gif_label = "GIF";
         let tab_meme_label = self.tr("Mèmes", "Memes");
         let tab_sticker_label = "Stickers";
-        let search_hint = self.tr("Rechercher…", "Search…");
+        let search_hint = self.tr("Search KLIPY", "Search KLIPY");
         let loading_label = self.tr("Chargement…", "Loading…");
         let empty_label = self.tr("Aucun résultat", "No results");
         let error_label = self.tr("Erreur de chargement", "Loading error");
