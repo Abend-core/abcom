@@ -17,14 +17,16 @@ use super::pool::ConnectionPool;
 /// Expéditeur pour les messages de chat.
 pub async fn run_sender(mut rx: Receiver<SendRequest>, pool: Arc<ConnectionPool>) {
     while let Some(req) = rx.recv().await {
-        pool.send(req.to_addr, NetworkPacket::Chat(req.message)).await;
+        pool.send(req.to_addr, NetworkPacket::Chat(req.message))
+            .await;
     }
 }
 
 /// Expéditeur pour les événements de groupe.
 pub async fn run_sender_group(mut rx: Receiver<SendGroupRequest>, pool: Arc<ConnectionPool>) {
     while let Some(req) = rx.recv().await {
-        pool.send(req.to_addr, NetworkPacket::Group(req.event)).await;
+        pool.send(req.to_addr, NetworkPacket::Group(req.event))
+            .await;
     }
 }
 

@@ -33,7 +33,9 @@ pub fn set_enabled(enabled: bool) -> anyhow::Result<()> {
 /// État système actuel (pour refléter la réalité dans Paramètres).
 #[allow(dead_code)] // exposé pour un futur affichage de diagnostic
 pub fn is_enabled() -> bool {
-    launcher().and_then(|a| Ok(a.is_enabled()?)).unwrap_or(false)
+    launcher()
+        .and_then(|a| Ok(a.is_enabled()?))
+        .unwrap_or(false)
 }
 
 /// Applique la politique de premier lancement : en release, si aucune

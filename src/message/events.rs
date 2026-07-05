@@ -42,5 +42,7 @@ pub enum AppEvent {
     /// La clé statique présentée par ce pair ne correspond pas à celle
     /// épinglée (TOFU) : la connexion a été refusée, l'utilisateur doit être
     /// prévenu d'une possible usurpation.
-    KeyChanged { username: String },
+    KeyChanged {
+        username: String,
+    },
 }

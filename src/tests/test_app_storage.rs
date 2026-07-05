@@ -36,7 +36,9 @@ fn msg(from: &str, to: Option<&str>, content: &str, epoch: u64) -> ChatMessage {
 fn messages_round_trip() {
     let dir = tmp_dir("roundtrip");
     let storage = Storage::open(&dir).unwrap();
-    storage.insert_message(&msg("alice", None, "salut", 1)).unwrap();
+    storage
+        .insert_message(&msg("alice", None, "salut", 1))
+        .unwrap();
     storage
         .insert_message(&msg("bob", Some("alice"), "privé", 2))
         .unwrap();
@@ -96,7 +98,7 @@ fn reactions_round_trip_and_clear() {
     // Remplacement par du vide = suppression.
     storage.replace_reactions(42, &[]).unwrap();
     let loaded = storage.load_all(INITIAL_WINDOW);
-    assert!(loaded.reactions.get(&42).is_none());
+    assert!(!loaded.reactions.contains_key(&42));
 }
 
 #[test]
@@ -113,7 +115,9 @@ fn read_counts_groups_and_peers_round_trip() {
         members: vec!["alice".to_string(), "bob".to_string()],
         created_at: "2026-07-04 10:00:00".to_string(),
     };
-    storage.replace_groups(std::slice::from_ref(&group)).unwrap();
+    storage
+        .replace_groups(std::slice::from_ref(&group))
+        .unwrap();
 
     storage.upsert_peer_alias("bob", Some("Bobby")).unwrap();
     storage.upsert_peer_avatar("bob", Some(&[1, 2, 3])).unwrap();
@@ -132,7 +136,9 @@ fn read_counts_groups_and_peers_round_trip() {
 fn delete_conversation_broadcast_and_private() {
     let dir = tmp_dir("delete");
     let storage = Storage::open(&dir).unwrap();
-    storage.insert_message(&msg("alice", None, "public", 1)).unwrap();
+    storage
+        .insert_message(&msg("alice", None, "public", 1))
+        .unwrap();
     storage
         .insert_message(&msg("bob", Some("me"), "vers moi", 2))
         .unwrap();
@@ -164,7 +170,9 @@ fn media_ids_and_delete_by_media_id() {
         url: None,
     });
     storage.insert_message(&with_media).unwrap();
-    storage.insert_message(&msg("alice", None, "texte", 2)).unwrap();
+    storage
+        .insert_message(&msg("alice", None, "texte", 2))
+        .unwrap();
 
     let ids = storage.all_media_ids().unwrap();
     assert!(ids.contains("123-photo.png"));

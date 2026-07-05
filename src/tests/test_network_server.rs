@@ -25,7 +25,9 @@ fn ctx(username: &str, tx: mpsc::Sender<AppEvent>) -> Arc<NetContext> {
 async fn secure_client(addr: std::net::SocketAddr, username: &str) -> SecureStream {
     let identity = Identity::ephemeral().unwrap();
     let mut stream = TcpStream::connect(addr).await.unwrap();
-    let (transport, _) = handshake_initiator(&mut stream, &identity, None).await.unwrap();
+    let (transport, _) = handshake_initiator(&mut stream, &identity, None)
+        .await
+        .unwrap();
     let mut secure = SecureStream::new(stream, transport);
     exchange_hello(&mut secure, username, true).await.unwrap();
     secure
@@ -172,7 +174,10 @@ async fn test_invalid_json_dispatches_nothing() {
     client.send(b"NOT_VALID_JSON{{{").await.unwrap();
 
     let event = tokio::time::timeout(Duration::from_millis(500), rx.recv()).await;
-    assert!(event.is_err(), "un paquet invalide ne produit aucun événement");
+    assert!(
+        event.is_err(),
+        "un paquet invalide ne produit aucun événement"
+    );
 }
 
 #[tokio::test]
@@ -235,7 +240,10 @@ async fn test_key_change_is_refused_and_reported() {
         message_hash: 1,
         timestamp: "14:00".to_string(),
     });
-    first.send(&serde_json::to_vec(&ack).unwrap()).await.unwrap();
+    first
+        .send(&serde_json::to_vec(&ack).unwrap())
+        .await
+        .unwrap();
     let event = tokio::time::timeout(Duration::from_secs(2), rx.recv())
         .await
         .unwrap()

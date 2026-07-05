@@ -1,4 +1,3 @@
-
 use super::{day_divider_label, starts_new_group, GROUP_BREAK_SECS};
 use crate::ui::UiLanguage;
 use chrono::NaiveDate;

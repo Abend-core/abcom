@@ -180,11 +180,7 @@ impl AppState {
 
     /// Insère une page d'historique plus ancienne en tête de la fenêtre
     /// mémoire (résultat de [`Self::request_older_messages`]).
-    pub fn prepend_older_messages(
-        &mut self,
-        older: Vec<ChatMessage>,
-        oldest_rowid: Option<i64>,
-    ) {
+    pub fn prepend_older_messages(&mut self, older: Vec<ChatMessage>, oldest_rowid: Option<i64>) {
         self.oldest_loaded_rowid = oldest_rowid;
         if older.is_empty() {
             return;

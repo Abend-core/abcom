@@ -29,21 +29,44 @@ pub const OLDER_PAGE: u32 = 100;
 pub enum StorageCmd {
     InsertMessage(ChatMessage),
     /// Efface une conversation : `None` = fil « Tous » (broadcast).
-    DeleteConversation { me: String, conv: Option<String> },
+    DeleteConversation {
+        me: String,
+        conv: Option<String>,
+    },
     DeleteMessageByMediaId(String),
     /// Remplace l'ensemble des réactions d'un message (vide = suppression).
-    ReplaceReactions { hash: u64, entries: Vec<ReactionEntry> },
-    SetReadCount { username: String, count: u64 },
+    ReplaceReactions {
+        hash: u64,
+        entries: Vec<ReactionEntry>,
+    },
+    SetReadCount {
+        username: String,
+        count: u64,
+    },
     ReplaceGroups(Vec<Group>),
-    UpsertPeerAlias { username: String, alias: Option<String> },
-    UpsertPeerAvatar { username: String, avatar: Option<Vec<u8>> },
+    UpsertPeerAlias {
+        username: String,
+        alias: Option<String>,
+    },
+    UpsertPeerAvatar {
+        username: String,
+        avatar: Option<Vec<u8>>,
+    },
     /// Clé publique épinglée d'un pair (TOFU, transport chiffré).
-    UpsertPeerKey { username: String, pubkey: Vec<u8> },
+    UpsertPeerKey {
+        username: String,
+        pubkey: Vec<u8>,
+    },
     /// Charge la page précédente de l'historique ; le résultat revient à
     /// l'UI via `AppEvent::OlderMessagesLoaded`.
-    LoadOlder { before_rowid: i64 },
+    LoadOlder {
+        before_rowid: i64,
+    },
     /// Préférence persistée (table kv) : notifications, autostart…
-    SetKv { k: String, v: String },
+    SetKv {
+        k: String,
+        v: String,
+    },
     /// Accusé de traitement : toutes les commandes précédentes sont écrites.
     Flush(SyncSender<()>),
 }
@@ -177,11 +200,7 @@ impl Storage {
         Ok(())
     }
 
-    pub fn replace_reactions(
-        &self,
-        hash: u64,
-        entries: &[ReactionEntry],
-    ) -> rusqlite::Result<()> {
+    pub fn replace_reactions(&self, hash: u64, entries: &[ReactionEntry]) -> rusqlite::Result<()> {
         self.conn.execute(
             "DELETE FROM reactions WHERE message_hash = ?1",
             params![hash as i64],
@@ -331,9 +350,9 @@ impl Storage {
     /// Identifiants de tous les médias référencés par l'historique complet
     /// (GC du cache disque `media/`).
     pub fn all_media_ids(&self) -> rusqlite::Result<HashSet<String>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT json_extract(media, '$.id') FROM messages WHERE media IS NOT NULL",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT json_extract(media, '$.id') FROM messages WHERE media IS NOT NULL")?;
         let ids = stmt
             .query_map([], |r| r.get::<_, Option<String>>(0))?
             .filter_map(|r| r.ok().flatten())
@@ -468,7 +487,10 @@ impl Storage {
                 if tx_ok {
                     let _ = self.conn.execute_batch("COMMIT");
                 }
-                eprintln!("[storage] Migration : {} message(s) importé(s)", messages.len());
+                eprintln!(
+                    "[storage] Migration : {} message(s) importé(s)",
+                    messages.len()
+                );
             }
         }
         if let Some(content) = read("reactions.json") {

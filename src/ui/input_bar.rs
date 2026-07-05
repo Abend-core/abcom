@@ -71,20 +71,17 @@ fn attachment_chip(ui: &mut egui::Ui, path: &Path, width: f32) -> bool {
                     if chip_remove_button(ui) {
                         removed = true;
                     }
-                    ui.with_layout(
-                        egui::Layout::left_to_right(egui::Align::Center),
-                        |ui| {
-                            ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(attachment_label(path))
-                                        .small()
-                                        .color(egui::Color32::from_rgb(244, 245, 247)),
-                                )
-                                .truncate(),
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(attachment_label(path))
+                                    .small()
+                                    .color(egui::Color32::from_rgb(244, 245, 247)),
                             )
-                            .on_hover_text(path.display().to_string());
-                        },
-                    );
+                            .truncate(),
+                        )
+                        .on_hover_text(path.display().to_string());
+                    });
                 });
             });
         });

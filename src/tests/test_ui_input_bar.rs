@@ -1,4 +1,3 @@
-
 use std::path::PathBuf;
 
 use super::{attachment_label, push_unique_paths, should_send_message};

@@ -69,14 +69,19 @@ impl ConnectionPool {
                 return None;
             }
         };
-        let (transport, remote_key) =
-            match handshake_initiator(&mut stream, &self.ctx.identity, self.ctx.psk_bytes()).await {
-                Ok(v) => v,
-                Err(e) => {
-                    eprintln!("[secure] Handshake échoué vers {addr}: {e}");
-                    return None;
-                }
-            };
+        let (transport, remote_key) = match handshake_initiator(
+            &mut stream,
+            &self.ctx.identity,
+            self.ctx.psk_bytes(),
+        )
+        .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                eprintln!("[secure] Handshake échoué vers {addr}: {e}");
+                return None;
+            }
+        };
         let mut secure = SecureStream::new(stream, transport);
         let peer = match exchange_hello(&mut secure, &self.ctx.username, true).await {
             Ok(p) => p,

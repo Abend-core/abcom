@@ -387,7 +387,7 @@ pub(crate) fn render_parsed_markdown(
                 ui.horizontal_wrapped(|ui| {
                     render_spans_with_emoji_size(
                         ui,
-                        &spans,
+                        spans,
                         emoji_map,
                         emoji_textures,
                         None,
@@ -404,7 +404,7 @@ pub(crate) fn render_parsed_markdown(
                 ui.horizontal_wrapped(|ui| {
                     render_spans_with_emoji_size(
                         ui,
-                        &spans,
+                        spans,
                         emoji_map,
                         emoji_textures,
                         Some(SpanOverride::Heading(size)),
@@ -417,7 +417,7 @@ pub(crate) fn render_parsed_markdown(
                     ui.label("• ");
                     render_spans_with_emoji_size(
                         ui,
-                        &spans,
+                        spans,
                         emoji_map,
                         emoji_textures,
                         None,
@@ -430,7 +430,7 @@ pub(crate) fn render_parsed_markdown(
                     ui.label(format!("{}. ", number));
                     render_spans_with_emoji_size(
                         ui,
-                        &spans,
+                        spans,
                         emoji_map,
                         emoji_textures,
                         None,
@@ -439,16 +439,10 @@ pub(crate) fn render_parsed_markdown(
                 });
             }
             MarkdownBlock::Blockquote(spans) => {
-                render_blockquote_with_emoji_size(
-                    ui,
-                    &spans,
-                    emoji_map,
-                    emoji_textures,
-                    emoji_size,
-                );
+                render_blockquote_with_emoji_size(ui, spans, emoji_map, emoji_textures, emoji_size);
             }
             MarkdownBlock::CodeBlock { language, code } => {
-                render_code_block(ui, language.as_deref(), &code);
+                render_code_block(ui, language.as_deref(), code);
             }
             MarkdownBlock::ThematicBreak => {
                 ui.separator();

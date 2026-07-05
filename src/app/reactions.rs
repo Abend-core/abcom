@@ -33,7 +33,11 @@ impl AppState {
                 ReactionAction::Add
             }
         };
-        let entries = self.reactions.get(&message_hash).cloned().unwrap_or_default();
+        let entries = self
+            .reactions
+            .get(&message_hash)
+            .cloned()
+            .unwrap_or_default();
         self.persist(super::StorageCmd::ReplaceReactions {
             hash: message_hash,
             entries,

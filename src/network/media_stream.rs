@@ -21,7 +21,9 @@ use tokio::sync::oneshot;
 use crate::config;
 use crate::message::{AppEvent, MediaProgress, MediaSendJob, MediaStreamHeader, MediaStreamOffer};
 
-use super::secure::{exchange_hello, handshake_initiator, handshake_responder, SecureStream, Trust};
+use super::secure::{
+    exchange_hello, handshake_initiator, handshake_responder, SecureStream, Trust,
+};
 use super::NetContext;
 
 /// Taille d'un chunk de fichier : tient dans un seul message Noise

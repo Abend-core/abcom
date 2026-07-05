@@ -1,4 +1,3 @@
-
 use super::ChatMessage;
 
 fn msg(from: &str, content: &str, to: Option<&str>) -> ChatMessage {

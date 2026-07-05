@@ -432,11 +432,7 @@ impl AbcomApp {
 
     /// Texture pleine résolution pour la visionneuse, conservée uniquement
     /// tant qu'elle est ouverte.
-    fn viewer_texture_for(
-        &mut self,
-        ctx: &egui::Context,
-        id: &str,
-    ) -> Option<egui::TextureHandle> {
+    fn viewer_texture_for(&mut self, ctx: &egui::Context, id: &str) -> Option<egui::TextureHandle> {
         if let Some((cached_id, texture)) = &self.viewer_texture {
             if cached_id == id {
                 return Some(texture.clone());

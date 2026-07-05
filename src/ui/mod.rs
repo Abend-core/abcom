@@ -561,7 +561,9 @@ impl eframe::App for AbcomApp {
         {
             let s = self.state.lock().unwrap();
             self.sidebar_cache.refresh(&s);
-            let rebuilt = self.chat_cache.refresh(&s, self.ui_language, &self.emoji_map);
+            let rebuilt = self
+                .chat_cache
+                .refresh(&s, self.ui_language, &self.emoji_map);
             drop(s);
             if let Some(conv_changed) = rebuilt {
                 if conv_changed {

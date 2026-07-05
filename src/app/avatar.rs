@@ -61,7 +61,6 @@ impl AppState {
         }
     }
 
-
     fn save_avatar(&self) {
         let Some(png) = &self.my_avatar else { return };
         if let Some(parent) = self.avatar_path.parent() {
@@ -71,7 +70,6 @@ impl AppState {
             eprintln!("[app] Erreur écriture avatar.png: {}", e);
         }
     }
-
 }
 
 #[cfg(test)]

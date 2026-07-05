@@ -348,6 +348,5 @@ impl AbcomApp {
                 eprintln!("[ui] Retry message delivery vers {}", addr);
             }
         }
-
     }
 }
