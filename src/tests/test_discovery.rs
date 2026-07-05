@@ -1,4 +1,3 @@
-
 use crate::message::DiscoveryPacket;
 
 #[test]

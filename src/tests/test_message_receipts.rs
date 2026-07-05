@@ -1,4 +1,3 @@
-
 use super::{MessageAck, NetworkMessage, ReadReceipt, TypingIndicator};
 use crate::message::{ChatMessage, GroupAction, GroupEvent};
 

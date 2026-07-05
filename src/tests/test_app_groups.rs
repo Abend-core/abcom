@@ -1,4 +1,3 @@
-
 use crate::app::{AppState, Peer};
 
 fn new_test_state(username: &str) -> AppState {

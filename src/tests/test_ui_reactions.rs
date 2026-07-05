@@ -1,4 +1,3 @@
-
 use super::update_recent_emojis;
 
 #[test]

@@ -1,4 +1,3 @@
-
 use super::{extension_lower, MediaAttachment, MediaKind};
 
 #[test]

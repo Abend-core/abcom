@@ -383,11 +383,7 @@ fn render_reply_quote(
                                 .family(egui::FontFamily::Name(super::BOLD_FAMILY.into())),
                         );
                         if orig.media.is_some() {
-                            super::media::render_reply_thumb(
-                                ui,
-                                media_texture,
-                                REPLY_QUOTE_AVATAR,
-                            );
+                            super::media::render_reply_thumb(ui, media_texture, REPLY_QUOTE_AVATAR);
                         }
                         let snippet = if orig.content.is_empty() && orig.media.is_some() {
                             "📎".to_string()
@@ -635,8 +631,7 @@ impl AbcomApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             let rows = self.chat_cache.rows.clone();
             let my_name = self.chat_cache.my_name.clone();
-            let selected_conv: Option<String> =
-                self.chat_cache.conversation().map(str::to_string);
+            let selected_conv: Option<String> = self.chat_cache.conversation().map(str::to_string);
             let private_peer = selected_conv
                 .as_deref()
                 .filter(|c| !c.starts_with('#'))
@@ -886,10 +881,11 @@ impl AbcomApp {
                         // de date forcé (situe la coupure) et en-tête forcé
                         // (pas de continuation orpheline sans avatar).
                         let window_head = i == 0 && start > 0;
-                        let divider = row
-                            .day_divider
-                            .as_ref()
-                            .or(if window_head { row.day_label.as_ref() } else { None });
+                        let divider = row.day_divider.as_ref().or(if window_head {
+                            row.day_label.as_ref()
+                        } else {
+                            None
+                        });
                         if let Some(label) = divider {
                             render_day_divider(ui, label);
                         }
@@ -1098,10 +1094,8 @@ impl AbcomApp {
                             } else {
                                 egui::Color32::from_rgba_unmultiplied(0, 0, 0, 10)
                             };
-                            ui.painter().set(
-                                row_bg,
-                                egui::Shape::rect_filled(row_rect, 0.0, tint),
-                            );
+                            ui.painter()
+                                .set(row_bg, egui::Shape::rect_filled(row_rect, 0.0, tint));
                         }
 
                         let mut reply_requested = false;
@@ -1155,7 +1149,7 @@ impl AbcomApp {
                 if delta > 0.0 {
                     // Le contenu ajouté est arrivé : compenser l'offset.
                     self.chat_prepend_fix = None;
-                    let mut state = scroll_out.state.clone();
+                    let mut state = scroll_out.state;
                     state.offset.y += delta;
                     state.store(ctx, scroll_out.id);
                     ctx.request_repaint();
@@ -1167,8 +1161,7 @@ impl AbcomApp {
                         (self.chat_visible_count + super::CHAT_WINDOW_STEP).min(total);
                     self.chat_prepend_fix = Some(scroll_out.content_size.y);
                     ctx.request_repaint();
-                } else if !self.loading_older
-                    && self.state.lock().unwrap().request_older_messages()
+                } else if !self.loading_older && self.state.lock().unwrap().request_older_messages()
                 {
                     self.loading_older = true;
                     self.chat_prepend_fix = Some(scroll_out.content_size.y);

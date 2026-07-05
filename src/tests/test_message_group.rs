@@ -1,4 +1,3 @@
-
 use super::{Group, GroupAction, GroupEvent};
 
 fn make_group(name: &str, owner: &str) -> Group {

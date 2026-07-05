@@ -177,7 +177,10 @@ impl SecureStream {
         write_frame(&mut self.stream, &ct[..len]).await?;
         // Frames de continuation.
         for chunk in plaintext[first_payload..].chunks(MAX_CHUNK) {
-            let len = self.transport.write_message(chunk, &mut ct).map_err(to_io)?;
+            let len = self
+                .transport
+                .write_message(chunk, &mut ct)
+                .map_err(to_io)?;
             write_frame(&mut self.stream, &ct[..len]).await?;
         }
         self.stream.flush().await
@@ -187,7 +190,10 @@ impl SecureStream {
     pub async fn recv(&mut self) -> std::io::Result<Vec<u8>> {
         let mut pt = vec![0u8; MAX_NOISE_MESSAGE];
         let frame = read_frame(&mut self.stream).await?;
-        let n = self.transport.read_message(&frame, &mut pt).map_err(to_io)?;
+        let n = self
+            .transport
+            .read_message(&frame, &mut pt)
+            .map_err(to_io)?;
         if n < 4 {
             return Err(to_io("en-tête de message manquant"));
         }
@@ -199,7 +205,10 @@ impl SecureStream {
         out.extend_from_slice(&pt[4..n]);
         while out.len() < total {
             let frame = read_frame(&mut self.stream).await?;
-            let n = self.transport.read_message(&frame, &mut pt).map_err(to_io)?;
+            let n = self
+                .transport
+                .read_message(&frame, &mut pt)
+                .map_err(to_io)?;
             out.extend_from_slice(&pt[..n]);
         }
         if out.len() != total {

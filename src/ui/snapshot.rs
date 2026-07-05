@@ -173,8 +173,7 @@ impl ChatCache {
             } else {
                 PEER_NAME_COLOR
             };
-            let receipt =
-                is_me.then(|| (!s.is_message_pending(hash), s.get_read_count(hash) > 0));
+            let receipt = is_me.then(|| (!s.is_message_pending(hash), s.get_read_count(hash) > 0));
 
             let reply = msg.reply_to.map(|reply_hash| {
                 let resolved = s.find_message_by_hash(reply_hash).cloned();

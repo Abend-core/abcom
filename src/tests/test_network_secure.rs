@@ -20,7 +20,9 @@ async fn secure_pair() -> (SecureStream, SecureStream, Vec<u8>, Vec<u8>) {
     };
 
     let mut stream = TcpStream::connect(addr).await.unwrap();
-    let (transport, bob_key) = handshake_initiator(&mut stream, &alice, None).await.unwrap();
+    let (transport, bob_key) = handshake_initiator(&mut stream, &alice, None)
+        .await
+        .unwrap();
     let alice_stream = SecureStream::new(stream, transport);
     let (bob_stream, alice_key) = bob_task.await.unwrap();
 

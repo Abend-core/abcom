@@ -58,8 +58,7 @@ fn main() -> anyhow::Result<()> {
         .build()?;
 
     // Canaux vers l'UI : chaque événement relayé réveille egui.
-    let (event_tx, event_rx) =
-        notify::ui_channel::<message::AppEvent>(256, ui_ctx.clone(), &rt);
+    let (event_tx, event_rx) = notify::ui_channel::<message::AppEvent>(256, ui_ctx.clone(), &rt);
     let (media_offer_tx, media_offer_rx) =
         notify::ui_channel::<message::MediaStreamOffer>(16, ui_ctx.clone(), &rt);
 

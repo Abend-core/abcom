@@ -1,4 +1,3 @@
-
 use crate::app::{AppState, Peer};
 
 fn state(username: &str) -> AppState {

@@ -151,10 +151,7 @@ impl AbcomApp {
                             .weak(),
                         );
                         let psk_label = if self.psk_active {
-                            self.tr(
-                                "Passphrase de salon : active",
-                                "Room passphrase: enabled",
-                            )
+                            self.tr("Passphrase de salon : active", "Room passphrase: enabled")
                         } else {
                             self.tr(
                                 "Passphrase de salon : désactivée (ABCOM_PASSPHRASE)",
@@ -229,10 +226,8 @@ impl AbcomApp {
                                 ui.end_row();
 
                                 ui.label(
-                                    egui::RichText::new(
-                                        self.tr("Notifications", "Notifications"),
-                                    )
-                                    .strong(),
+                                    egui::RichText::new(self.tr("Notifications", "Notifications"))
+                                        .strong(),
                                 );
                                 {
                                     let label = self.tr(
@@ -260,10 +255,7 @@ impl AbcomApp {
                                             Ok(()) => {
                                                 let v =
                                                     if self.autostart_enabled { "1" } else { "0" };
-                                                self.state
-                                                    .lock()
-                                                    .unwrap()
-                                                    .set_pref("autostart", v);
+                                                self.state.lock().unwrap().set_pref("autostart", v);
                                             }
                                             Err(e) => {
                                                 eprintln!("[autostart] échec : {e}");
