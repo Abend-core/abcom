@@ -20,6 +20,12 @@ impl AbcomApp {
             ThemePreference::Dark => true,
         };
 
+        // `set_visuals` reconstruit tout le style : ne l'appliquer qu'au
+        // changement effectif, pas à chaque frame.
+        if self.applied_dark_mode == Some(dark_mode) {
+            return;
+        }
+        self.applied_dark_mode = Some(dark_mode);
         ctx.set_visuals(if dark_mode {
             egui::Visuals::dark()
         } else {
@@ -132,6 +138,27 @@ impl AbcomApp {
                 match self.settings_tab {
                     SettingsTab::Profile => {
                         ui.label(egui::RichText::new(profile_heading).strong());
+                        ui.add_space(8.0);
+                        // Empreinte de la clé d'identité (Noise) : à comparer
+                        // hors-bande avec un pair pour vérifier l'appairage.
+                        ui.label(
+                            egui::RichText::new(format!(
+                                "{} : {}",
+                                self.tr("Empreinte de votre clé", "Your key fingerprint"),
+                                self.identity_fingerprint
+                            ))
+                            .small()
+                            .weak(),
+                        );
+                        let psk_label = if self.psk_active {
+                            self.tr("Passphrase de salon : active", "Room passphrase: enabled")
+                        } else {
+                            self.tr(
+                                "Passphrase de salon : désactivée (ABCOM_PASSPHRASE)",
+                                "Room passphrase: disabled (ABCOM_PASSPHRASE)",
+                            )
+                        };
+                        ui.label(egui::RichText::new(psk_label).small().weak());
                         ui.add_space(12.0);
                         ui.horizontal(|ui| {
                             show_avatar(ui, avatar_texture.as_ref(), &my_name, PROFILE_AVATAR_SIZE);
@@ -196,6 +223,47 @@ impl AbcomApp {
                                         theme_dark_label,
                                     );
                                 });
+                                ui.end_row();
+
+                                ui.label(
+                                    egui::RichText::new(self.tr("Notifications", "Notifications"))
+                                        .strong(),
+                                );
+                                {
+                                    let label = self.tr(
+                                        "Afficher un aperçu du message",
+                                        "Show a message preview",
+                                    );
+                                    if ui.checkbox(&mut self.notif_preview, label).changed() {
+                                        let v = if self.notif_preview { "1" } else { "0" };
+                                        self.state.lock().unwrap().set_pref("notif_preview", v);
+                                    }
+                                }
+                                ui.end_row();
+
+                                ui.label(
+                                    egui::RichText::new(self.tr("Démarrage", "Startup")).strong(),
+                                );
+                                {
+                                    let label = self.tr(
+                                        "Lancer Abcom à l'ouverture de session",
+                                        "Launch Abcom at login",
+                                    );
+                                    if ui.checkbox(&mut self.autostart_enabled, label).changed() {
+                                        match crate::autostart::set_enabled(self.autostart_enabled)
+                                        {
+                                            Ok(()) => {
+                                                let v =
+                                                    if self.autostart_enabled { "1" } else { "0" };
+                                                self.state.lock().unwrap().set_pref("autostart", v);
+                                            }
+                                            Err(e) => {
+                                                eprintln!("[autostart] échec : {e}");
+                                                self.autostart_enabled = !self.autostart_enabled;
+                                            }
+                                        }
+                                    }
+                                }
                                 ui.end_row();
                             });
                     }

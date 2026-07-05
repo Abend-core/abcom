@@ -7,8 +7,9 @@ use tokio::sync::mpsc;
 
 use crate::app::AppState;
 use crate::message::{
-    AppEvent, AvatarRequest, MediaProgress, MediaSendJob, MediaStreamOffer, MessageAckRequest,
-    ReadReceipt, ReadReceiptRequest, SendGroupRequest, SendRequest, TypingRequest,
+    AppEvent, AvatarRequest, MediaAttachment, MediaProgress, MediaSendJob, MediaStreamOffer,
+    MessageAckRequest, ReactionRequest, ReadReceipt, ReadReceiptRequest, SendGroupRequest,
+    SendRequest, TypingRequest,
 };
 
 mod avatar;
@@ -21,9 +22,30 @@ mod group_modal;
 mod input_bar;
 mod markdown;
 mod media;
+mod reactions;
 mod settings;
 mod sidebar;
+mod snapshot;
 mod sound;
+pub(crate) mod tray;
+
+/// Nombre de messages affichés au départ et pas de chargement du fenêtrage
+/// façon Discord (le fil charge 100 messages de plus en remontant).
+pub(crate) const CHAT_WINDOW_STEP: usize = 100;
+
+/// Emojis de réaction par défaut proposés avant tout historique d'usage,
+/// façon Discord.
+const DEFAULT_RECENT_EMOJIS: [&str; 6] = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+
+/// Aperçu figé du message ciblé par une réponse en cours de composition.
+/// Capturé au clic sur « répondre » pour ne pas re-verrouiller/rechercher
+/// l'état à chaque frame pendant que le composeur est affiché.
+pub(crate) struct ReplyTarget {
+    pub(crate) message_hash: u64,
+    pub(crate) author: String,
+    pub(crate) content_snippet: String,
+    pub(crate) media_thumb: Option<MediaAttachment>,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum UiLanguage {
@@ -59,6 +81,29 @@ pub(crate) enum GifPickerTab {
 /// État de l'application UI
 pub(crate) struct AbcomApp {
     pub(crate) state: Arc<Mutex<AppState>>,
+    /// Empreinte de notre clé publique (identité Noise), affichée dans les
+    /// Paramètres pour vérification hors-bande entre utilisateurs.
+    pub(crate) identity_fingerprint: String,
+    /// Une passphrase de salon est active (handshake XXpsk3).
+    pub(crate) psk_active: bool,
+    /// Icône résidente (barre de menus / zone de notification). `None` si le
+    /// système n'a pas de tray : la croix quitte alors comme avant.
+    pub(crate) tray: Option<tray::Tray>,
+    /// La création du tray a échoué : ne pas réessayer à chaque frame.
+    pub(crate) tray_init_failed: bool,
+    /// Fenêtre repliée dans le tray : aucun rendu, aucun repaint programmé,
+    /// les événements réseau mettent l'état à jour et notifient nativement.
+    pub(crate) window_hidden: bool,
+    /// Fermeture réelle demandée (menu tray « Quitter ») : laisse passer le
+    /// close_requested au lieu de cacher.
+    pub(crate) really_quit: bool,
+    /// Les notifications natives montrent un aperçu du message (persisté).
+    pub(crate) notif_preview: bool,
+    /// Lancement au démarrage de session activé (persisté + état système).
+    pub(crate) autostart_enabled: bool,
+    /// Résultat du décodage des PNG emoji, effectué dans un thread au
+    /// démarrage : le premier frame n'attend plus les 323 décodages.
+    pub(crate) emoji_decode_rx: Option<std::sync::mpsc::Receiver<Vec<(String, egui::ColorImage)>>>,
     pub(crate) event_rx: mpsc::Receiver<AppEvent>,
     pub(crate) send_tx: mpsc::Sender<SendRequest>,
     pub(crate) send_group_tx: mpsc::Sender<SendGroupRequest>,
@@ -66,6 +111,7 @@ pub(crate) struct AbcomApp {
     pub(crate) send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
     pub(crate) send_ack_tx: mpsc::Sender<MessageAckRequest>,
     pub(crate) send_avatar_tx: mpsc::Sender<AvatarRequest>,
+    pub(crate) send_reaction_tx: mpsc::Sender<ReactionRequest>,
     pub(crate) send_media_tx: mpsc::Sender<MediaSendJob>,
     pub(crate) input: String,
     pub(crate) input_cursor_char: usize,
@@ -101,7 +147,6 @@ pub(crate) struct AbcomApp {
     pub(crate) emoji_alias_to_char: std::collections::HashMap<String, String>,
     pub(crate) emoji_aliases: Vec<String>,
     pub(crate) shortcode_selected: usize,
-    pub(crate) last_cleanup_time: std::time::Instant,
     pub(crate) show_group_modal: bool,
     pub(crate) group_name_input: String,
     pub(crate) group_members_selected: std::collections::HashSet<String>,
@@ -136,6 +181,52 @@ pub(crate) struct AbcomApp {
     pub(crate) pending_media_offers: Vec<MediaStreamOffer>,
     /// Progression des transferts média en cours, par identifiant.
     pub(crate) media_progress: std::collections::HashMap<String, MediaProgress>,
+    /// Ligne dont la barre d'actions au survol est affichée : (index absolu
+    /// dans le fil, hash du message). L'index désambiguïse les messages au
+    /// hash identique (anciens messages sans nonce) : une seule barre à la fois.
+    pub(crate) hover_toolbar_target: Option<(usize, u64)>,
+    /// Message ciblé par le picker de réaction ouvert (None = fermé), avec le
+    /// rectangle d'ancrage du bouton "+" pour positionner la popup.
+    pub(crate) reaction_picker_open: Option<(u64, egui::Rect)>,
+    /// Emojis récemment utilisés en réaction (MRU, la plus récente en tête).
+    pub(crate) recent_reaction_emojis: Vec<String>,
+    /// Message ciblé par une réponse en cours de composition (None = aucune).
+    pub(crate) replying_to: Option<ReplyTarget>,
+    /// Message vers lequel faire défiler le fil au prochain rendu (clic sur
+    /// une citation de réponse, façon Discord).
+    pub(crate) scroll_to_message: Option<u64>,
+    /// Message brièvement surligné après un saut (flash qui s'estompe).
+    pub(crate) highlight_message: Option<(u64, std::time::Instant)>,
+    /// Des pairs sont en train d'écrire (instantané mis à jour par
+    /// `process_events`) : impose un repaint de repli court pour faire
+    /// expirer l'indicateur même sans nouvel événement réseau.
+    pub(crate) typing_active: bool,
+    /// Dernier mode sombre effectivement appliqué à egui (évite de
+    /// reconstruire les `Visuals` à chaque frame).
+    pub(crate) applied_dark_mode: Option<bool>,
+    /// Cache dérivé du fil (lignes pré-calculées, markdown memoïsé).
+    pub(crate) chat_cache: snapshot::ChatCache,
+    /// Cache dérivé de la barre latérale et de la barre de saisie.
+    pub(crate) sidebar_cache: snapshot::SidebarCache,
+    /// Fenêtrage du fil : nombre de messages rendus (les plus récents).
+    pub(crate) chat_visible_count: usize,
+    /// Hauteur de contenu avant extension de la fenêtre : sert à compenser
+    /// l'offset de scroll à la frame suivante (pas de saut visuel).
+    pub(crate) chat_prepend_fix: Option<f32>,
+    /// Une page d'historique plus ancienne est en cours de chargement
+    /// (évite les demandes répétées pendant le vol de la requête).
+    pub(crate) loading_older: bool,
+    /// Le picker GIF était ouvert à la frame précédente (détection de la
+    /// fermeture pour libérer les aperçus du cache d'images egui).
+    pub(crate) gif_picker_was_open: bool,
+    /// URLs des GIFs actuellement dans le fil rendu : celles qui en sortent
+    /// (changement de conversation, drain) sont retirées du cache d'images.
+    pub(crate) known_gif_urls: std::collections::HashSet<String>,
+    /// Ordre d'accès des textures médias (éviction LRU, cf. `media_texture`).
+    pub(crate) media_texture_lru: Vec<String>,
+    /// Texture pleine résolution de la visionneuse, libérée à sa fermeture
+    /// (le fil n'affiche que des textures réduites).
+    pub(crate) viewer_texture: Option<(String, egui::TextureHandle)>,
 }
 
 impl AbcomApp {
@@ -143,6 +234,8 @@ impl AbcomApp {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         state: Arc<Mutex<AppState>>,
+        identity_fingerprint: String,
+        psk_active: bool,
         event_rx: mpsc::Receiver<AppEvent>,
         send_tx: mpsc::Sender<SendRequest>,
         send_group_tx: mpsc::Sender<SendGroupRequest>,
@@ -150,11 +243,28 @@ impl AbcomApp {
         send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
         send_ack_tx: mpsc::Sender<MessageAckRequest>,
         send_avatar_tx: mpsc::Sender<AvatarRequest>,
+        send_reaction_tx: mpsc::Sender<ReactionRequest>,
         send_media_tx: mpsc::Sender<MediaSendJob>,
         media_offer_rx: mpsc::Receiver<MediaStreamOffer>,
     ) -> Self {
+        // Décodage des emojis en arrière-plan dès la création : les textures
+        // seront créées (rapide) quand le résultat arrive, sans geler l'UI.
+        let emoji_decode_rx = Some(spawn_emoji_decoder());
+
+        // Préférences persistées (table kv).
+        let (notif_preview, autostart_enabled) = {
+            let s = state.lock().unwrap();
+            (
+                s.pref_bool("notif_preview", true),
+                s.pref_bool("autostart", false),
+            )
+        };
+
         Self {
             state,
+            identity_fingerprint,
+            psk_active,
+            emoji_decode_rx,
             event_rx,
             send_tx,
             send_group_tx,
@@ -162,6 +272,7 @@ impl AbcomApp {
             send_read_receipt_tx,
             send_ack_tx,
             send_avatar_tx,
+            send_reaction_tx,
             send_media_tx,
             media_offer_rx,
             pending_media_offers: Vec::new(),
@@ -193,7 +304,6 @@ impl AbcomApp {
             emoji_alias_to_char: std::collections::HashMap::new(),
             emoji_aliases: Vec::new(),
             shortcode_selected: 0,
-            last_cleanup_time: std::time::Instant::now(),
             show_group_modal: false,
             group_name_input: String::new(),
             group_members_selected: std::collections::HashSet::new(),
@@ -215,6 +325,32 @@ impl AbcomApp {
             pending_avatar_pick: false,
             media_textures: std::collections::HashMap::new(),
             media_viewer: None,
+            hover_toolbar_target: None,
+            reaction_picker_open: None,
+            recent_reaction_emojis: DEFAULT_RECENT_EMOJIS
+                .iter()
+                .map(|s| s.to_string())
+                .collect(),
+            replying_to: None,
+            scroll_to_message: None,
+            highlight_message: None,
+            typing_active: false,
+            applied_dark_mode: None,
+            tray: None,
+            tray_init_failed: false,
+            window_hidden: false,
+            really_quit: false,
+            notif_preview,
+            autostart_enabled,
+            chat_cache: snapshot::ChatCache::default(),
+            sidebar_cache: snapshot::SidebarCache::default(),
+            chat_visible_count: CHAT_WINDOW_STEP,
+            chat_prepend_fix: None,
+            loading_older: false,
+            gif_picker_was_open: false,
+            known_gif_urls: std::collections::HashSet::new(),
+            media_texture_lru: Vec::new(),
+            viewer_texture: None,
         }
     }
 
@@ -287,19 +423,165 @@ impl AbcomApp {
     }
 }
 
+impl AbcomApp {
+    /// Replie la fenêtre dans le tray : rendu stoppé, textures libérées
+    /// (elles seront rechargées paresseusement à la réouverture). Sur macOS,
+    /// l'application quitte aussi le Dock (politique Accessory) : elle ne
+    /// vit plus que dans la barre de menus.
+    pub(crate) fn hide_to_tray(&mut self, ctx: &egui::Context) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        set_dock_visible(false);
+        self.window_hidden = true;
+        self.window_focused = false;
+
+        // Purge mémoire : textures GPU et caches d'images.
+        self.media_textures.clear();
+        self.media_texture_lru.clear();
+        self.avatar_textures.clear();
+        self.viewer_texture = None;
+        self.media_viewer = None;
+        for url in &self.known_gif_urls {
+            ctx.forget_image(url);
+        }
+        self.forget_gif_previews(ctx);
+        // Emojis : libérés aussi, re-décodés en arrière-plan au retour.
+        self.emoji_textures.clear();
+        self.emoji_map.clear();
+        self.emoji_textures_loaded = false;
+        self.emoji_decode_rx = None;
+        self.chat_cache.invalidate();
+    }
+
+    /// Restaure la fenêtre depuis le tray et resynchronise l'affichage
+    /// (l'état est déjà à jour : seuls les caches de rendu se reconstruisent).
+    pub(crate) fn show_from_tray(&mut self, ctx: &egui::Context) {
+        if !self.window_hidden {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            return;
+        }
+        self.window_hidden = false;
+        set_dock_visible(true);
+        ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+        ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+        self.emoji_decode_rx = Some(spawn_emoji_decoder());
+        self.chat_cache.invalidate();
+        ctx.request_repaint();
+    }
+
+    /// Notification système native (fenêtre cachée/minimisée). Envoyée d'un
+    /// thread détaché : l'appel peut bloquer selon l'OS.
+    pub(crate) fn notify_native(summary: String, body: String) {
+        std::thread::Builder::new()
+            .name("abcom-notify".into())
+            .spawn(move || {
+                let _ = notify_rust::Notification::new()
+                    .appname("Abcom")
+                    .summary(&summary)
+                    .body(&body)
+                    .show();
+            })
+            .ok();
+    }
+
+    /// Corps de notification pour un message entrant, selon la préférence
+    /// « aperçu » (persistée).
+    pub(crate) fn native_body_for(&self, content: &str) -> String {
+        if self.notif_preview {
+            media::elide(content, 120)
+        } else {
+            self.tr("Nouveau message", "New message").to_string()
+        }
+    }
+}
+
 impl eframe::App for AbcomApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.apply_theme_preference(ctx);
-        self.window_focused = ctx.input(|i| i.focused);
+        // Icône résidente, créée paresseusement (macOS impose le thread
+        // principal avec l'event loop démarrée — c'est le cas ici).
+        if self.tray.is_none() && !self.tray_init_failed {
+            self.tray = tray::Tray::new(
+                self.tr("Ouvrir Abcom", "Open Abcom"),
+                self.tr("Quitter", "Quit"),
+            );
+            if self.tray.is_none() {
+                self.tray_init_failed = true;
+                eprintln!("[tray] Icône résidente indisponible : la croix quittera l'application");
+            }
+        }
 
-        self.lazy_load_emoji(ctx);
+        // Actions tray (les callbacks ont déjà réveillé l'UI).
+        if let Some(t) = &self.tray {
+            for action in t.poll() {
+                match action {
+                    tray::TrayAction::Open => self.show_from_tray(ctx),
+                    tray::TrayAction::Quit => {
+                        self.really_quit = true;
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                }
+            }
+        }
+
+        // Croix / Cmd-W : cacher au lieu de quitter — uniquement si un tray
+        // existe pour rouvrir (sinon comportement historique).
+        if ctx.input(|i| i.viewport().close_requested())
+            && !self.really_quit
+            && self.tray.is_some()
+            && !self.window_hidden
+        {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.hide_to_tray(ctx);
+        }
+
+        self.window_focused = !self.window_hidden && ctx.input(|i| i.focused);
         self.process_events();
         self.process_media_offers();
         self.periodic_tasks();
 
+        // Badge non-lus sur l'icône résidente.
+        let unread = self.has_unread;
+        if let Some(t) = &mut self.tray {
+            t.set_unread(unread);
+        }
+
+        // Cachée ou minimisée : l'état et SQLite sont à jour, les
+        // notifications natives sont parties — aucun rendu, aucun repaint
+        // programmé (CPU/GPU ~0). Le prochain réveil viendra du réseau, du
+        // tray ou de la restauration de la fenêtre.
+        let minimized = ctx.input(|i| i.viewport().minimized.unwrap_or(false));
+        if self.window_hidden || minimized {
+            return;
+        }
+
+        self.apply_theme_preference(ctx);
+        self.lazy_load_emoji(ctx);
+
+        // Rafraîchit les caches dérivés si l'état a changé (génération) —
+        // sinon la frame se rend sans reprendre le verrou ni rien re-dériver.
+        {
+            let s = self.state.lock().unwrap();
+            self.sidebar_cache.refresh(&s);
+            let rebuilt = self
+                .chat_cache
+                .refresh(&s, self.ui_language, &self.emoji_map);
+            drop(s);
+            if let Some(conv_changed) = rebuilt {
+                if conv_changed {
+                    self.chat_visible_count = CHAT_WINDOW_STEP;
+                    self.chat_prepend_fix = None;
+                }
+                // Les GIFs sortis du fil (changement de conversation ou
+                // expiration du ring-buffer) libèrent leurs frames décodées.
+                for url in self.known_gif_urls.difference(&self.chat_cache.gif_urls) {
+                    ctx.forget_image(url);
+                }
+                self.known_gif_urls = self.chat_cache.gif_urls.clone();
+            }
+        }
+
         // Flash barre des tâches si message non lu — réinitialisé une seule fois
         // quand la fenêtre reprend le focus (pas d'envoi répété en boucle).
-        if self.has_unread && ctx.input(|i| i.focused) {
+        if self.has_unread && self.window_focused {
             self.has_unread = false;
             ctx.send_viewport_cmd(egui::ViewportCommand::RequestUserAttention(
                 egui::UserAttentionType::Reset,
@@ -380,10 +662,30 @@ impl eframe::App for AbcomApp {
         self.show_gif_picker_window(ctx, gif_btn_clicked);
         self.render_group_modal(ctx);
         self.show_central_panel(ctx);
+        self.show_reaction_emoji_picker(ctx);
         self.render_settings(ctx);
         self.show_media_viewer(ctx);
 
-        ctx.request_repaint_after(Duration::from_millis(500));
+        // Repaint de repli : les événements réseau réveillent déjà l'UI
+        // (cf. notify.rs), il ne reste à couvrir que les états transitoires
+        // à expiration temporelle. Au repos : une frame toutes les 5 s
+        // (nettoyage des pairs inactifs), soit un CPU/GPU quasi nul.
+        let fallback = if self.last_notification.is_some() || self.highlight_message.is_some() {
+            Duration::from_millis(500) // expiration notification / flash de surlignage
+        } else if self.typing_active {
+            Duration::from_secs(1) // expiration de l'indicateur « écrit… »
+        } else if !self.window_focused {
+            Duration::from_secs(30) // visible en arrière-plan : quasi dormant
+        } else {
+            Duration::from_secs(5) // tick periodic_tasks
+        };
+        ctx.request_repaint_after(fallback);
+    }
+
+    /// Flush final du stockage : attend que toutes les écritures en file
+    /// soient appliquées avant la fermeture.
+    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        self.state.lock().unwrap().flush_storage();
     }
 }
 
@@ -445,6 +747,9 @@ fn app_icon_data() -> Option<egui::IconData> {
 #[allow(clippy::too_many_arguments)]
 pub fn run(
     state: Arc<Mutex<AppState>>,
+    ui_ctx: crate::notify::UiContext,
+    identity_fingerprint: String,
+    psk_active: bool,
     event_rx: mpsc::Receiver<AppEvent>,
     send_tx: mpsc::Sender<SendRequest>,
     send_group_tx: mpsc::Sender<SendGroupRequest>,
@@ -452,9 +757,14 @@ pub fn run(
     send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
     send_ack_tx: mpsc::Sender<MessageAckRequest>,
     send_avatar_tx: mpsc::Sender<AvatarRequest>,
+    send_reaction_tx: mpsc::Sender<ReactionRequest>,
     send_media_tx: mpsc::Sender<MediaSendJob>,
     media_offer_rx: mpsc::Receiver<MediaStreamOffer>,
 ) -> anyhow::Result<()> {
+    // Handlers tray/menu globaux : chaque événement réveille l'UI via le
+    // contexte partagé (fonctionne même fenêtre cachée, sans rendu).
+    tray::install_event_handlers(ui_ctx.clone());
+
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Abcom")
         .with_inner_size([860.0, 600.0]);
@@ -472,13 +782,18 @@ pub fn run(
     eframe::run_native(
         "Abcom",
         options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
+            // Publie le contexte egui vers les tâches de fond : chaque
+            // événement relayé peut désormais réveiller la boucle de rendu.
+            let _ = ui_ctx.set(cc.egui_ctx.clone());
             cc.egui_ctx.set_fonts(build_fonts());
             // Loaders d'images egui_extras : HTTP (récupération depuis le CDN
             // Klipy) + décodage GIF/WebP animés pour les vignettes et le fil.
             egui_extras::install_image_loaders(&cc.egui_ctx);
             Ok(Box::new(AbcomApp::new(
                 state,
+                identity_fingerprint,
+                psk_active,
                 event_rx,
                 send_tx,
                 send_group_tx,
@@ -486,6 +801,7 @@ pub fn run(
                 send_read_receipt_tx,
                 send_ack_tx,
                 send_avatar_tx,
+                send_reaction_tx,
                 send_media_tx,
                 media_offer_rx,
             )))
@@ -499,3 +815,57 @@ pub fn run(
 
     Ok(())
 }
+
+/// Décode les PNG du registre d'emojis dans un thread dédié (le premier
+/// frame de l'UI n'attend plus ~323 décodages d'images).
+fn spawn_emoji_decoder() -> std::sync::mpsc::Receiver<Vec<(String, egui::ColorImage)>> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("abcom-emoji".into())
+        .spawn(move || {
+            let images: Vec<(String, egui::ColorImage)> = crate::emoji_registry::EMOJI_DATA
+                .iter()
+                .filter_map(|(ch, bytes)| {
+                    image::load_from_memory(bytes).ok().map(|img| {
+                        let rgba = img.to_rgba8();
+                        let (w, h) = rgba.dimensions();
+                        let color_image = egui::ColorImage::from_rgba_unmultiplied(
+                            [w as usize, h as usize],
+                            rgba.as_raw(),
+                        );
+                        (ch.to_string(), color_image)
+                    })
+                })
+                .collect();
+            let _ = tx.send(images);
+        })
+        .ok();
+    rx
+}
+
+/// macOS : montre/retire l'icône du Dock. Repliée dans la barre de menus,
+/// l'application passe en politique `Accessory` (plus de Dock ni de Cmd-Tab) ;
+/// à la réouverture elle redevient `Regular` et revient au premier plan.
+/// Doit être appelé sur le thread principal (c'est le cas dans `update`).
+#[cfg(target_os = "macos")]
+fn set_dock_visible(visible: bool) {
+    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+    let Some(mtm) = objc2_foundation::MainThreadMarker::new() else {
+        return;
+    };
+    let app = NSApplication::sharedApplication(mtm);
+    let policy = if visible {
+        NSApplicationActivationPolicy::Regular
+    } else {
+        NSApplicationActivationPolicy::Accessory
+    };
+    app.setActivationPolicy(policy);
+    if visible {
+        // Revenir au premier plan après la sortie du mode Accessory.
+        #[allow(deprecated)]
+        app.activateIgnoringOtherApps(true);
+    }
+}
+
+#[cfg(not(target_os = "macos"))]
+fn set_dock_visible(_visible: bool) {}

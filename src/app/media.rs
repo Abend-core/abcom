@@ -4,9 +4,62 @@
 //! écrits directement dans `media/<id>` ; l'historique `messages.json` ne
 //! conserve qu'une référence légère (cf. [`crate::message::MediaAttachment`]).
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use super::AppState;
+
+/// Plafond du cache disque des médias reçus (octets). Au-delà, les fichiers
+/// les plus anciens sont supprimés (le fil retombe alors sur la carte
+/// fichier : le message reste, seul l'aperçu local disparaît).
+const MEDIA_CACHE_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Nettoie le cache disque `media/` (appelé au démarrage, hors thread UI) :
+/// 1. supprime les fichiers orphelins — non référencés par l'historique
+///    (leurs messages sont sortis du ring-buffer) : sans cela le dossier
+///    grossit indéfiniment ;
+/// 2. applique le plafond [`MEDIA_CACHE_MAX_BYTES`] en supprimant les plus
+///    anciens (mtime) en premier.
+pub fn gc_media_dir(dir: PathBuf, referenced: HashSet<String>) {
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+
+    let mut kept: Vec<(PathBuf, std::time::SystemTime, u64)> = Vec::new();
+    let mut removed = 0usize;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        if !referenced.contains(name) {
+            if std::fs::remove_file(&path).is_ok() {
+                removed += 1;
+            }
+            continue;
+        }
+        if let Ok(meta) = entry.metadata() {
+            let mtime = meta.modified().unwrap_or(std::time::UNIX_EPOCH);
+            kept.push((path, mtime, meta.len()));
+        }
+    }
+
+    kept.sort_by_key(|(_, mtime, _)| *mtime);
+    let mut total: u64 = kept.iter().map(|(_, _, len)| len).sum();
+    let mut index = 0;
+    while total > MEDIA_CACHE_MAX_BYTES && index < kept.len() {
+        let (path, _, len) = &kept[index];
+        if std::fs::remove_file(path).is_ok() {
+            total -= len;
+            removed += 1;
+        }
+        index += 1;
+    }
+
+    if removed > 0 {
+        eprintln!("[media] GC cache : {removed} fichier(s) supprimé(s)");
+    }
+}
 
 impl AppState {
     /// Chemin du fichier en cache pour un média donné.
@@ -25,64 +78,13 @@ impl AppState {
         let _ = std::fs::remove_file(self.media_path(media_id));
         self.messages
             .retain(|m| m.media.as_ref().is_none_or(|x| x.id != media_id));
-        self.save_messages();
+        self.persist(super::StorageCmd::DeleteMessageByMediaId(
+            media_id.to_string(),
+        ));
+        self.bump_content();
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::app::AppState;
-
-    #[test]
-    fn media_path_under_data_dir() {
-        let dir = std::env::temp_dir().join(format!("abcom_media_{}", std::process::id()));
-        let s = AppState::new_with_base("alice", &dir);
-        assert_eq!(s.media_path("x.bin"), dir.join("media").join("x.bin"));
-        assert!(s.media_bytes("absent.bin").is_none());
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn media_bytes_reads_written_file() {
-        let dir = std::env::temp_dir().join(format!("abcom_media2_{}", std::process::id()));
-        let s = AppState::new_with_base("alice", &dir);
-        std::fs::create_dir_all(dir.join("media")).unwrap();
-        std::fs::write(s.media_path("y.bin"), [7, 8, 9]).unwrap();
-        assert_eq!(s.media_bytes("y.bin"), Some(vec![7, 8, 9]));
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn remove_media_message_drops_message_and_file() {
-        use crate::message::{ChatMessage, MediaAttachment, MediaKind};
-        let dir = std::env::temp_dir().join(format!("abcom_media3_{}", std::process::id()));
-        let mut s = AppState::new_with_base("alice", &dir);
-        std::fs::create_dir_all(dir.join("media")).unwrap();
-        std::fs::write(s.media_path("z.bin"), [1, 2, 3]).unwrap();
-        s.messages.push(ChatMessage {
-            from: "bob".to_string(),
-            content: String::new(),
-            timestamp: "12:00".to_string(),
-            timestamp_epoch: None,
-            to_user: Some("alice".to_string()),
-            media: Some(MediaAttachment {
-                id: "z.bin".to_string(),
-                filename: "z.bin".to_string(),
-                kind: MediaKind::File,
-                size_bytes: 3,
-                url: None,
-                width: None,
-                height: None,
-            }),
-        });
-
-        s.remove_media_message("z.bin");
-
-        assert!(s.messages.is_empty(), "le message média doit être retiré");
-        assert!(
-            s.media_bytes("z.bin").is_none(),
-            "le fichier doit être supprimé"
-        );
-        std::fs::remove_dir_all(&dir).ok();
-    }
-}
+#[path = "../tests/test_app_media.rs"]
+mod tests;

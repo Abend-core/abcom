@@ -50,7 +50,7 @@ fn bind_discovery_socket() -> std::io::Result<UdpSocket> {
 /// Tâche de découverte des pairs par UDP broadcast.
 /// Diffuse le nom d'utilisateur toutes les 3 secondes et écoute les autres.
 /// Détecte aussi les déconnexions quand un peer n'a pas répondu pendant 10s.
-pub async fn run(username: String, tx: Sender<AppEvent>) {
+pub async fn run(username: String, pubkey_hex: String, tx: Sender<AppEvent>) {
     let socket = match bind_discovery_socket() {
         Ok(s) => s,
         Err(e) => {
@@ -62,6 +62,7 @@ pub async fn run(username: String, tx: Sender<AppEvent>) {
     let packet = DiscoveryPacket {
         username: username.clone(),
         port: config::chat_port(),
+        pubkey: pubkey_hex,
     };
     let data = serde_json::to_vec(&packet).unwrap_or_default();
     // On annonce à la fois en multicast (local + LAN, rebouclé) et en broadcast
@@ -73,8 +74,10 @@ pub async fn run(username: String, tx: Sender<AppEvent>) {
     let mut tick_cleanup = interval(Duration::from_secs(CLEANUP_INTERVAL));
     let mut buf = vec![0u8; 1024];
 
-    // Tracker les timestamps des peers découverts
+    // Tracker les timestamps et adresses des peers découverts (la fraîcheur
+    // est gérée ici : l'UI n'est réveillée que sur changement d'état).
     let mut peer_timestamps: HashMap<String, u64> = HashMap::new();
+    let mut peer_addrs: HashMap<String, SocketAddr> = HashMap::new();
 
     loop {
         tokio::select! {
@@ -98,6 +101,7 @@ pub async fn run(username: String, tx: Sender<AppEvent>) {
 
                 for username in disconnected {
                     peer_timestamps.remove(&username);
+                    peer_addrs.remove(&username);
                     let _ = tx.send(AppEvent::PeerDisconnected { username }).await;
                 }
             }
@@ -111,16 +115,22 @@ pub async fn run(username: String, tx: Sender<AppEvent>) {
                                 .unwrap_or_default()
                                 .as_secs();
 
-                            peer_timestamps.insert(pkt.username.clone(), now);
-
                             // Adresse TCP du pair = IP source + port de chat annoncé
                             let tcp_addr = SocketAddr::new(addr.ip(), pkt.port);
 
-                            // On envoie PeerDiscovered à chaque fois, l'UI gère les doublons
-                            let _ = tx.send(AppEvent::PeerDiscovered {
-                                username: pkt.username,
-                                addr: tcp_addr,
-                            }).await;
+                            // N'émettre PeerDiscovered que sur changement réel
+                            // (nouveau pair, adresse changée, retour après
+                            // déconnexion) : chaque événement réveille l'UI,
+                            // les annonces périodiques ne doivent pas.
+                            let is_new = peer_timestamps.insert(pkt.username.clone(), now).is_none();
+                            let addr_changed = peer_addrs.insert(pkt.username.clone(), tcp_addr)
+                                != Some(tcp_addr);
+                            if is_new || addr_changed {
+                                let _ = tx.send(AppEvent::PeerDiscovered {
+                                    username: pkt.username,
+                                    addr: tcp_addr,
+                                }).await;
+                            }
                         }
                     }
                 }
@@ -130,50 +140,5 @@ pub async fn run(username: String, tx: Sender<AppEvent>) {
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::message::DiscoveryPacket;
-
-    #[test]
-    fn discovery_packet_round_trip() {
-        let pkt = DiscoveryPacket {
-            username: "alice".to_string(),
-            port: 9000,
-        };
-        let json = serde_json::to_string(&pkt).unwrap();
-        let decoded: DiscoveryPacket = serde_json::from_str(&json).unwrap();
-        assert_eq!(decoded.username, "alice");
-        assert_eq!(decoded.port, 9000);
-    }
-
-    #[test]
-    fn discovery_packet_legacy_without_port() {
-        // Anciens clients qui n'envoient pas le champ `port`
-        let json = r#"{"username":"bob"}"#;
-        let decoded: DiscoveryPacket = serde_json::from_str(json).unwrap();
-        assert_eq!(decoded.username, "bob");
-        assert_eq!(
-            decoded.port, 9000,
-            "port absent doit valoir 9000 (rétro-compat)"
-        );
-    }
-
-    #[test]
-    fn discovery_packet_ignores_unknown_fields() {
-        let json = r#"{"username":"charlie","port":8888,"extra":"ignored"}"#;
-        let decoded: DiscoveryPacket = serde_json::from_str(json).unwrap();
-        assert_eq!(decoded.username, "charlie");
-        assert_eq!(decoded.port, 8888);
-    }
-
-    #[tokio::test]
-    async fn bind_discovery_socket_succeeds() {
-        // Vérifie que la création du socket UDP (SO_REUSEADDR + broadcast) fonctionne.
-        // Deux instances doivent pouvoir partager le même port — c'est l'invariant clé.
-        let result = super::bind_discovery_socket();
-        assert!(
-            result.is_ok(),
-            "bind_discovery_socket a échoué: {:?}",
-            result.err()
-        );
-    }
-}
+#[path = "tests/test_discovery.rs"]
+mod tests;

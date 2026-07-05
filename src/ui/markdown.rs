@@ -348,16 +348,37 @@ fn push_text(spans: &mut Vec<MarkdownSpan>, text: &str) {
     }
 }
 
-pub(crate) fn render_message_markdown(
-    ui: &mut egui::Ui,
+/// Résultat du parse d'un message, mis en cache par le fil (le parse ne se
+/// fait qu'une fois par message, pas à chaque frame).
+#[derive(Clone, Debug)]
+pub(crate) struct ParsedMarkdown {
+    pub(crate) blocks: Vec<MarkdownBlock>,
+    pub(crate) emoji_only: bool,
+}
+
+/// Parse un message : blocs markdown + détection « uniquement des emojis »
+/// (affichés en grand dans ce cas, façon Discord).
+pub(crate) fn parse_message(
     text: &str,
+    emoji_map: &std::collections::HashMap<String, usize>,
+) -> ParsedMarkdown {
+    ParsedMarkdown {
+        blocks: parse_markdown(text),
+        emoji_only: is_text_emoji_only(text, emoji_map),
+    }
+}
+
+/// Rend des blocs déjà parsés (chemin chaud du fil : aucune allocation de
+/// parse par frame).
+pub(crate) fn render_parsed_markdown(
+    ui: &mut egui::Ui,
+    parsed: &ParsedMarkdown,
     emoji_map: &std::collections::HashMap<String, usize>,
     emoji_textures: &[(String, egui::TextureHandle)],
 ) {
-    let is_emoji_only = is_text_emoji_only(text, emoji_map);
-    let emoji_size = if is_emoji_only { 44.0 } else { 22.0 };
+    let emoji_size = if parsed.emoji_only { 44.0 } else { 22.0 };
 
-    for block in parse_markdown(text) {
+    for block in &parsed.blocks {
         match block {
             MarkdownBlock::Blank => {
                 ui.add_space(6.0);
@@ -366,7 +387,7 @@ pub(crate) fn render_message_markdown(
                 ui.horizontal_wrapped(|ui| {
                     render_spans_with_emoji_size(
                         ui,
-                        &spans,
+                        spans,
                         emoji_map,
                         emoji_textures,
                         None,
@@ -383,7 +404,7 @@ pub(crate) fn render_message_markdown(
                 ui.horizontal_wrapped(|ui| {
                     render_spans_with_emoji_size(
                         ui,
-                        &spans,
+                        spans,
                         emoji_map,
                         emoji_textures,
                         Some(SpanOverride::Heading(size)),
@@ -396,7 +417,7 @@ pub(crate) fn render_message_markdown(
                     ui.label("• ");
                     render_spans_with_emoji_size(
                         ui,
-                        &spans,
+                        spans,
                         emoji_map,
                         emoji_textures,
                         None,
@@ -409,7 +430,7 @@ pub(crate) fn render_message_markdown(
                     ui.label(format!("{}. ", number));
                     render_spans_with_emoji_size(
                         ui,
-                        &spans,
+                        spans,
                         emoji_map,
                         emoji_textures,
                         None,
@@ -418,16 +439,10 @@ pub(crate) fn render_message_markdown(
                 });
             }
             MarkdownBlock::Blockquote(spans) => {
-                render_blockquote_with_emoji_size(
-                    ui,
-                    &spans,
-                    emoji_map,
-                    emoji_textures,
-                    emoji_size,
-                );
+                render_blockquote_with_emoji_size(ui, spans, emoji_map, emoji_textures, emoji_size);
             }
             MarkdownBlock::CodeBlock { language, code } => {
-                render_code_block(ui, language.as_deref(), &code);
+                render_code_block(ui, language.as_deref(), code);
             }
             MarkdownBlock::ThematicBreak => {
                 ui.separator();
@@ -649,126 +664,5 @@ fn link_text(label: &str, override_style: Option<SpanOverride>) -> egui::RichTex
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_bold_italic_and_code_spans() {
-        assert_eq!(
-            parse_markdown("Un **gras**, un *italique* et `code`"),
-            vec![MarkdownBlock::Paragraph(vec![
-                MarkdownSpan::Text("Un ".to_string()),
-                MarkdownSpan::Strong("gras".to_string()),
-                MarkdownSpan::Text(", un ".to_string()),
-                MarkdownSpan::Emphasis("italique".to_string()),
-                MarkdownSpan::Text(" et ".to_string()),
-                MarkdownSpan::Code("code".to_string()),
-            ])]
-        );
-    }
-
-    #[test]
-    fn parses_headings_and_bullets() {
-        assert_eq!(
-            parse_markdown("# Titre\n- item **important**"),
-            vec![
-                MarkdownBlock::Heading {
-                    level: 1,
-                    spans: vec![MarkdownSpan::Text("Titre".to_string())],
-                },
-                MarkdownBlock::Bullet(vec![
-                    MarkdownSpan::Text("item ".to_string()),
-                    MarkdownSpan::Strong("important".to_string()),
-                ]),
-            ]
-        );
-    }
-
-    #[test]
-    fn parses_ordered_quotes_and_links() {
-        assert_eq!(
-            parse_markdown("1. [Guide](https://example.com)\n> note importante"),
-            vec![
-                MarkdownBlock::OrderedBullet {
-                    number: 1,
-                    spans: vec![MarkdownSpan::Link {
-                        label: "Guide".to_string(),
-                        url: "https://example.com".to_string(),
-                    }],
-                },
-                MarkdownBlock::Blockquote(vec![MarkdownSpan::Text("note importante".to_string(),)]),
-            ]
-        );
-    }
-
-    #[test]
-    fn merges_plain_lines_into_single_paragraph() {
-        assert_eq!(
-            parse_markdown("ligne un\nligne deux\n\n- suite"),
-            vec![
-                MarkdownBlock::Paragraph(vec![MarkdownSpan::Text(
-                    "ligne un ligne deux".to_string(),
-                )]),
-                MarkdownBlock::Blank,
-                MarkdownBlock::Bullet(vec![MarkdownSpan::Text("suite".to_string())]),
-            ]
-        );
-    }
-
-    #[test]
-    fn parses_fenced_code_blocks() {
-        assert_eq!(
-            parse_markdown("Avant\n```rust\nfn main() {\n    println!(\"ok\");\n}\n```\nApres"),
-            vec![
-                MarkdownBlock::Paragraph(vec![MarkdownSpan::Text("Avant".to_string())]),
-                MarkdownBlock::CodeBlock {
-                    language: Some("rust".to_string()),
-                    code: "fn main() {\n    println!(\"ok\");\n}".to_string(),
-                },
-                MarkdownBlock::Paragraph(vec![MarkdownSpan::Text("Apres".to_string())]),
-            ]
-        );
-    }
-
-    #[test]
-    fn keeps_unclosed_fenced_code_as_code_block() {
-        assert_eq!(
-            parse_markdown("```\ncode **non markdown**"),
-            vec![MarkdownBlock::CodeBlock {
-                language: None,
-                code: "code **non markdown**".to_string(),
-            }]
-        );
-    }
-
-    #[test]
-    fn trims_trailing_blank_lines_from_fenced_code() {
-        assert_eq!(
-            parse_markdown("```rust\nfn main() {}\n\n```"),
-            vec![MarkdownBlock::CodeBlock {
-                language: Some("rust".to_string()),
-                code: "fn main() {}".to_string(),
-            }]
-        );
-    }
-
-    #[test]
-    fn leaves_unclosed_markers_as_text() {
-        assert_eq!(
-            parse_markdown("hello **pas ferme"),
-            vec![MarkdownBlock::Paragraph(vec![MarkdownSpan::Text(
-                "hello **pas ferme".to_string()
-            )])]
-        );
-    }
-
-    #[test]
-    fn keeps_single_line_triple_backticks_as_inline_code() {
-        assert_eq!(
-            parse_markdown("``` test ```"),
-            vec![MarkdownBlock::Paragraph(vec![MarkdownSpan::Code(
-                " test ".to_string(),
-            )])]
-        );
-    }
-}
+#[path = "../tests/test_ui_markdown.rs"]
+mod tests;

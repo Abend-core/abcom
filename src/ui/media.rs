@@ -69,6 +69,10 @@ pub(crate) fn refused_media_message(
         timestamp_epoch: Some(now.timestamp() as u64),
         to_user,
         media: None,
+        reply_to: None,
+        // Pas de nonce : ce message est construit indépendamment chez
+        // l'émetteur et le destinataire et doit avoir le même hash des deux côtés.
+        nonce: None,
     }
 }
 
@@ -172,15 +176,23 @@ pub(crate) fn render_media_block(
 ) -> Option<MediaAction> {
     // GIF : animé via les loaders egui_extras, chargé depuis l'URL Klipy.
     // Taille forcée d'après le ratio HD pour un affichage net et non riquiqui.
+    // Gel hors écran : la place est réservée (pas de saut de layout), mais le
+    // widget animé n'est émis que si le rectangle intersecte le viewport —
+    // un GIF invisible ne décode rien, ne s'anime pas et ne déclenche aucun
+    // repaint. Dès qu'un pixel entre à l'écran, il s'anime immédiatement.
     if media.kind == MediaKind::Gif {
         if let Some(url) = &media.url {
             let max_w = GIF_MAX_WIDTH.min(ui.available_width());
             let size = gif_display_size(media.width, media.height, max_w, GIF_MAX_HEIGHT);
-            ui.add(
-                egui::Image::from_uri(url.clone())
-                    .fit_to_exact_size(size)
-                    .corner_radius(8.0),
-            );
+            let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+            if ui.is_rect_visible(rect) {
+                ui.put(
+                    rect,
+                    egui::Image::from_uri(url.clone())
+                        .fit_to_exact_size(size)
+                        .corner_radius(8.0),
+                );
+            }
             return None;
         }
         return file_card(ui, media);
@@ -319,7 +331,7 @@ fn download_button(ui: &mut egui::Ui) -> bool {
 }
 
 /// Raccourcit un texte trop long avec une ellipse finale.
-fn elide(text: &str, max_chars: usize) -> String {
+pub(crate) fn elide(text: &str, max_chars: usize) -> String {
     if text.chars().count() <= max_chars {
         return text.to_string();
     }
@@ -327,35 +339,134 @@ fn elide(text: &str, max_chars: usize) -> String {
     format!("{kept}…")
 }
 
+/// UVs de recadrage centré pour remplir un carré `target_w`x`target_h` à
+/// partir d'une texture `tex_size`, en préservant le centre de l'image source
+/// (portrait : rogne haut/bas ; paysage : rogne gauche/droite).
+fn center_crop_uv(tex_size: egui::Vec2, target_w: f32, target_h: f32) -> (egui::Pos2, egui::Pos2) {
+    if tex_size.x <= 0.0 || tex_size.y <= 0.0 || target_w <= 0.0 || target_h <= 0.0 {
+        return (egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+    }
+    let tex_ratio = tex_size.x / tex_size.y;
+    let target_ratio = target_w / target_h;
+    if tex_ratio > target_ratio {
+        // Image plus large que la cible : rogner les côtés.
+        let visible_frac = target_ratio / tex_ratio;
+        let margin = (1.0 - visible_frac) / 2.0;
+        (egui::pos2(margin, 0.0), egui::pos2(1.0 - margin, 1.0))
+    } else {
+        // Image plus haute (ou égale) que la cible : rogner haut/bas.
+        let visible_frac = tex_ratio / target_ratio;
+        let margin = (1.0 - visible_frac) / 2.0;
+        (egui::pos2(0.0, margin), egui::pos2(1.0, 1.0 - margin))
+    }
+}
+
+/// Vignette carrée compacte (façon Discord) pour un aperçu de réponse,
+/// recadrée au centre — contrairement à `render_media_block`, qui préserve le
+/// ratio complet de l'image.
+pub(crate) fn render_reply_thumb(
+    ui: &mut egui::Ui,
+    texture: Option<&egui::TextureHandle>,
+    size: f32,
+) {
+    let Some(texture) = texture else {
+        return;
+    };
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(size, size), egui::Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let (uv_min, uv_max) = center_crop_uv(texture.size_vec2(), size, size);
+    ui.painter().image(
+        texture.id(),
+        rect,
+        egui::Rect::from_min_max(uv_min, uv_max),
+        egui::Color32::WHITE,
+    );
+}
+
+/// Côté maximal (px) d'une texture affichée dans le fil. Le rendu y est borné
+/// à ~320 px : 1024 couvre largement les écrans retina sans stocker la pleine
+/// résolution (une photo 12 Mpx ferait ~48 Mo de texture GPU). La visionneuse
+/// charge sa propre texture pleine résolution, libérée à sa fermeture.
+const FEED_TEXTURE_MAX_PX: u32 = 1024;
+/// Nombre maximal de textures médias conservées en cache (éviction LRU).
+const MEDIA_TEXTURE_CACHE_MAX: usize = 32;
+
 impl AbcomApp {
-    /// Texture d'un média image, chargée paresseusement puis mise en cache.
+    /// Texture d'un média image pour le fil : chargée paresseusement,
+    /// réduite à [`FEED_TEXTURE_MAX_PX`], mise en cache avec éviction LRU.
     pub(crate) fn media_texture(
         &mut self,
         ctx: &egui::Context,
         id: &str,
     ) -> Option<egui::TextureHandle> {
         if let Some(cached) = self.media_textures.get(id) {
-            return cached.clone();
+            let cached = cached.clone();
+            self.touch_media_texture(id);
+            return cached;
         }
-        let texture = self.load_media_texture(ctx, id);
+        let texture = self.load_media_texture(ctx, id, Some(FEED_TEXTURE_MAX_PX));
         self.media_textures.insert(id.to_string(), texture.clone());
+        self.touch_media_texture(id);
+        self.evict_media_textures();
         texture
     }
 
-    fn load_media_texture(&self, ctx: &egui::Context, id: &str) -> Option<egui::TextureHandle> {
+    /// Place `id` en tête de l'ordre d'accès LRU.
+    fn touch_media_texture(&mut self, id: &str) {
+        if let Some(pos) = self.media_texture_lru.iter().position(|x| x == id) {
+            self.media_texture_lru.remove(pos);
+        }
+        self.media_texture_lru.push(id.to_string());
+    }
+
+    /// Évince les textures les moins récemment affichées au-delà du plafond
+    /// (les handles droppés libèrent la mémoire GPU côté egui).
+    fn evict_media_textures(&mut self) {
+        while self.media_texture_lru.len() > MEDIA_TEXTURE_CACHE_MAX {
+            let oldest = self.media_texture_lru.remove(0);
+            self.media_textures.remove(&oldest);
+        }
+    }
+
+    /// Texture pleine résolution pour la visionneuse, conservée uniquement
+    /// tant qu'elle est ouverte.
+    fn viewer_texture_for(&mut self, ctx: &egui::Context, id: &str) -> Option<egui::TextureHandle> {
+        if let Some((cached_id, texture)) = &self.viewer_texture {
+            if cached_id == id {
+                return Some(texture.clone());
+            }
+        }
+        let texture = self.load_media_texture(ctx, id, None)?;
+        self.viewer_texture = Some((id.to_string(), texture.clone()));
+        Some(texture)
+    }
+
+    fn load_media_texture(
+        &self,
+        ctx: &egui::Context,
+        id: &str,
+        max_px: Option<u32>,
+    ) -> Option<egui::TextureHandle> {
         let bytes = self.state.lock().unwrap().media_bytes(id)?;
-        let image = image::load_from_memory(&bytes).ok()?;
+        let mut image = image::load_from_memory(&bytes).ok()?;
+        let name = match max_px {
+            Some(max) => {
+                if image.width().max(image.height()) > max {
+                    image = image.thumbnail(max, max);
+                }
+                format!("media_{id}")
+            }
+            None => format!("media_full_{id}"),
+        };
         let rgba = image.to_rgba8();
         let (width, height) = rgba.dimensions();
         let color_image = egui::ColorImage::from_rgba_unmultiplied(
             [width as usize, height as usize],
             rgba.as_raw(),
         );
-        Some(ctx.load_texture(
-            format!("media_{id}"),
-            color_image,
-            egui::TextureOptions::LINEAR,
-        ))
+        Some(ctx.load_texture(name, color_image, egui::TextureOptions::LINEAR))
     }
 
     /// Nom d'origine d'un média retrouvé dans l'historique (sinon son `id`).
@@ -401,9 +512,11 @@ impl AbcomApp {
     /// Visionneuse plein écran : image agrandie + bouton de téléchargement.
     pub(crate) fn show_media_viewer(&mut self, ctx: &egui::Context) {
         let Some(id) = self.media_viewer.clone() else {
+            // Visionneuse fermée : libère la texture pleine résolution.
+            self.viewer_texture = None;
             return;
         };
-        let texture = self.media_texture(ctx, &id);
+        let texture = self.viewer_texture_for(ctx, &id);
         let filename = self.media_filename(&id);
         let title = self.tr("Aperçu", "Preview");
         let download_label = self.tr("⬇ Télécharger", "⬇ Download");
@@ -445,6 +558,7 @@ impl AbcomApp {
         }
         if !open {
             self.media_viewer = None;
+            self.viewer_texture = None;
         }
     }
 
@@ -478,57 +592,5 @@ fn unique_destination(dir: &std::path::Path, filename: &str) -> std::path::PathB
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{media_display_name, media_id, refused_media_message, unique_destination};
-
-    #[test]
-    fn display_name_of_file_and_folder() {
-        let dir = std::env::temp_dir().join(format!("abcom_dn_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("rapport.pdf");
-        std::fs::write(&file, b"x").unwrap();
-        assert_eq!(media_display_name(&file), "rapport.pdf");
-        assert_eq!(
-            media_display_name(&dir),
-            format!("{}.zip", dir.file_name().unwrap().to_str().unwrap())
-        );
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn media_id_sanitizes_and_keeps_extension() {
-        let id = media_id("mon dossier/é@.png");
-        assert!(id.contains('-'), "préfixe horodaté attendu");
-        assert!(id.ends_with(".png"), "extension conservée");
-        // Aucun caractère problématique de chemin n'est conservé.
-        assert!(!id.contains('/') && !id.contains(' ') && !id.contains('@'));
-    }
-
-    #[test]
-    fn refused_message_is_attributed_to_sender() {
-        let msg = refused_media_message("bob", "photo.zip", Some("ellis".to_string()));
-        assert_eq!(msg.from, "bob");
-        assert!(msg.content.contains("photo.zip"));
-        assert!(msg.media.is_none());
-        assert_eq!(msg.to_user.as_deref(), Some("ellis"));
-    }
-
-    #[test]
-    fn unique_destination_keeps_free_name() {
-        let dir = std::env::temp_dir().join(format!("abcom_dl_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let dest = unique_destination(&dir, "libre.txt");
-        assert_eq!(dest, dir.join("libre.txt"));
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn unique_destination_avoids_collision() {
-        let dir = std::env::temp_dir().join(format!("abcom_dl2_{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("photo.png"), b"x").unwrap();
-        let dest = unique_destination(&dir, "photo.png");
-        assert_eq!(dest, dir.join("photo (1).png"));
-        std::fs::remove_dir_all(&dir).ok();
-    }
-}
+#[path = "../tests/test_ui_media.rs"]
+mod tests;

@@ -6,27 +6,51 @@ impl AppState {
         let incoming_from_selected = self
             .selected_conversation
             .as_ref()
-            .map(|u| msg.from == *u && msg.to_user == Some(self.my_username.clone()))
+            .map(|u| msg.from == *u && msg.to_user.as_deref() == Some(self.my_username.as_str()))
             .unwrap_or(false);
+        let from = msg.from.clone();
 
-        self.messages.push(msg.clone());
+        self.persist(super::StorageCmd::InsertMessage(msg.clone()));
+        self.messages.push(msg);
         if incoming_from_selected {
-            self.mark_conversation_read(&msg.from);
+            self.mark_conversation_read(&from);
         }
-        if self.messages.len() > 500 {
-            self.messages.drain(0..100);
+        // La fenêtre mémoire reste bornée ; l'historique complet vit en base
+        // (les messages drainés restent chargeables par pagination).
+        if self.messages.len() > self.history_cap() {
+            let overflow = self.messages.len() - self.history_cap() + 99;
+            let n = overflow.min(self.messages.len());
+            self.messages.drain(0..n);
+            self.oldest_loaded_rowid = None; // rowids inconnus après drain
+            self.purge_stale_message_state();
         }
-        self.save_messages();
+        self.bump_content();
+    }
+
+    /// Retire des maps annexes (réactions, accusés, en-attente) les entrées
+    /// dont le message est sorti du ring-buffer — sans quoi elles croissent
+    /// indéfiniment au fil de la session.
+    fn purge_stale_message_state(&mut self) {
+        let live: std::collections::HashSet<u64> =
+            self.messages.iter().map(Self::message_hash).collect();
+        self.reactions.retain(|hash, _| live.contains(hash));
+        self.read_receipts.retain(|hash, _| live.contains(hash));
+        self.pending_messages.retain(|hash, _| live.contains(hash));
     }
 
     pub fn mark_conversation_read(&mut self, peer_username: &str) {
+        let me = self.my_username.as_str();
         let count = self
             .messages
             .iter()
-            .filter(|m| m.from == peer_username && m.to_user == Some(self.my_username.clone()))
+            .filter(|m| m.from == peer_username && m.to_user.as_deref() == Some(me))
             .count();
         self.read_counts.insert(peer_username.to_string(), count);
-        self.save_read_counts();
+        self.persist(super::StorageCmd::SetReadCount {
+            username: peer_username.to_string(),
+            count: count as u64,
+        });
+        self.bump_content();
     }
 
     /// Messages de la conversation sélectionnée
@@ -77,133 +101,19 @@ impl AppState {
                 let me = self.my_username.clone();
                 let u = username.clone();
                 self.messages.retain(|m| {
-                    !((m.from == u && m.to_user == Some(me.clone()))
-                        || (m.from == me && m.to_user == Some(u.clone())))
+                    !((m.from == u && m.to_user.as_deref() == Some(me.as_str()))
+                        || (m.from == me && m.to_user.as_deref() == Some(u.as_str())))
                 });
             }
         }
-        self.save_messages();
+        self.persist(super::StorageCmd::DeleteConversation {
+            me: self.my_username.clone(),
+            conv: self.selected_conversation.clone(),
+        });
+        self.bump_content();
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::app::AppState;
-    use crate::message::ChatMessage;
-
-    fn state(username: &str) -> AppState {
-        let mut s = AppState::new(username.to_string());
-        s.messages.clear();
-        s.peers.clear();
-        s.read_counts.clear();
-        s
-    }
-
-    fn msg(from: &str, to: Option<&str>, content: &str) -> ChatMessage {
-        ChatMessage {
-            from: from.to_string(),
-            content: content.to_string(),
-            timestamp: "12:00".to_string(),
-            timestamp_epoch: None,
-            to_user: to.map(|s| s.to_string()),
-            media: None,
-        }
-    }
-
-    #[test]
-    fn test_add_message_increases_count() {
-        let mut s = state("alice");
-        s.add_message(msg("bob", None, "hello"));
-        assert_eq!(s.messages.len(), 1);
-    }
-
-    #[test]
-    fn test_unread_count_zero_no_messages() {
-        let s = state("alice");
-        assert_eq!(s.unread_count("bob"), 0);
-    }
-
-    #[test]
-    fn test_unread_count_increments() {
-        let mut s = state("alice");
-        s.messages.push(msg("bob", Some("alice"), "hi"));
-        s.messages.push(msg("bob", Some("alice"), "hey"));
-        assert_eq!(s.unread_count("bob"), 2);
-    }
-
-    #[test]
-    fn test_unread_count_zero_when_conversation_selected() {
-        let mut s = state("alice");
-        s.messages.push(msg("bob", Some("alice"), "hi"));
-        s.selected_conversation = Some("bob".to_string());
-        assert_eq!(s.unread_count("bob"), 0);
-    }
-
-    #[test]
-    fn test_mark_conversation_read_clears_unread() {
-        let mut s = state("alice");
-        s.messages.push(msg("bob", Some("alice"), "hi"));
-        s.messages.push(msg("bob", Some("alice"), "hey"));
-        s.mark_conversation_read("bob");
-        assert_eq!(s.unread_count("bob"), 0);
-    }
-
-    #[test]
-    fn test_get_broadcast_messages() {
-        let mut s = state("alice");
-        s.messages.push(msg("bob", None, "broadcast"));
-        s.messages.push(msg("bob", Some("alice"), "private"));
-        // selected_conversation = None → broadcast only
-        let result = s.get_conversation_messages();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].content, "broadcast");
-    }
-
-    #[test]
-    fn test_get_private_conversation_messages() {
-        let mut s = state("alice");
-        s.messages.push(msg("bob", Some("alice"), "coucou"));
-        s.messages.push(msg("alice", Some("bob"), "salut"));
-        s.messages.push(msg("charlie", Some("alice"), "hey"));
-        s.selected_conversation = Some("bob".to_string());
-        let result = s.get_conversation_messages();
-        assert_eq!(result.len(), 2);
-        assert!(result.iter().all(|m| m.from == "bob" || m.from == "alice"));
-    }
-
-    #[test]
-    fn test_clear_conversation_history_private() {
-        let mut s = state("alice");
-        s.messages.push(msg("bob", Some("alice"), "hi"));
-        s.messages.push(msg("alice", Some("bob"), "ok"));
-        s.messages.push(msg("charlie", Some("alice"), "hey"));
-        s.selected_conversation = Some("bob".to_string());
-        s.clear_conversation_history();
-        // only charlie's message survives
-        assert_eq!(s.messages.len(), 1);
-        assert_eq!(s.messages[0].from, "charlie");
-    }
-
-    #[test]
-    fn test_clear_conversation_history_broadcast() {
-        let mut s = state("alice");
-        s.messages.push(msg("bob", None, "global"));
-        s.messages.push(msg("bob", Some("alice"), "private"));
-        // No selection → clear broadcast
-        s.clear_conversation_history();
-        assert_eq!(s.messages.len(), 1);
-        assert_eq!(s.messages[0].to_user, Some("alice".to_string()));
-    }
-
-    #[test]
-    fn test_message_cap_at_500() {
-        let mut s = state("alice");
-        // Fill 500 messages then add 1 → drain 100 from front
-        for i in 0..500 {
-            s.messages.push(msg("bob", None, &i.to_string()));
-        }
-        s.add_message(msg("bob", None, "overflow"));
-        assert_eq!(s.messages.len(), 401);
-        assert_eq!(s.messages.last().unwrap().content, "overflow");
-    }
-}
+#[path = "../tests/test_app_messages.rs"]
+mod tests;

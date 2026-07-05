@@ -8,28 +8,40 @@ use crate::message::{
 };
 
 impl AbcomApp {
-    /// Chargement paresseux des textures emoji (nécessite le contexte egui)
+    /// Textures emoji : les PNG sont décodés dans un thread au démarrage
+    /// (cf. `spawn_emoji_decoder`) ; ici on ne fait que récupérer le résultat
+    /// et créer les textures (rapide). Tant qu'il n'est pas prêt, l'UI
+    /// s'affiche sans emojis et repeint brièvement en attendant.
     pub(crate) fn lazy_load_emoji(&mut self, ctx: &egui::Context) {
         if self.emoji_textures_loaded {
             return;
         }
-        self.emoji_textures = crate::emoji_registry::EMOJI_DATA
-            .iter()
-            .filter_map(|(ch, bytes)| {
-                image::load_from_memory(bytes).ok().map(|img| {
-                    let rgba = img.to_rgba8();
-                    let (w, h) = rgba.dimensions();
-                    let color_image = egui::ColorImage::from_rgba_unmultiplied(
-                        [w as usize, h as usize],
-                        rgba.as_raw(),
-                    );
-                    let texture = ctx.load_texture(
-                        format!("emoji_{ch}"),
-                        color_image,
-                        egui::TextureOptions::LINEAR,
-                    );
-                    (ch.to_string(), texture)
-                })
+        let Some(rx) = &self.emoji_decode_rx else {
+            return;
+        };
+        let images = match rx.try_recv() {
+            Ok(images) => images,
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                // Décodage en cours : re-tenter très bientôt.
+                ctx.request_repaint_after(std::time::Duration::from_millis(50));
+                return;
+            }
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.emoji_decode_rx = None;
+                return;
+            }
+        };
+        self.emoji_decode_rx = None;
+
+        self.emoji_textures = images
+            .into_iter()
+            .map(|(ch, color_image)| {
+                let texture = ctx.load_texture(
+                    format!("emoji_{ch}"),
+                    color_image,
+                    egui::TextureOptions::LINEAR,
+                );
+                (ch, texture)
             })
             .collect();
 
@@ -49,6 +61,10 @@ impl AbcomApp {
         self.emoji_alias_to_char = alias_to_char;
         self.emoji_aliases = aliases;
         self.emoji_textures_loaded = true;
+
+        // Les messages parsés avant l'arrivée du registre ont une détection
+        // « emoji seul » erronée : on reconstruit le cache du fil.
+        self.chat_cache.invalidate();
     }
 
     /// Dépile les événements réseau reçus depuis les tâches tokio
@@ -108,7 +124,17 @@ impl AbcomApp {
                         };
                         let already_in_conv = s.selected_conversation == source_conv;
                         let conv_muted = self.muted_conversations.contains(&source_conv);
-                        if self.enable_sound_notifications && !already_in_conv && !conv_muted {
+                        if self.window_hidden {
+                            // Fenêtre repliée : notification système native
+                            // (aperçu selon la préférence), pas de bip interne.
+                            if !conv_muted {
+                                Self::notify_native(
+                                    msg.from.clone(),
+                                    self.native_body_for(&msg.content),
+                                );
+                            }
+                        } else if self.enable_sound_notifications && !already_in_conv && !conv_muted
+                        {
                             play_notification_sound();
                         }
                     }
@@ -185,6 +211,40 @@ impl AbcomApp {
                 AppEvent::MessageAckReceived(ack) => {
                     s.mark_message_acked(ack.message_hash);
                 }
+                AppEvent::ReactionReceived(event) => {
+                    s.apply_reaction_event(&event);
+                }
+                AppEvent::KeyChanged { username } => {
+                    // Alerte sécurité : la clé du pair ne correspond plus à
+                    // celle épinglée — la connexion a été refusée.
+                    let label = self.tr(
+                        "la clé d'identité a changé, connexion refusée",
+                        "identity key changed, connection refused",
+                    );
+                    self.last_notification = Some(format!("⚠️ {} : {}", username, label));
+                    self.notification_time = std::time::Instant::now();
+                    if self.window_hidden {
+                        Self::notify_native(format!("⚠️ {username}"), label.to_string());
+                    } else if self.enable_sound_notifications {
+                        play_notification_sound();
+                    }
+                }
+                AppEvent::OlderMessagesLoaded {
+                    messages,
+                    oldest_rowid,
+                } => {
+                    // Page d'historique demandée par le scroll vers le haut :
+                    // préfixée à la fenêtre mémoire, la compensation d'offset
+                    // du fil évite tout saut visuel.
+                    if messages.is_empty() {
+                        // Début de l'historique atteint : ne plus rien attendre.
+                        self.chat_prepend_fix = None;
+                    } else {
+                        self.chat_visible_count += messages.len();
+                    }
+                    s.prepend_older_messages(messages, oldest_rowid);
+                    self.loading_older = false;
+                }
                 AppEvent::AvatarReceived(announce) => {
                     let from = announce.from.clone();
                     s.set_peer_avatar(announce.from, announce.png);
@@ -202,17 +262,20 @@ impl AbcomApp {
                         timestamp_epoch: header.timestamp_epoch,
                         to_user: header.to_user,
                         media: Some(header.media),
+                        reply_to: None,
+                        // Pas de nonce : le hash doit coïncider avec celui de
+                        // la copie locale de l'émetteur (cf. ChatMessage::nonce).
+                        nonce: None,
                     };
                     s.add_message(msg.clone());
                     if from != s.my_username {
-                        self.last_notification = Some(format!(
-                            "{} {}",
-                            from,
-                            self.tr("vous envoie un fichier", "is sending you a file")
-                        ));
+                        let label = self.tr("vous envoie un fichier", "is sending you a file");
+                        self.last_notification = Some(format!("{} {}", from, label));
                         self.notification_time = std::time::Instant::now();
                         self.has_unread = true;
-                        if self.enable_sound_notifications {
+                        if self.window_hidden {
+                            Self::notify_native(from.clone(), label.to_string());
+                        } else if self.enable_sound_notifications {
                             play_notification_sound();
                         }
                     }
@@ -253,34 +316,31 @@ impl AbcomApp {
             }
         }
         s.clear_typing_if_old();
+        self.typing_active = !s.typing_users.is_empty();
     }
 
     /// Récupère les offres de médias volumineux (> 1 Go) en attente d'accord et
     /// les ajoute au bandeau d'acceptation.
     pub(crate) fn process_media_offers(&mut self) {
         while let Ok(offer) = self.media_offer_rx.try_recv() {
-            self.last_notification = Some(format!(
-                "{} {}",
-                offer.from,
-                self.tr("vous envoie un fichier", "is sending you a file")
-            ));
+            let label = self.tr("vous envoie un fichier", "is sending you a file");
+            self.last_notification = Some(format!("{} {}", offer.from, label));
             self.notification_time = std::time::Instant::now();
             self.has_unread = true;
-            if self.enable_sound_notifications {
+            if self.window_hidden {
+                Self::notify_native(offer.from.clone(), label.to_string());
+            } else if self.enable_sound_notifications {
                 play_notification_sound();
             }
             self.pending_media_offers.push(offer);
         }
     }
 
-    /// Tâches périodiques : nettoyage des pairs inactifs et retry ACK
+    /// Tâches périodiques : retry ACK et écriture débouncée de la
+    /// persistance (hors thread UI). La présence des pairs n'est plus
+    /// vérifiée ici : la tâche discovery est autoritaire et émet
+    /// `PeerDisconnected` (l'UI n'est réveillée que sur changement).
     pub(crate) fn periodic_tasks(&mut self) {
-        if self.last_cleanup_time.elapsed().as_secs() >= 5 {
-            self.last_cleanup_time = std::time::Instant::now();
-            let mut s = self.state.lock().unwrap();
-            s.cleanup_inactive_peers(10);
-        }
-
         if self.last_retry_time.elapsed().as_secs_f32() >= 2.0 {
             self.last_retry_time = std::time::Instant::now();
             let retry_messages = self.state.lock().unwrap().get_retry_messages();
