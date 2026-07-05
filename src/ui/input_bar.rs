@@ -514,7 +514,7 @@ impl AbcomApp {
                     .fill(egui::Color32::from_rgb(66, 66, 69))
                     .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(96, 96, 100)))
                     .corner_radius(egui::CornerRadius::same(14))
-                    .inner_margin(egui::Margin::symmetric(8, 6))
+                    .inner_margin(egui::Margin::symmetric(8, 4))
                     .show(ui, |ui| {
                         ui.vertical(|ui| {
                             // Aperçu de réponse : extrait les données possédées
@@ -753,7 +753,7 @@ impl AbcomApp {
                                 sep_rect.center().y,
                                 egui::Stroke::new(1.0, egui::Color32::from_rgb(96, 96, 100)),
                             );
-                            ui.add_space(4.0);
+                            ui.add_space(3.0);
 
                             // Rangée du bas : pas de saisie de texte ici, juste
                             // l'indicateur de frappe (à gauche) et les boutons
@@ -976,18 +976,6 @@ impl AbcomApp {
                                 );
                             }
 
-                            if self.input_has_focus
-                                && !shortcode_list.is_empty()
-                                && pressed_enter
-                            {
-                                if let Some((alias, _ch)) =
-                                    shortcode_list.get(self.shortcode_selected)
-                                {
-                                    clicked_shortcode = Some(alias.clone());
-                                    pressed_enter = false;
-                                }
-                            }
-
                             if let Some(alias) = clicked_shortcode {
                                 if let Some((start, _)) =
                                     emoji_shortcode_trigger(&self.input, self.input_cursor_char)
@@ -1046,10 +1034,12 @@ impl AbcomApp {
                                 }
                             }
 
+                            // L'envoi clavier passe par Cmd+Entrée (macOS) ou
+                            // Ctrl+Entrée ; Entrée seule insère une nouvelle
+                            // ligne dans le composeur.
                             let pressed_enter_fallback = ui.input(|i| {
                                 i.key_pressed(egui::Key::Enter)
-                                    && !i.modifiers.shift
-                                    && !menu_open_now
+                                    && (i.modifiers.command || i.modifiers.ctrl)
                             });
 
                             if should_send_message(
