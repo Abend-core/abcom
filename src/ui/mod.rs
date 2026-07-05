@@ -150,6 +150,10 @@ pub(crate) struct AbcomApp {
     pub(crate) show_group_modal: bool,
     pub(crate) group_name_input: String,
     pub(crate) group_members_selected: std::collections::HashSet<String>,
+    /// Salon ciblé par le modal de gestion (membres, départ…) ; None = fermé.
+    pub(crate) group_manage_target: Option<String>,
+    /// Action destructrice du modal de gestion en attente de confirmation.
+    pub(crate) group_manage_confirm: Option<group_modal::GroupConfirmAction>,
     pub(crate) last_typing_broadcast: std::time::Instant,
     pub(crate) last_retry_time: std::time::Instant,
     pub(crate) muted_conversations: std::collections::HashSet<Option<String>>,
@@ -307,6 +311,8 @@ impl AbcomApp {
             show_group_modal: false,
             group_name_input: String::new(),
             group_members_selected: std::collections::HashSet::new(),
+            group_manage_target: None,
+            group_manage_confirm: None,
             last_typing_broadcast: std::time::Instant::now(),
             last_retry_time: std::time::Instant::now(),
             muted_conversations: std::collections::HashSet::new(),
@@ -661,6 +667,7 @@ impl eframe::App for AbcomApp {
         self.show_emoji_picker_window(ctx, emoji_btn_clicked);
         self.show_gif_picker_window(ctx, gif_btn_clicked);
         self.render_group_modal(ctx);
+        self.render_group_manage_modal(ctx);
         self.show_central_panel(ctx);
         self.show_reaction_emoji_picker(ctx);
         self.render_settings(ctx);
