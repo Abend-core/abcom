@@ -133,8 +133,11 @@ impl AppState {
                 known.push(msg.from.clone());
             }
             if msg.from == self.my_username {
+                // Les messages de groupe portent la clé `#<nom>` dans
+                // `to_user` : ce n'est pas un pair, ne pas le restaurer comme
+                // tel (sinon le groupe apparaît dans la liste des pairs).
                 if let Some(to) = &msg.to_user {
-                    if !known.contains(to) {
+                    if !to.starts_with('#') && !known.contains(to) {
                         known.push(to.clone());
                     }
                 }
