@@ -3,17 +3,22 @@ use crate::message::ChatMessage;
 
 impl AppState {
     pub fn add_message(&mut self, msg: ChatMessage) {
-        let incoming_from_selected = self
-            .selected_conversation
-            .as_ref()
-            .map(|u| msg.from == *u && msg.to_user.as_deref() == Some(self.my_username.as_str()))
-            .unwrap_or(false);
-        let from = msg.from.clone();
+        // Message entrant dans la conversation ouverte : marqué lu d'emblée.
+        // La clé de lecture est le pair émetteur (privé) ou le salon (`#nom`).
+        let read_key: Option<String> = match &self.selected_conversation {
+            Some(conv) if conv.starts_with('#') => (msg.to_user.as_deref() == Some(conv.as_str())
+                && msg.from != self.my_username)
+                .then(|| conv.clone()),
+            Some(user) => (msg.from == *user
+                && msg.to_user.as_deref() == Some(self.my_username.as_str()))
+            .then(|| user.clone()),
+            None => None,
+        };
 
         self.persist(super::StorageCmd::InsertMessage(msg.clone()));
         self.messages.push(msg);
-        if incoming_from_selected {
-            self.mark_conversation_read(&from);
+        if let Some(key) = read_key {
+            self.mark_conversation_read(&key);
         }
         // La fenêtre mémoire reste bornée ; l'historique complet vit en base
         // (les messages drainés restent chargeables par pagination).
@@ -38,16 +43,24 @@ impl AppState {
         self.pending_messages.retain(|hash, _| live.contains(hash));
     }
 
-    pub fn mark_conversation_read(&mut self, peer_username: &str) {
+    /// Marque une conversation comme lue. `conv` est un nom de pair
+    /// (conversation privée) ou une clé de salon `#nom` (groupe).
+    pub fn mark_conversation_read(&mut self, conv: &str) {
         let me = self.my_username.as_str();
-        let count = self
-            .messages
-            .iter()
-            .filter(|m| m.from == peer_username && m.to_user.as_deref() == Some(me))
-            .count();
-        self.read_counts.insert(peer_username.to_string(), count);
+        let count = if conv.starts_with('#') {
+            self.messages
+                .iter()
+                .filter(|m| m.to_user.as_deref() == Some(conv) && m.from != me)
+                .count()
+        } else {
+            self.messages
+                .iter()
+                .filter(|m| m.from == conv && m.to_user.as_deref() == Some(me))
+                .count()
+        };
+        self.read_counts.insert(conv.to_string(), count);
         self.persist(super::StorageCmd::SetReadCount {
-            username: peer_username.to_string(),
+            username: conv.to_string(),
             count: count as u64,
         });
         self.bump_content();
@@ -60,6 +73,13 @@ impl AppState {
                 .messages
                 .iter()
                 .filter(|m| m.to_user.is_none())
+                .collect(),
+            // Salon de groupe : tous les messages adressés à la clé `#nom`,
+            // quel qu'en soit l'auteur (y compris moi).
+            Some(conv) if conv.starts_with('#') => self
+                .messages
+                .iter()
+                .filter(|m| m.to_user.as_deref() == Some(conv.as_str()))
                 .collect(),
             Some(username) => self
                 .messages
@@ -81,22 +101,36 @@ impl AppState {
         convos
     }
 
-    pub fn unread_count(&self, peer_username: &str) -> usize {
-        if self.selected_conversation.as_ref() == Some(&peer_username.to_string()) {
+    /// Nombre de messages non-lus d'une conversation : nom de pair (privé)
+    /// ou clé de salon `#nom` (groupe).
+    pub fn unread_count(&self, conv: &str) -> usize {
+        if self.selected_conversation.as_deref() == Some(conv) {
             return 0;
         }
-        let total = self
-            .messages
-            .iter()
-            .filter(|m| m.from == peer_username && m.to_user == Some(self.my_username.clone()))
-            .count();
-        let read = *self.read_counts.get(peer_username).unwrap_or(&0);
+        let me = self.my_username.as_str();
+        let total = if conv.starts_with('#') {
+            self.messages
+                .iter()
+                .filter(|m| m.to_user.as_deref() == Some(conv) && m.from != me)
+                .count()
+        } else {
+            self.messages
+                .iter()
+                .filter(|m| m.from == conv && m.to_user.as_deref() == Some(me))
+                .count()
+        };
+        let read = *self.read_counts.get(conv).unwrap_or(&0);
         total.saturating_sub(read)
     }
 
     pub fn clear_conversation_history(&mut self) {
         match &self.selected_conversation {
             None => self.messages.retain(|m| m.to_user.is_some()),
+            Some(conv) if conv.starts_with('#') => {
+                let key = conv.clone();
+                self.messages
+                    .retain(|m| m.to_user.as_deref() != Some(key.as_str()));
+            }
             Some(username) => {
                 let me = self.my_username.clone();
                 let u = username.clone();
