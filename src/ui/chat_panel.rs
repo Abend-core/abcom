@@ -644,11 +644,34 @@ impl AbcomApp {
                     .clone()
                     .unwrap_or_else(|| self.tr("Tous", "All").to_string()),
             };
+            // Salon sélectionné : nom de groupe (sans `#`) et sous-titre
+            // « N membres » sous le titre.
+            let selected_group_name = selected_conv
+                .as_deref()
+                .and_then(|c| c.strip_prefix('#'))
+                .map(str::to_string);
+            let group_subtitle = selected_group_name.as_deref().and_then(|name| {
+                self.sidebar_cache
+                    .groups
+                    .iter()
+                    .find(|g| g.name == name)
+                    .map(|g| {
+                        let n = g.members.len();
+                        if n > 1 {
+                            format!("{} {}", n, self.tr("membres", "members"))
+                        } else {
+                            format!("{} {}", n, self.tr("membre", "member"))
+                        }
+                    })
+            });
 
             ui.horizontal(|ui| {
                 ui.add_space(8.0);
                 ui.vertical_centered(|ui| {
                     ui.heading(&conversation_title);
+                    if let Some(subtitle) = &group_subtitle {
+                        ui.label(egui::RichText::new(subtitle).small().weak());
+                    }
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.menu_button(self.tr("Actions", "Actions"), |ui| {
@@ -685,6 +708,16 @@ impl AbcomApp {
                         {
                             self.show_participants = true;
                             ui.close_menu();
+                        }
+                        if let Some(gname) = &selected_group_name {
+                            if ui
+                                .button(self.tr("⚙ Gérer le groupe", "⚙ Manage group"))
+                                .clicked()
+                            {
+                                self.group_manage_target = Some(gname.clone());
+                                self.group_manage_confirm = None;
+                                ui.close_menu();
+                            }
                         }
                         if let Some(user) = &private_peer {
                             if ui
@@ -727,6 +760,17 @@ impl AbcomApp {
                 let my_name2 = self.sidebar_cache.my_username.clone();
                 let sel_conv = self.sidebar_cache.selected_conversation.clone();
                 let peers = self.sidebar_cache.peers.clone();
+                // Salon : membres réels du groupe (pas la liste des pairs).
+                let group_view = sel_conv
+                    .as_deref()
+                    .and_then(|c| c.strip_prefix('#'))
+                    .and_then(|name| {
+                        self.sidebar_cache
+                            .groups
+                            .iter()
+                            .find(|g| g.name == name)
+                            .cloned()
+                    });
                 let mut open = self.show_participants;
                 egui::Window::new(self.tr("Participants", "Participants"))
                     .open(&mut open)
@@ -754,6 +798,23 @@ impl AbcomApp {
                                         "No connected participant",
                                     ),
                                 );
+                            }
+                        } else if let Some(group) = &group_view {
+                            // Membres du salon : présence, couronne du
+                            // propriétaire, « (vous) » pour soi.
+                            for member in &group.members {
+                                let online = *member == my_name2
+                                    || peers.iter().any(|p| p.username == *member && p.online);
+                                let dot = if online { "🟢" } else { "🔴" };
+                                let mut line = format!("{dot} {member}");
+                                if *member == group.owner {
+                                    line.push_str(" 👑");
+                                }
+                                if *member == my_name2 {
+                                    line.push(' ');
+                                    line.push_str(self.tr("(vous)", "(you)"));
+                                }
+                                ui.label(line);
                             }
                         } else {
                             ui.label(format!("{} ({})", my_name2, self.tr("vous", "you")));

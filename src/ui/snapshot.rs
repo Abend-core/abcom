@@ -278,6 +278,8 @@ pub(crate) struct SidebarCache {
     /// Noms d'affichage (alias ou username), parallèles à `peers`.
     pub(crate) display_names: Vec<String>,
     pub(crate) groups: Arc<Vec<Group>>,
+    /// Compteurs non-lus des salons, parallèles à `groups`.
+    pub(crate) group_unread: Vec<usize>,
     pub(crate) typing: Vec<String>,
     pub(crate) selected_conversation: Option<String>,
     pub(crate) my_username: String,
@@ -310,6 +312,11 @@ impl SidebarCache {
             .map(|p| s.peer_display_name(&p.username))
             .collect();
         self.groups = Arc::new(s.groups.clone());
+        self.group_unread = s
+            .groups
+            .iter()
+            .map(|g| s.unread_count(&AppState::group_conv_key(&g.name)))
+            .collect();
         self.typing = s.typing_users_list();
         self.selected_conversation = s.selected_conversation.clone();
         self.my_username = s.my_username.clone();

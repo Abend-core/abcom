@@ -83,6 +83,7 @@ impl AppState {
     }
 
     /// Adresses de tous les pairs en ligne
+    #[allow(dead_code)]
     pub fn get_online_peers(&self) -> Vec<SocketAddr> {
         self.peers
             .iter()
