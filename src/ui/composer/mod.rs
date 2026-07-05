@@ -202,7 +202,9 @@ fn paint_selection(
         Some(range) => range,
         None => return,
     };
-    if start >= end || end > caret_points.len() {
+    // `end` indexe `caret_points` directement : il doit rester strictement
+    // sous `len` (le dernier point valide est `len - 1`).
+    if start >= end || end >= caret_points.len() {
         return;
     }
 
@@ -302,16 +304,17 @@ pub fn custom_composer_input(
         composer_caret_positions(ui, input, emoji_map, 18.0, base_content_width);
     let mut line_count = visual_line_count(&initial_caret_points, line_height);
     let needs_scrollbar = line_count > 10;
-    let content_width = if needs_scrollbar {
-        (width.max(120.0) - 20.0).max(20.0)
+    // La largeur de contenu de chaque branche coïncide avec celle du
+    // `content_rect` correspondant : les points calculés ici sont réutilisés
+    // tels quels pour le rendu (une seule passe de mesure par frame).
+    let mut caret_points = if needs_scrollbar {
+        let content_width = (width.max(120.0) - 20.0).max(20.0);
+        let points = composer_caret_positions(ui, input, emoji_map, 18.0, content_width);
+        line_count = visual_line_count(&points, line_height);
+        points
     } else {
-        base_content_width
+        initial_caret_points
     };
-    if needs_scrollbar {
-        let scrollbar_caret_points =
-            composer_caret_positions(ui, input, emoji_map, 18.0, content_width);
-        line_count = visual_line_count(&scrollbar_caret_points, line_height);
-    }
     let visual_lines = line_count.clamp(1, 10) as f32;
     let desired_size = egui::vec2(width.max(120.0), 10.0 + visual_lines * line_height);
     let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
@@ -323,8 +326,6 @@ pub fn custom_composer_input(
     } else {
         rect.shrink2(egui::vec2(6.0, 5.0))
     };
-    let caret_points =
-        composer_caret_positions(ui, input, emoji_map, 18.0, content_rect.width().max(20.0));
     let max_scroll = (line_count as f32 - visual_lines).max(0.0);
     *scroll_lines = scroll_lines.clamp(0.0, max_scroll);
 
@@ -671,6 +672,25 @@ pub fn custom_composer_input(
         }
     }
 
+    // Les événements ci-dessus ont pu modifier le texte : re-clampe curseur et
+    // ancre de sélection puis recalcule les positions de caractères avant le
+    // rendu, sinon la peinture de la sélection lit des points périmés (panique
+    // « index out of bounds » quand saisie et sélection tombent dans la même
+    // frame).
+    let total_chars = input.chars().count();
+    if *cursor_char > total_chars {
+        *cursor_char = total_chars;
+    }
+    if let Some(anchor) = *selection_anchor {
+        if anchor > total_chars {
+            *selection_anchor = Some(total_chars);
+        }
+    }
+    if changed {
+        caret_points =
+            composer_caret_positions(ui, input, emoji_map, 18.0, content_rect.width().max(20.0));
+    }
+
     let frame_fill = egui::Color32::TRANSPARENT;
     let frame_stroke = egui::Stroke::NONE;
 
@@ -686,7 +706,7 @@ pub fn custom_composer_input(
         ui.painter().text(
             content_rect.left_center(),
             egui::Align2::LEFT_CENTER,
-            "Send a message...",
+            "Send a message... Ctrl/Cmd + Enter ",
             egui::TextStyle::Body.resolve(ui.style()),
             egui::Color32::from_rgb(185, 187, 192),
         );
@@ -806,6 +826,14 @@ pub fn custom_composer_input(
     }
 
     if has_focus {
+        // Le clignotement a besoin d'une frame à chaque bascule (250 ms) ;
+        // sans ça le trait reste figé jusqu'au prochain repaint (jusqu'à 5 s
+        // au repos). Uniquement fenêtre au premier plan : en arrière-plan on
+        // garde le rythme quasi dormant.
+        if ui.input(|i| i.focused) {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(250));
+        }
         let blink_on = ((ui.input(|i| i.time) * 2.0) as i64) % 2 == 0;
         if blink_on {
             let caret = caret_points

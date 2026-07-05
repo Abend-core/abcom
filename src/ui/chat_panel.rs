@@ -929,6 +929,12 @@ impl AbcomApp {
                         );
                     }
 
+                    // Une seule ligne peut revendiquer le survol par frame :
+                    // les rects de survol débordent de 2 px sur leurs voisins
+                    // (couverture des interstices), sans ce verrou deux lignes
+                    // adjacentes pouvaient se surligner en même temps.
+                    let mut hover_claimed = false;
+
                     for (i, row) in rows[start..].iter().enumerate() {
                         let msg = &row.msg;
                         let hash = row.hash;
@@ -1103,9 +1109,10 @@ impl AbcomApp {
                         // "+", répondre). Reste affichée tant que le pointeur
                         // est sur la ligne ou sur la barre elle-même, pour
                         // éviter tout clignotement en s'y déplaçant.
-                        let row_hovered = ui.rect_contains_pointer(row_rect);
+                        let row_hovered = !hover_claimed && ui.rect_contains_pointer(row_rect);
                         if row_hovered {
                             self.hover_toolbar_target = Some((abs_idx, hash));
+                            hover_claimed = true;
                         }
                         // Ligne « active » : survolée, ou pointeur sur sa
                         // barre d'actions flottante.
@@ -1208,12 +1215,15 @@ impl AbcomApp {
             if let Some(prev_height) = self.chat_prepend_fix {
                 let delta = scroll_out.content_size.y - prev_height;
                 if delta > 0.0 {
-                    // Le contenu ajouté est arrivé : compenser l'offset.
+                    // Le contenu ajouté est arrivé : compenser l'offset, puis
+                    // jeter la frame courante (rendue avec l'ancien offset) et
+                    // re-rendre immédiatement — sans ça, une frame décalée
+                    // s'affiche à chaque lot chargé (tremblement du fil).
                     self.chat_prepend_fix = None;
                     let mut state = scroll_out.state;
                     state.offset.y += delta;
                     state.store(ctx, scroll_out.id);
-                    ctx.request_repaint();
+                    ctx.request_discard("chat prepend anchor");
                 }
                 // delta == 0 : requête SQLite encore en vol, on attend.
             } else if scroll_out.state.offset.y < 400.0 && !rows.is_empty() {
