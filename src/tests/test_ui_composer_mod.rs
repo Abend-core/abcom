@@ -197,6 +197,32 @@ fn command_enter_submits_without_touching_text() {
     assert_eq!(input, "hello");
 }
 
+/// Régression : saisie et création de sélection dans la MÊME frame (rafale
+/// clavier, répétition avec Maj). Les positions de caractères étaient
+/// calculées avant le traitement des événements et la peinture de la
+/// sélection lisait des points périmés → « index out of bounds: the len is 1
+/// but the index is 1 » (abort en release).
+#[test]
+fn same_frame_typing_and_selection_does_not_panic() {
+    let mut input = String::new();
+    let mut cursor = 0usize;
+
+    run_composer_frames(
+        &mut input,
+        &mut cursor,
+        vec![
+            vec![
+                egui::Event::Text("a".to_string()),
+                key_event(egui::Key::ArrowLeft, SHIFT),
+            ],
+            vec![],
+        ],
+    );
+
+    assert_eq!(input, "a");
+    assert_eq!(cursor, 0);
+}
+
 #[test]
 fn alt_backspace_deletes_previous_word() {
     let mut input = "hello world".to_string();

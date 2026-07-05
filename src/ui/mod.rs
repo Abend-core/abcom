@@ -856,7 +856,9 @@ fn spawn_emoji_decoder() -> std::sync::mpsc::Receiver<Vec<(String, egui::ColorIm
 /// Doit être appelé sur le thread principal (c'est le cas dans `update`).
 #[cfg(target_os = "macos")]
 fn set_dock_visible(visible: bool) {
-    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+    use objc2::ClassType;
+    use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSImage};
+    use objc2_foundation::NSData;
     let Some(mtm) = objc2_foundation::MainThreadMarker::new() else {
         return;
     };
@@ -871,6 +873,14 @@ fn set_dock_visible(visible: bool) {
         // Revenir au premier plan après la sortie du mode Accessory.
         #[allow(deprecated)]
         app.activateIgnoringOtherApps(true);
+        // Le retour en politique Regular réinitialise l'icône du Dock à
+        // l'icône générique d'exécutable : ré-applique la nôtre.
+        let data = NSData::with_bytes(include_bytes!("../../assets/app_icon.png"));
+        if let Some(image) = NSImage::initWithData(NSImage::alloc(), &data) {
+            // Sûr : image valide construite ci-dessus, appel sur le thread
+            // principal (garanti par le MainThreadMarker).
+            unsafe { app.setApplicationIconImage(Some(&image)) };
+        }
     }
 }
 
