@@ -14,22 +14,50 @@ fn emoji_index() -> (HashMap<String, String>, Vec<String>) {
     (alias_to_char, aliases)
 }
 
+const SHIFT: egui::Modifiers = egui::Modifiers {
+    shift: true,
+    alt: false,
+    ctrl: false,
+    mac_cmd: false,
+    command: false,
+};
+
 #[test]
 fn enter_with_shortcode_menu_accepts_selection_instead_of_submit() {
     assert_eq!(
-        enter_key_action(true, false),
+        enter_key_action(true, egui::Modifiers::NONE),
         EnterKeyAction::AcceptShortcode
     );
 }
 
 #[test]
-fn enter_without_shortcode_menu_submits_message() {
-    assert_eq!(enter_key_action(false, false), EnterKeyAction::Submit);
+fn plain_enter_inserts_newline() {
+    assert_eq!(
+        enter_key_action(false, egui::Modifiers::NONE),
+        EnterKeyAction::InsertNewline
+    );
 }
 
 #[test]
 fn shift_enter_inserts_newline_even_when_shortcode_menu_is_open() {
-    assert_eq!(enter_key_action(true, true), EnterKeyAction::InsertNewline);
+    assert_eq!(enter_key_action(true, SHIFT), EnterKeyAction::InsertNewline);
+}
+
+#[test]
+fn command_or_ctrl_enter_submits_message() {
+    assert_eq!(
+        enter_key_action(false, egui::Modifiers::COMMAND),
+        EnterKeyAction::Submit
+    );
+    assert_eq!(
+        enter_key_action(false, egui::Modifiers::CTRL),
+        EnterKeyAction::Submit
+    );
+    // Même menu ouvert : l'envoi explicite garde la priorité.
+    assert_eq!(
+        enter_key_action(true, egui::Modifiers::COMMAND),
+        EnterKeyAction::Submit
+    );
 }
 
 #[test]
@@ -63,6 +91,204 @@ fn regular_space_does_not_accept_shortcode() {
         10,
     );
     assert!(suggestions.is_empty());
+}
+
+/// Pilote `custom_composer_input` dans un contexte egui headless : injecte des
+/// événements clavier et rend plusieurs frames comme le ferait l'application.
+fn run_composer_frames(
+    input: &mut String,
+    cursor: &mut usize,
+    frames: Vec<Vec<egui::Event>>,
+) -> bool {
+    let ctx = egui::Context::default();
+    let mut has_focus = true;
+    let mut scroll = 0.0f32;
+    let mut anchor = None;
+    let emoji_map = HashMap::new();
+    let textures: Vec<(String, egui::TextureHandle)> = Vec::new();
+    let (alias_to_char, aliases) = emoji_index();
+    let mut submitted = false;
+
+    for events in frames {
+        let raw = egui::RawInput {
+            events,
+            ..Default::default()
+        };
+        let _ = ctx.run(raw, |ctx| {
+            egui::CentralPanel::default().show(ctx, |ui| {
+                let (_, submit, _) = custom_composer_input(
+                    ui,
+                    input,
+                    cursor,
+                    &mut has_focus,
+                    &mut scroll,
+                    &emoji_map,
+                    &textures,
+                    &alias_to_char,
+                    &aliases,
+                    false,
+                    0,
+                    300.0,
+                    &mut anchor,
+                );
+                submitted |= submit;
+            });
+        });
+    }
+    submitted
+}
+
+fn key_event(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
+    egui::Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers,
+    }
+}
+
+#[test]
+fn shift_enter_inserts_newline_and_next_frame_renders_without_panic() {
+    let mut input = "hello".to_string();
+    let mut cursor = input.chars().count();
+
+    let submitted = run_composer_frames(
+        &mut input,
+        &mut cursor,
+        vec![vec![key_event(egui::Key::Enter, SHIFT)], vec![], vec![]],
+    );
+
+    assert!(!submitted);
+    assert_eq!(input, "hello\n");
+    assert_eq!(cursor, input.chars().count());
+}
+
+#[test]
+fn plain_enter_inserts_newline_instead_of_submitting() {
+    let mut input = "hello".to_string();
+    let mut cursor = input.chars().count();
+
+    let submitted = run_composer_frames(
+        &mut input,
+        &mut cursor,
+        vec![
+            vec![key_event(egui::Key::Enter, egui::Modifiers::NONE)],
+            vec![],
+        ],
+    );
+
+    assert!(!submitted);
+    assert_eq!(input, "hello\n");
+}
+
+#[test]
+fn command_enter_submits_without_touching_text() {
+    let mut input = "hello".to_string();
+    let mut cursor = input.chars().count();
+
+    let submitted = run_composer_frames(
+        &mut input,
+        &mut cursor,
+        vec![vec![key_event(egui::Key::Enter, egui::Modifiers::COMMAND)]],
+    );
+
+    assert!(submitted);
+    assert_eq!(input, "hello");
+}
+
+#[test]
+fn alt_backspace_deletes_previous_word() {
+    let mut input = "hello world".to_string();
+    let mut cursor = input.chars().count();
+    let alt = egui::Modifiers {
+        alt: true,
+        ..egui::Modifiers::NONE
+    };
+
+    run_composer_frames(
+        &mut input,
+        &mut cursor,
+        vec![vec![key_event(egui::Key::Backspace, alt)]],
+    );
+
+    assert_eq!(input, "hello ");
+    assert_eq!(cursor, 6);
+}
+
+#[test]
+fn mac_cmd_backspace_deletes_to_line_start() {
+    let mut input = "salut\nles amis".to_string();
+    let mut cursor = input.chars().count();
+    let cmd = egui::Modifiers {
+        mac_cmd: true,
+        command: true,
+        ..egui::Modifiers::NONE
+    };
+
+    run_composer_frames(
+        &mut input,
+        &mut cursor,
+        vec![vec![key_event(egui::Key::Backspace, cmd)]],
+    );
+
+    assert_eq!(input, "salut\n");
+}
+
+#[test]
+fn ctrl_delete_removes_next_word() {
+    let mut input = "hello world".to_string();
+    let mut cursor = 0usize;
+    let ctrl = egui::Modifiers {
+        ctrl: true,
+        command: true,
+        ..egui::Modifiers::NONE
+    };
+
+    run_composer_frames(
+        &mut input,
+        &mut cursor,
+        vec![vec![key_event(egui::Key::Delete, ctrl)]],
+    );
+
+    assert_eq!(input, " world");
+    assert_eq!(cursor, 0);
+}
+
+#[test]
+fn word_and_line_navigation_moves_cursor() {
+    let alt = egui::Modifiers {
+        alt: true,
+        ..egui::Modifiers::NONE
+    };
+    let cmd = egui::Modifiers {
+        mac_cmd: true,
+        command: true,
+        ..egui::Modifiers::NONE
+    };
+
+    let mut input = "hello world".to_string();
+    let mut cursor = input.chars().count();
+    run_composer_frames(
+        &mut input,
+        &mut cursor,
+        vec![vec![key_event(egui::Key::ArrowLeft, alt)]],
+    );
+    assert_eq!(cursor, 6);
+
+    run_composer_frames(
+        &mut input,
+        &mut cursor,
+        vec![vec![key_event(egui::Key::ArrowLeft, cmd)]],
+    );
+    assert_eq!(cursor, 0);
+
+    run_composer_frames(
+        &mut input,
+        &mut cursor,
+        vec![vec![key_event(egui::Key::ArrowRight, cmd)]],
+    );
+    assert_eq!(cursor, input.chars().count());
 }
 
 #[test]

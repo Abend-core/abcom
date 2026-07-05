@@ -8,7 +8,9 @@ pub use text_ops::{insert_emoji_at_cursor, replace_char_range};
 
 use eframe::egui;
 
-use self::text_ops::{insert_text_at_cursor, remove_next_char, remove_prev_char};
+use self::text_ops::{
+    char_range_string, insert_text_at_cursor, line_end, line_start, next_word_end, prev_word_start,
+};
 
 pub fn sync_cursor(_ctx: &egui::Context, _char_pos: usize) {}
 
@@ -19,13 +21,16 @@ enum EnterKeyAction {
     Submit,
 }
 
-fn enter_key_action(shortcode_menu_open: bool, shift: bool) -> EnterKeyAction {
-    if shift {
-        EnterKeyAction::InsertNewline
-    } else if shortcode_menu_open {
+/// Entrée insère une nouvelle ligne (comme Shift+Entrée) ; l'envoi se fait par
+/// Cmd+Entrée (macOS) ou Ctrl+Entrée. Entrée seule valide le shortcode quand le
+/// menu de suggestions est ouvert.
+fn enter_key_action(shortcode_menu_open: bool, modifiers: egui::Modifiers) -> EnterKeyAction {
+    if modifiers.command || modifiers.ctrl {
+        EnterKeyAction::Submit
+    } else if shortcode_menu_open && !modifiers.shift {
         EnterKeyAction::AcceptShortcode
     } else {
-        EnterKeyAction::Submit
+        EnterKeyAction::InsertNewline
     }
 }
 
@@ -455,6 +460,19 @@ pub fn custom_composer_input(
                     insert_text_at_cursor(input, cursor_char, &t.replace(['\r', '\n'], " "));
                     changed = true;
                 }
+                egui::Event::Copy => {
+                    if let Some((start, end)) = selection_range(*selection_anchor, *cursor_char) {
+                        ui.ctx().copy_text(char_range_string(input, start, end));
+                    }
+                }
+                egui::Event::Cut => {
+                    if let Some((start, end)) = selection_range(*selection_anchor, *cursor_char) {
+                        ui.ctx().copy_text(char_range_string(input, start, end));
+                        replace_char_range(input, cursor_char, start, end, "");
+                        clear_selection(selection_anchor);
+                        changed = true;
+                    }
+                }
                 egui::Event::Key {
                     key,
                     pressed: true,
@@ -470,27 +488,25 @@ pub fn custom_composer_input(
                             clear_selection(selection_anchor);
                         }
                     }
-                    egui::Key::Enter => {
-                        match enter_key_action(shortcode_menu_open, modifiers.shift) {
-                            EnterKeyAction::InsertNewline => {
-                                replace_selection(input, cursor_char, selection_anchor, "");
-                                insert_text_at_cursor(input, cursor_char, "\n");
-                                changed = true;
-                            }
-                            EnterKeyAction::AcceptShortcode => {
-                                changed |= accept_selected_shortcode(
-                                    input,
-                                    cursor_char,
-                                    emoji_alias_to_char,
-                                    emoji_aliases,
-                                    shortcode_selected,
-                                );
-                            }
-                            EnterKeyAction::Submit => {
-                                submit = true;
-                            }
+                    egui::Key::Enter => match enter_key_action(shortcode_menu_open, modifiers) {
+                        EnterKeyAction::InsertNewline => {
+                            replace_selection(input, cursor_char, selection_anchor, "");
+                            insert_text_at_cursor(input, cursor_char, "\n");
+                            changed = true;
                         }
-                    }
+                        EnterKeyAction::AcceptShortcode => {
+                            changed |= accept_selected_shortcode(
+                                input,
+                                cursor_char,
+                                emoji_alias_to_char,
+                                emoji_aliases,
+                                shortcode_selected,
+                            );
+                        }
+                        EnterKeyAction::Submit => {
+                            submit = true;
+                        }
+                    },
                     egui::Key::Tab => {
                         let suggestions = crate::ui::emoji_picker::shortcode_suggestions(
                             input,
@@ -512,21 +528,40 @@ pub fn custom_composer_input(
                         }
                     }
                     egui::Key::Backspace => {
-                        if !replace_selection(input, cursor_char, selection_anchor, "") {
-                            let before = input.len();
-                            remove_prev_char(input, cursor_char);
-                            changed |= input.len() != before;
-                        } else {
+                        if replace_selection(input, cursor_char, selection_anchor, "") {
                             changed = true;
+                        } else {
+                            // Cmd+Backspace : jusqu'au début de ligne (macOS) ;
+                            // Option/Ctrl+Backspace : mot précédent ;
+                            // sinon caractère précédent.
+                            let target = if modifiers.mac_cmd {
+                                line_start(input, *cursor_char)
+                            } else if modifiers.alt || modifiers.ctrl {
+                                prev_word_start(input, *cursor_char)
+                            } else {
+                                cursor_char.saturating_sub(1)
+                            };
+                            if target < *cursor_char {
+                                replace_char_range(input, cursor_char, target, *cursor_char, "");
+                                changed = true;
+                            }
                         }
                     }
                     egui::Key::Delete => {
-                        if !replace_selection(input, cursor_char, selection_anchor, "") {
-                            let before = input.len();
-                            remove_next_char(input, cursor_char);
-                            changed |= input.len() != before;
-                        } else {
+                        if replace_selection(input, cursor_char, selection_anchor, "") {
                             changed = true;
+                        } else {
+                            // Option/Ctrl+Delete : mot suivant ; sinon caractère
+                            // suivant.
+                            let target = if modifiers.alt || modifiers.ctrl {
+                                next_word_end(input, *cursor_char)
+                            } else {
+                                (*cursor_char + 1).min(input.chars().count())
+                            };
+                            if target > *cursor_char {
+                                replace_char_range(input, cursor_char, *cursor_char, target, "");
+                                changed = true;
+                            }
                         }
                     }
                     egui::Key::ArrowLeft => {
@@ -537,9 +572,15 @@ pub fn custom_composer_input(
                         } else {
                             clear_selection(selection_anchor);
                         }
-                        if *cursor_char > 0 {
-                            *cursor_char -= 1;
-                        }
+                        // Cmd+← : début de ligne (macOS) ; Option/Ctrl+← : mot
+                        // précédent ; sinon caractère précédent.
+                        *cursor_char = if modifiers.mac_cmd {
+                            line_start(input, *cursor_char)
+                        } else if modifiers.alt || modifiers.ctrl {
+                            prev_word_start(input, *cursor_char)
+                        } else {
+                            cursor_char.saturating_sub(1)
+                        };
                         if selection_range(*selection_anchor, *cursor_char).is_none() {
                             clear_selection(selection_anchor);
                         }
@@ -552,10 +593,15 @@ pub fn custom_composer_input(
                         } else {
                             clear_selection(selection_anchor);
                         }
-                        let len = input.chars().count();
-                        if *cursor_char < len {
-                            *cursor_char += 1;
-                        }
+                        // Cmd+→ : fin de ligne (macOS) ; Option/Ctrl+→ : mot
+                        // suivant ; sinon caractère suivant.
+                        *cursor_char = if modifiers.mac_cmd {
+                            line_end(input, *cursor_char)
+                        } else if modifiers.alt || modifiers.ctrl {
+                            next_word_end(input, *cursor_char)
+                        } else {
+                            (*cursor_char + 1).min(input.chars().count())
+                        };
                         if selection_range(*selection_anchor, *cursor_char).is_none() {
                             clear_selection(selection_anchor);
                         }
