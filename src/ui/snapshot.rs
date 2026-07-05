@@ -277,9 +277,13 @@ pub(crate) struct SidebarCache {
     pub(crate) unread: Vec<usize>,
     /// Noms d'affichage (alias ou username), parallèles à `peers`.
     pub(crate) display_names: Vec<String>,
+    /// Épinglé en tête de liste ? parallèle à `peers`.
+    pub(crate) peer_pinned: Vec<bool>,
     pub(crate) groups: Arc<Vec<Group>>,
     /// Compteurs non-lus des salons, parallèles à `groups`.
     pub(crate) group_unread: Vec<usize>,
+    /// Épinglé en tête de liste ? parallèle à `groups`.
+    pub(crate) group_pinned: Vec<bool>,
     pub(crate) typing: Vec<String>,
     pub(crate) selected_conversation: Option<String>,
     pub(crate) my_username: String,
@@ -300,22 +304,34 @@ impl SidebarCache {
         self.generation = Some(s.content_generation);
         self.presence_generation = Some(s.presence_generation);
         self.conversation_key = Some(s.selected_conversation.clone());
-        self.peers = Arc::new(s.peers.clone());
-        self.unread = s
-            .peers
+        // Épinglés en tête, tri stable (ordre inchangé au sein de chaque
+        // groupe pinné/non-pinné).
+        let mut peer_order: Vec<usize> = (0..s.peers.len()).collect();
+        peer_order.sort_by_key(|&i| !s.is_pinned(&s.peers[i].username));
+        self.peers = Arc::new(peer_order.iter().map(|&i| s.peers[i].clone()).collect());
+        self.unread = peer_order
             .iter()
-            .map(|p| s.unread_count(&p.username))
+            .map(|&i| s.unread_count(&s.peers[i].username))
             .collect();
-        self.display_names = s
-            .peers
+        self.display_names = peer_order
             .iter()
-            .map(|p| s.peer_display_name(&p.username))
+            .map(|&i| s.peer_display_name(&s.peers[i].username))
             .collect();
-        self.groups = Arc::new(s.groups.clone());
-        self.group_unread = s
-            .groups
+        self.peer_pinned = peer_order
             .iter()
-            .map(|g| s.unread_count(&AppState::group_conv_key(&g.name)))
+            .map(|&i| s.is_pinned(&s.peers[i].username))
+            .collect();
+
+        let mut group_order: Vec<usize> = (0..s.groups.len()).collect();
+        group_order.sort_by_key(|&i| !s.is_pinned(&AppState::group_conv_key(&s.groups[i].name)));
+        self.groups = Arc::new(group_order.iter().map(|&i| s.groups[i].clone()).collect());
+        self.group_unread = group_order
+            .iter()
+            .map(|&i| s.unread_count(&AppState::group_conv_key(&s.groups[i].name)))
+            .collect();
+        self.group_pinned = group_order
+            .iter()
+            .map(|&i| s.is_pinned(&AppState::group_conv_key(&s.groups[i].name)))
             .collect();
         self.typing = s.typing_users_list();
         self.selected_conversation = s.selected_conversation.clone();
@@ -328,3 +344,7 @@ impl SidebarCache {
         self.selected_peer_addr = s.selected_peer_addr();
     }
 }
+
+#[cfg(test)]
+#[path = "../tests/test_ui_snapshot.rs"]
+mod tests;

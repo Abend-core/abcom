@@ -19,8 +19,10 @@ impl AbcomApp {
                 let selected_conv = self.sidebar_cache.selected_conversation.clone();
                 let unread_counts = self.sidebar_cache.unread.clone();
                 let display_names = self.sidebar_cache.display_names.clone();
+                let peer_pinned = self.sidebar_cache.peer_pinned.clone();
                 let groups = self.sidebar_cache.groups.clone();
                 let group_unread = self.sidebar_cache.group_unread.clone();
+                let group_pinned = self.sidebar_cache.group_pinned.clone();
 
                 // Disposition bas-vers-haut : la barre de paramètres est
                 // peinte en premier et reste fixe en bas du panneau ; la
@@ -57,8 +59,10 @@ impl AbcomApp {
                                     &selected_conv,
                                     &unread_counts,
                                     &display_names,
+                                    &peer_pinned,
                                     &groups,
                                     &group_unread,
+                                    &group_pinned,
                                 );
                             });
                         });
@@ -75,8 +79,10 @@ impl AbcomApp {
         selected_conv: &Option<String>,
         unread_counts: &[usize],
         display_names: &[String],
+        peer_pinned: &[bool],
         groups: &[crate::message::Group],
         group_unread: &[usize],
+        group_pinned: &[bool],
     ) {
         ui.add_space(6.0);
 
@@ -137,7 +143,17 @@ impl AbcomApp {
 
                 paint_unread_badge(ui, rect, unread);
 
-                if resp.clicked() {
+                let is_pinned = peer_pinned.get(idx).copied().unwrap_or(false);
+                let pin_id = ui.id().with(("pin_peer", &peer.username));
+                let pin_tip = if is_pinned {
+                    self.tr("Désépingler", "Unpin")
+                } else {
+                    self.tr("Épingler en haut", "Pin to top")
+                };
+                let pin_resp = paint_pin_button(ui, rect, pin_id, is_pinned, pin_tip);
+                if pin_resp.clicked() {
+                    self.state.lock().unwrap().toggle_pinned(&peer.username);
+                } else if resp.clicked() {
                     let (is_selected_now, peer_name, peer_addr_for_receipt) = {
                         let s = self.state.lock().unwrap();
                         let is_sel = s
@@ -206,63 +222,8 @@ impl AbcomApp {
         });
         ui.add_space(4.0);
 
-        if groups.is_empty() {
-            ui.weak(self.tr("Aucun groupe", "No group"));
-        } else {
-            for (gidx, group) in groups.iter().enumerate() {
-                let conv_key = format!("#{}", group.name);
-                let is_selected = selected_conv.as_deref() == Some(conv_key.as_str());
-                let desired = egui::vec2(ui.available_width(), 56.0);
-                let (rect, resp) = ui.allocate_exact_size(desired, egui::Sense::click());
-                let visuals = ui.style().interact(&resp);
-                let fill = if is_selected {
-                    ui.visuals().selection.bg_fill
-                } else {
-                    visuals.bg_fill
-                };
-                let stroke = if is_selected {
-                    ui.visuals().selection.stroke
-                } else {
-                    visuals.bg_stroke
-                };
-                ui.painter().rect_filled(rect, 8.0, fill);
-                ui.painter()
-                    .rect_stroke(rect, 8.0, stroke, egui::StrokeKind::Outside);
-                let font_id = egui::TextStyle::Button.resolve(ui.style());
-                ui.painter().text(
-                    rect.left_center() + egui::vec2(10.0, -9.0),
-                    egui::Align2::LEFT_CENTER,
-                    format!("🔗 {}", group.name),
-                    font_id,
-                    ui.visuals().text_color(),
-                );
-                let n = group.members.len();
-                let members_label = if n > 1 {
-                    format!("{} {}", n, self.tr("membres", "members"))
-                } else {
-                    format!("{} {}", n, self.tr("membre", "member"))
-                };
-                ui.painter().text(
-                    rect.left_center() + egui::vec2(10.0, 9.0),
-                    egui::Align2::LEFT_CENTER,
-                    members_label,
-                    egui::TextStyle::Small.resolve(ui.style()),
-                    ui.visuals().weak_text_color(),
-                );
-                paint_unread_badge(ui, rect, group_unread.get(gidx).copied().unwrap_or(0));
-                if resp.clicked() {
-                    if is_selected {
-                        self.switch_conversation(None);
-                    } else {
-                        self.switch_conversation(Some(conv_key.clone()));
-                        self.state.lock().unwrap().mark_conversation_read(&conv_key);
-                    }
-                }
-                ui.add_space(4.0);
-            }
-        }
-
-        // Conversation globale
+        // « Tous » en tête de la pile des groupes : toujours la première
+        // entrée, avant les groupes eux-mêmes.
         let is_global = selected_conv.is_none();
         {
             let desired = egui::vec2(ui.available_width(), 56.0);
@@ -291,6 +252,73 @@ impl AbcomApp {
             );
             if resp.clicked() {
                 self.switch_conversation(None);
+            }
+        }
+        ui.add_space(4.0);
+
+        if groups.is_empty() {
+            ui.weak(self.tr("Aucun groupe", "No group"));
+        } else {
+            for (gidx, group) in groups.iter().enumerate() {
+                let conv_key = format!("#{}", group.name);
+                let is_selected = selected_conv.as_deref() == Some(conv_key.as_str());
+                let desired = egui::vec2(ui.available_width(), 56.0);
+                let (rect, resp) = ui.allocate_exact_size(desired, egui::Sense::click());
+                let visuals = ui.style().interact(&resp);
+                let fill = if is_selected {
+                    ui.visuals().selection.bg_fill
+                } else {
+                    visuals.bg_fill
+                };
+                let stroke = if is_selected {
+                    ui.visuals().selection.stroke
+                } else {
+                    visuals.bg_stroke
+                };
+                ui.painter().rect_filled(rect, 8.0, fill);
+                ui.painter()
+                    .rect_stroke(rect, 8.0, stroke, egui::StrokeKind::Outside);
+                let font_id = egui::TextStyle::Button.resolve(ui.style());
+                ui.painter().text(
+                    rect.left_center() + egui::vec2(10.0, -9.0),
+                    egui::Align2::LEFT_CENTER,
+                    format!("#{}", group.name),
+                    font_id,
+                    ui.visuals().text_color(),
+                );
+                let n = group.members.len();
+                let members_label = if n > 1 {
+                    format!("{} {}", n, self.tr("membres", "members"))
+                } else {
+                    format!("{} {}", n, self.tr("membre", "member"))
+                };
+                ui.painter().text(
+                    rect.left_center() + egui::vec2(10.0, 9.0),
+                    egui::Align2::LEFT_CENTER,
+                    members_label,
+                    egui::TextStyle::Small.resolve(ui.style()),
+                    ui.visuals().weak_text_color(),
+                );
+                paint_unread_badge(ui, rect, group_unread.get(gidx).copied().unwrap_or(0));
+                let is_pinned = group_pinned.get(gidx).copied().unwrap_or(false);
+                let pin_id = ui.id().with(("pin_group", &conv_key));
+                let pin_tip = if is_pinned {
+                    self.tr("Désépingler", "Unpin")
+                } else {
+                    self.tr("Épingler en haut", "Pin to top")
+                };
+                let pin_resp = paint_pin_button(ui, rect, pin_id, is_pinned, pin_tip);
+                if pin_resp.clicked() {
+                    self.state.lock().unwrap().toggle_pinned(&conv_key);
+                } else if resp.clicked() {
+                    if is_selected {
+                        self.switch_conversation(None);
+                    } else {
+                        self.switch_conversation(Some(conv_key.clone()));
+                        self.state.lock().unwrap().mark_conversation_read(&conv_key);
+                    }
+                }
+                ui.add_space(4.0);
             }
         }
     }
@@ -327,6 +355,41 @@ fn paint_unread_badge(ui: &egui::Ui, rect: egui::Rect, unread: usize) {
         egui::TextStyle::Body.resolve(ui.style()),
         egui::Color32::WHITE,
     );
+}
+
+/// Bouton « épingler en tête de liste », en haut à droite d'une ligne de la
+/// barre latérale (pairs et salons) — n'empiète pas sur la pastille non-lus,
+/// centrée verticalement plus bas dans la même ligne.
+fn paint_pin_button(
+    ui: &egui::Ui,
+    row_rect: egui::Rect,
+    id: egui::Id,
+    is_pinned: bool,
+    tooltip: &str,
+) -> egui::Response {
+    let size = 16.0;
+    let pin_rect = egui::Rect::from_min_size(
+        egui::pos2(row_rect.right() - size - 6.0, row_rect.top() + 3.0),
+        egui::vec2(size, size),
+    );
+    let resp = ui
+        .interact(pin_rect, id, egui::Sense::click())
+        .on_hover_text(tooltip);
+    let color = if is_pinned {
+        egui::Color32::from_rgb(230, 180, 40)
+    } else if resp.hovered() {
+        ui.visuals().text_color()
+    } else {
+        ui.visuals().weak_text_color()
+    };
+    ui.painter().text(
+        pin_rect.center(),
+        egui::Align2::CENTER_CENTER,
+        "📌",
+        egui::TextStyle::Small.resolve(ui.style()),
+        color,
+    );
+    resp
 }
 
 /// Bouton « engrenage » peint (rendu fiable, sans dépendre d'un glyphe emoji).

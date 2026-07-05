@@ -176,6 +176,23 @@ fn test_restore_peers_from_history_ignores_group_messages() {
 }
 
 #[test]
+fn test_toggle_pinned_persists_and_toggles() {
+    let mut s = state("alice");
+    assert!(!s.is_pinned("bob"));
+    s.toggle_pinned("bob");
+    assert!(s.is_pinned("bob"));
+    s.toggle_pinned("#projet");
+    assert!(s.is_pinned("#projet"));
+    assert!(
+        s.is_pinned("bob"),
+        "un second épinglage ne doit pas effacer le premier"
+    );
+    s.toggle_pinned("bob");
+    assert!(!s.is_pinned("bob"));
+    assert!(s.is_pinned("#projet"));
+}
+
+#[test]
 fn test_set_peer_alias_then_clear() {
     // new_with_base isole les écritures disque dans un répertoire temporaire
     let dir = std::env::temp_dir().join(format!("abcom_alias_{}", std::process::id()));
