@@ -154,6 +154,32 @@ impl AppState {
         });
     }
 
+    /// Clé de conversation (username de pair ou `#groupe`) épinglée en tête
+    /// de la barre latérale ? Liste persistée en JSON dans la table kv.
+    pub fn is_pinned(&self, conv_key: &str) -> bool {
+        self.pinned_conversations().contains(&conv_key.to_string())
+    }
+
+    fn pinned_conversations(&self) -> Vec<String> {
+        self.kv
+            .get("pinned_conversations")
+            .and_then(|v| serde_json::from_str(v).ok())
+            .unwrap_or_default()
+    }
+
+    /// Épingle/désépingle une conversation (pair ou groupe) en tête de liste.
+    pub fn toggle_pinned(&mut self, conv_key: &str) {
+        let mut pinned = self.pinned_conversations();
+        if let Some(pos) = pinned.iter().position(|c| c == conv_key) {
+            pinned.remove(pos);
+        } else {
+            pinned.push(conv_key.to_string());
+        }
+        let json = serde_json::to_string(&pinned).unwrap_or_default();
+        self.set_pref("pinned_conversations", &json);
+        self.bump_presence();
+    }
+
     /// Envoie une commande au thread de stockage (no-op sans stockage).
     pub(crate) fn persist(&self, cmd: StorageCmd) {
         if let Some(tx) = &self.storage {
