@@ -308,15 +308,15 @@ pub fn custom_composer_input(
         line_count = visual_line_count(&scrollbar_caret_points, line_height);
     }
     let visual_lines = line_count.clamp(1, 10) as f32;
-    let desired_size = egui::vec2(width.max(120.0), 16.0 + visual_lines * line_height);
+    let desired_size = egui::vec2(width.max(120.0), 10.0 + visual_lines * line_height);
     let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
     let content_rect = if needs_scrollbar {
         egui::Rect::from_min_max(
-            rect.min + egui::vec2(6.0, 6.0),
-            rect.max - egui::vec2(14.0, 6.0),
+            rect.min + egui::vec2(6.0, 5.0),
+            rect.max - egui::vec2(14.0, 5.0),
         )
     } else {
-        rect.shrink2(egui::vec2(6.0, 6.0))
+        rect.shrink2(egui::vec2(6.0, 5.0))
     };
     let caret_points =
         composer_caret_positions(ui, input, emoji_map, 18.0, content_rect.width().max(20.0));

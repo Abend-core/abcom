@@ -15,7 +15,7 @@ use super::composer;
 use super::emoji_picker::emoji_shortcode_trigger;
 use super::AbcomApp;
 
-const ACTION_BUTTON_SIZE: [f32; 2] = [34.0, 34.0];
+const ACTION_BUTTON_SIZE: [f32; 2] = [28.0, 28.0];
 
 /// Au-delà de cette taille (1 Go), l'envoi d'un média demande l'accord du
 /// destinataire avant transfert. En dessous, l'envoi est automatique. Dans les
@@ -137,7 +137,7 @@ fn icon_button(
         .on_hover_text(tooltip);
     paint(
         ui.painter(),
-        response.rect.shrink2(egui::vec2(8.0, 8.0)),
+        response.rect.shrink2(egui::vec2(7.0, 7.0)),
         egui::Color32::from_rgb(244, 245, 247),
     );
     response
@@ -501,16 +501,20 @@ impl AbcomApp {
         let add_files_label = self.tr("Ajouter des fichiers", "Add files");
         let add_folder_label = self.tr("Ajouter un dossier", "Add folder");
 
+        // Marge uniforme entre les bords du panneau et le cadre du composant
+        // (la marge par défaut du panneau est plus large sur les côtés).
         egui::TopBottomPanel::bottom("input_panel")
             .resizable(false)
+            .frame(
+                egui::Frame::side_top_panel(&ctx.style()).inner_margin(egui::Margin::same(8)),
+            )
             .show(ctx, |ui| {
-                ui.add_space(3.0);
                 let gif_label = self.tr("GIF", "GIF");
                 egui::Frame::default()
                     .fill(egui::Color32::from_rgb(66, 66, 69))
                     .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(96, 96, 100)))
                     .corner_radius(egui::CornerRadius::same(14))
-                    .inner_margin(egui::Margin::symmetric(10, 8))
+                    .inner_margin(egui::Margin::symmetric(8, 6))
                     .show(ui, |ui| {
                         ui.vertical(|ui| {
                             // Aperçu de réponse : extrait les données possédées
@@ -709,322 +713,355 @@ impl AbcomApp {
                                 ui.add_space(6.0);
                             }
 
-                            ui.with_layout(egui::Layout::left_to_right(egui::Align::Min), |ui| {
-                                ui.set_min_height(ACTION_BUTTON_SIZE[1]);
-                                ui.spacing_mut().item_spacing = egui::vec2(8.0, 0.0);
+                            // Rangée du haut : champ de saisie seul, pleine largeur.
+                            let selected_addr = self.sidebar_cache.selected_peer_addr;
+                            let all_peers = self.sidebar_cache.peers.clone();
 
-                                let plus_btn = icon_button(
+                            let menu_open_now =
+                                emoji_shortcode_trigger(&self.input, self.input_cursor_char)
+                                    .map(|(_, q)| !q.is_empty())
+                                    .unwrap_or(false);
+
+                            let available_w = ui.available_width();
+
+                            let (resp, mut pressed_enter, changed) =
+                                composer::custom_composer_input(
                                     ui,
-                                    self.tr(
-                                        "Ajouter des fichiers ou dossiers",
-                                        "Add files or folders",
-                                    ),
-                                    self.show_attachment_menu,
-                                    paint_plus_icon,
-                                );
-                                if plus_btn.clicked() {
-                                    self.show_attachment_menu = !self.show_attachment_menu;
-                                }
-
-                                let selected_addr = self.sidebar_cache.selected_peer_addr;
-                                let all_peers = self.sidebar_cache.peers.clone();
-
-                                let actions_width = 168.0;
-                                let available_w = (ui.available_width() - actions_width).max(180.0);
-                                let menu_open_now =
-                                    emoji_shortcode_trigger(&self.input, self.input_cursor_char)
-                                        .map(|(_, q)| !q.is_empty())
-                                        .unwrap_or(false);
-
-                                let (resp, mut pressed_enter, changed) =
-                                    composer::custom_composer_input(
-                                        ui,
-                                        &mut self.input,
-                                        &mut self.input_cursor_char,
-                                        &mut self.input_has_focus,
-                                        &mut self.input_scroll_lines,
-                                        &self.emoji_map,
-                                        &self.emoji_textures,
-                                        &self.emoji_alias_to_char,
-                                        &self.emoji_aliases,
-                                        menu_open_now,
-                                        self.shortcode_selected,
-                                        available_w,
-                                        &mut self.input_selection_anchor,
-                                    );
-
-                                ui.add_space(6.0);
-
-                                let aa_btn = action_button(
-                                    ui,
-                                    egui::RichText::new("Aa")
-                                        .size(11.5)
-                                        .color(egui::Color32::from_rgb(244, 245, 247)),
-                                    self.tr(
-                                        "Mise en forme bientôt disponible",
-                                        "Formatting coming soon",
-                                    ),
-                                    false,
-                                );
-                                aa_btn.clicked();
-
-                                let gif_btn = action_button(
-                                    ui,
-                                    egui::RichText::new("GIF")
-                                        .size(10.5)
-                                        .color(egui::Color32::from_rgb(244, 245, 247)),
-                                    gif_label,
-                                    self.show_gif_picker,
-                                );
-                                if gif_btn.clicked() {
-                                    if crate::config::klipy_api_key().is_some() {
-                                        self.show_gif_picker = !self.show_gif_picker;
-                                        self.show_emoji_picker = false;
-                                        gif_button_clicked = true;
-                                    } else {
-                                        self.last_notification = Some(
-                                            self.tr(
-                                                "Clé API Klipy manquante (ABCOM_KLIPY_API_KEY)",
-                                                "Klipy API key missing (ABCOM_KLIPY_API_KEY)",
-                                            )
-                                            .to_string(),
-                                        );
-                                        self.notification_time = std::time::Instant::now();
-                                    }
-                                }
-
-                                let emoji_btn = if let Some((_, tex)) = self.emoji_textures.first()
-                                {
-                                    icon_button(
-                                        ui,
-                                        self.tr("Emojis", "Emoji"),
-                                        self.show_emoji_picker,
-                                        |painter, rect, _| {
-                                            painter.image(
-                                                tex.id(),
-                                                rect,
-                                                egui::Rect::from_min_max(
-                                                    egui::pos2(0.0, 0.0),
-                                                    egui::pos2(1.0, 1.0),
-                                                ),
-                                                egui::Color32::WHITE,
-                                            );
-                                        },
-                                    )
-                                } else {
-                                    action_button(
-                                        ui,
-                                        egui::RichText::new("Em")
-                                            .size(16.0)
-                                            .color(egui::Color32::from_rgb(244, 245, 247)),
-                                        self.tr("Emojis", "Emoji"),
-                                        self.show_emoji_picker,
-                                    )
-                                };
-                                if emoji_btn.clicked() {
-                                    self.show_emoji_picker = !self.show_emoji_picker;
-                                    self.show_gif_picker = false;
-                                    emoji_button_clicked = true;
-                                }
-
-                                let send_btn = icon_button(
-                                    ui,
-                                    self.tr("Envoyer", "Send"),
-                                    false,
-                                    paint_send_icon,
-                                );
-                                if send_btn.clicked() {
-                                    pressed_enter = true;
-                                }
-
-                                if self.show_attachment_menu {
-                                    let popup_action = attachment_menu_popup(
-                                        ctx,
-                                        plus_btn.rect,
-                                        add_files_label,
-                                        add_folder_label,
-                                    );
-                                    // Estimate popup rect above the + button for outside-click detection.
-                                    let popup_rect = egui::Rect::from_min_size(
-                                        plus_btn.rect.left_top() - egui::vec2(0.0, 92.0),
-                                        egui::vec2(216.0, 92.0),
-                                    );
-
-                                    if let Some(action) = popup_action {
-                                        picker_action = Some(action);
-                                        self.show_attachment_menu = false;
-                                    }
-
-                                    let clicked_outside = ctx.input(|i| i.pointer.any_pressed())
-                                        && !plus_btn.hovered()
-                                        && !popup_rect.contains(ctx.input(|i| {
-                                            i.pointer.interact_pos().unwrap_or_default()
-                                        }));
-                                    if clicked_outside {
-                                        self.show_attachment_menu = false;
-                                    }
-                                }
-
-                                // Popup de suggestions shortcode
-                                let shortcode_limit = match emoji_shortcode_trigger(
-                                    &self.input,
-                                    self.input_cursor_char,
-                                ) {
-                                    Some((_, q)) if q.is_empty() => 5,
-                                    _ => 12,
-                                };
-                                let shortcode_list = super::emoji_picker::shortcode_suggestions(
-                                    &self.input,
-                                    self.input_cursor_char,
+                                    &mut self.input,
+                                    &mut self.input_cursor_char,
+                                    &mut self.input_has_focus,
+                                    &mut self.input_scroll_lines,
+                                    &self.emoji_map,
+                                    &self.emoji_textures,
                                     &self.emoji_alias_to_char,
                                     &self.emoji_aliases,
-                                    shortcode_limit,
+                                    menu_open_now,
+                                    self.shortcode_selected,
+                                    available_w,
+                                    &mut self.input_selection_anchor,
                                 );
 
-                                let mut clicked_shortcode: Option<String> = None;
-                                if shortcode_list.is_empty() {
-                                    self.shortcode_selected = 0;
-                                } else if self.shortcode_selected >= shortcode_list.len() {
-                                    self.shortcode_selected = shortcode_list.len() - 1;
-                                }
+                            ui.add_space(3.0);
+                            // Séparateur entre le champ de saisie et la barre
+                            // d'actions : même teinte que le liseré du cadre.
+                            let (sep_rect, _) = ui.allocate_exact_size(
+                                egui::vec2(ui.available_width(), 1.0),
+                                egui::Sense::hover(),
+                            );
+                            ui.painter().hline(
+                                sep_rect.x_range(),
+                                sep_rect.center().y,
+                                egui::Stroke::new(1.0, egui::Color32::from_rgb(96, 96, 100)),
+                            );
+                            ui.add_space(4.0);
 
-                                // Consumir las flechas solo si el menú de shortcodes está abierto
-                                if self.input_has_focus && menu_open_now {
-                                    if ctx.input_mut(|i| {
-                                        i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
-                                    }) && !shortcode_list.is_empty()
-                                    {
-                                        self.shortcode_selected = (self.shortcode_selected + 1)
-                                            .min(shortcode_list.len() - 1);
-                                    }
-                                    if ctx.input_mut(|i| {
-                                        i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)
-                                    }) && !shortcode_list.is_empty()
-                                    {
-                                        self.shortcode_selected =
-                                            self.shortcode_selected.saturating_sub(1);
-                                    }
-                                }
-
-                                if self.input_has_focus && !shortcode_list.is_empty() {
-                                    super::emoji_picker::show_shortcode_popup(
-                                        ctx,
-                                        ui,
-                                        &resp,
-                                        &shortcode_list,
-                                        &self.emoji_map,
-                                        &self.emoji_textures,
-                                        self.shortcode_selected,
-                                        &mut clicked_shortcode,
-                                    );
-                                }
-
-                                if self.input_has_focus
-                                    && !shortcode_list.is_empty()
-                                    && pressed_enter
-                                {
-                                    if let Some((alias, _ch)) =
-                                        shortcode_list.get(self.shortcode_selected)
-                                    {
-                                        clicked_shortcode = Some(alias.clone());
-                                        pressed_enter = false;
-                                    }
-                                }
-
-                                if let Some(alias) = clicked_shortcode {
-                                    if let Some((start, _)) =
-                                        emoji_shortcode_trigger(&self.input, self.input_cursor_char)
-                                    {
-                                        if let Some(ch) = self.emoji_alias_to_char.get(&alias) {
-                                            let end = self.input_cursor_char;
-                                            composer::replace_char_range(
-                                                &mut self.input,
-                                                &mut self.input_cursor_char,
-                                                start,
-                                                end,
-                                                ch,
-                                            );
-                                            composer::sync_cursor(ctx, self.input_cursor_char);
-                                            self.input_has_focus = true;
-                                            self.show_emoji_picker = false;
-                                        }
-                                    }
-                                }
-
-                                // Indicateur de frappe
-                                if changed
-                                    && self.last_typing_broadcast.elapsed().as_millis() > 1500
-                                {
-                                    self.last_typing_broadcast = std::time::Instant::now();
-                                    let (my_name, target_addrs) = {
-                                        let s = self.state.lock().unwrap();
-                                        let name = s.my_username.clone();
-                                        let addrs = match &s.selected_conversation {
-                                            None => s
-                                                .peers
-                                                .iter()
-                                                .filter(|p| p.online)
-                                                .map(|p| p.addr)
-                                                .collect::<Vec<_>>(),
-                                            // Salon : membres en ligne du groupe.
-                                            Some(conv) => match conv.strip_prefix('#') {
-                                                Some(g) => s.group_member_addrs(g),
-                                                None => s
-                                                    .peers
-                                                    .iter()
-                                                    .find(|p| p.online && &p.username == conv)
-                                                    .map(|p| p.addr)
-                                                    .into_iter()
-                                                    .collect(),
-                                            },
-                                        };
-                                        (name, addrs)
-                                    };
-                                    for addr in target_addrs {
-                                        let _ = self.send_typing_tx.try_send(TypingRequest {
-                                            to_addr: addr,
-                                            indicator: TypingIndicator {
-                                                from: my_name.clone(),
-                                            },
-                                        });
-                                    }
-                                }
-
-                                let pressed_enter_fallback = ui.input(|i| {
-                                    i.key_pressed(egui::Key::Enter)
-                                        && !i.modifiers.shift
-                                        && !menu_open_now
-                                });
-
-                                if should_send_message(
-                                    pressed_enter,
-                                    pressed_enter_fallback,
-                                    menu_open_now,
-                                    &self.input,
-                                ) && send_current_message(self, selected_addr, &all_peers)
-                                {
-                                    self.input_selection_anchor = None;
-                                    resp.request_focus();
-                                    self.show_emoji_picker = false;
-                                }
-                            });
-
-                            if !typing_list.is_empty() {
-                                ui.add_space(4.0);
+                            // Rangée du bas : pas de saisie de texte ici, juste
+                            // l'indicateur de frappe (à gauche) et les boutons
+                            // d'action (à droite).
+                            let mut plus_btn_rect = egui::Rect::NOTHING;
+                            ui.horizontal(|ui| {
+                                ui.set_min_height(ACTION_BUTTON_SIZE[1]);
                                 ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Min),
+                                    egui::Layout::right_to_left(egui::Align::Center),
                                     |ui| {
-                                        ui.label(
-                                            egui::RichText::new(format!(
-                                                "{} {}",
-                                                typing_list.join(", "),
-                                                self.tr("en train d'écrire...", "is typing...")
-                                            ))
-                                            .color(egui::Color32::WHITE)
-                                            .small(),
+                                        ui.spacing_mut().item_spacing = egui::vec2(6.0, 0.0);
+
+                                        let send_btn = icon_button(
+                                            ui,
+                                            self.tr("Envoyer", "Send"),
+                                            false,
+                                            paint_send_icon,
+                                        );
+                                        if send_btn.clicked() {
+                                            pressed_enter = true;
+                                        }
+
+                                        let emoji_btn =
+                                            if let Some((_, tex)) = self.emoji_textures.first() {
+                                                icon_button(
+                                                    ui,
+                                                    self.tr("Emojis", "Emoji"),
+                                                    self.show_emoji_picker,
+                                                    |painter, rect, _| {
+                                                        painter.image(
+                                                            tex.id(),
+                                                            rect,
+                                                            egui::Rect::from_min_max(
+                                                                egui::pos2(0.0, 0.0),
+                                                                egui::pos2(1.0, 1.0),
+                                                            ),
+                                                            egui::Color32::WHITE,
+                                                        );
+                                                    },
+                                                )
+                                            } else {
+                                                action_button(
+                                                    ui,
+                                                    egui::RichText::new("Em")
+                                                        .size(16.0)
+                                                        .color(egui::Color32::from_rgb(
+                                                            244, 245, 247,
+                                                        )),
+                                                    self.tr("Emojis", "Emoji"),
+                                                    self.show_emoji_picker,
+                                                )
+                                            };
+                                        if emoji_btn.clicked() {
+                                            self.show_emoji_picker = !self.show_emoji_picker;
+                                            self.show_gif_picker = false;
+                                            emoji_button_clicked = true;
+                                        }
+
+                                        let gif_btn = action_button(
+                                            ui,
+                                            egui::RichText::new("GIF")
+                                                .size(10.5)
+                                                .color(egui::Color32::from_rgb(244, 245, 247)),
+                                            gif_label,
+                                            self.show_gif_picker,
+                                        );
+                                        if gif_btn.clicked() {
+                                            if crate::config::klipy_api_key().is_some() {
+                                                self.show_gif_picker = !self.show_gif_picker;
+                                                self.show_emoji_picker = false;
+                                                gif_button_clicked = true;
+                                            } else {
+                                                self.last_notification = Some(
+                                                    self.tr(
+                                                        "Clé API Klipy manquante (ABCOM_KLIPY_API_KEY)",
+                                                        "Klipy API key missing (ABCOM_KLIPY_API_KEY)",
+                                                    )
+                                                    .to_string(),
+                                                );
+                                                self.notification_time = std::time::Instant::now();
+                                            }
+                                        }
+
+                                        let aa_btn = action_button(
+                                            ui,
+                                            egui::RichText::new("Aa")
+                                                .size(11.5)
+                                                .color(egui::Color32::from_rgb(244, 245, 247)),
+                                            self.tr(
+                                                "Mise en forme bientôt disponible",
+                                                "Formatting coming soon",
+                                            ),
+                                            false,
+                                        );
+                                        aa_btn.clicked();
+
+                                        let plus_btn = icon_button(
+                                            ui,
+                                            self.tr(
+                                                "Ajouter des fichiers ou dossiers",
+                                                "Add files or folders",
+                                            ),
+                                            self.show_attachment_menu,
+                                            paint_plus_icon,
+                                        );
+                                        if plus_btn.clicked() {
+                                            self.show_attachment_menu = !self.show_attachment_menu;
+                                        }
+                                        plus_btn_rect = plus_btn.rect;
+
+                                        // Espace restant (à gauche) : indicateur
+                                        // de frappe, vide si personne n'écrit.
+                                        ui.with_layout(
+                                            egui::Layout::left_to_right(egui::Align::Center),
+                                            |ui| {
+                                                if !typing_list.is_empty() {
+                                                    ui.add(
+                                                        egui::Label::new(
+                                                            egui::RichText::new(format!(
+                                                                "{} {}",
+                                                                typing_list.join(", "),
+                                                                self.tr(
+                                                                    "en train d'écrire...",
+                                                                    "is typing...",
+                                                                )
+                                                            ))
+                                                            .color(egui::Color32::WHITE)
+                                                            .small(),
+                                                        )
+                                                        .truncate(),
+                                                    );
+                                                }
+                                            },
                                         );
                                     },
                                 );
+                            });
+
+                            if self.show_attachment_menu {
+                                let popup_action = attachment_menu_popup(
+                                    ctx,
+                                    plus_btn_rect,
+                                    add_files_label,
+                                    add_folder_label,
+                                );
+                                // Estimate popup rect above the + button for outside-click detection.
+                                let popup_rect = egui::Rect::from_min_size(
+                                    plus_btn_rect.left_top() - egui::vec2(0.0, 92.0),
+                                    egui::vec2(216.0, 92.0),
+                                );
+
+                                if let Some(action) = popup_action {
+                                    picker_action = Some(action);
+                                    self.show_attachment_menu = false;
+                                }
+
+                                let clicked_outside = ctx.input(|i| i.pointer.any_pressed())
+                                    && !plus_btn_rect.contains(ctx.input(|i| {
+                                        i.pointer.interact_pos().unwrap_or_default()
+                                    }))
+                                    && !popup_rect.contains(ctx.input(|i| {
+                                        i.pointer.interact_pos().unwrap_or_default()
+                                    }));
+                                if clicked_outside {
+                                    self.show_attachment_menu = false;
+                                }
+                            }
+
+                            // Popup de suggestions shortcode
+                            let shortcode_limit = match emoji_shortcode_trigger(
+                                &self.input,
+                                self.input_cursor_char,
+                            ) {
+                                Some((_, q)) if q.is_empty() => 5,
+                                _ => 12,
+                            };
+                            let shortcode_list = super::emoji_picker::shortcode_suggestions(
+                                &self.input,
+                                self.input_cursor_char,
+                                &self.emoji_alias_to_char,
+                                &self.emoji_aliases,
+                                shortcode_limit,
+                            );
+
+                            let mut clicked_shortcode: Option<String> = None;
+                            if shortcode_list.is_empty() {
+                                self.shortcode_selected = 0;
+                            } else if self.shortcode_selected >= shortcode_list.len() {
+                                self.shortcode_selected = shortcode_list.len() - 1;
+                            }
+
+                            // Consumir las flechas solo si el menú de shortcodes está abierto
+                            if self.input_has_focus && menu_open_now {
+                                if ctx.input_mut(|i| {
+                                    i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
+                                }) && !shortcode_list.is_empty()
+                                {
+                                    self.shortcode_selected = (self.shortcode_selected + 1)
+                                        .min(shortcode_list.len() - 1);
+                                }
+                                if ctx.input_mut(|i| {
+                                    i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)
+                                }) && !shortcode_list.is_empty()
+                                {
+                                    self.shortcode_selected =
+                                        self.shortcode_selected.saturating_sub(1);
+                                }
+                            }
+
+                            if self.input_has_focus && !shortcode_list.is_empty() {
+                                super::emoji_picker::show_shortcode_popup(
+                                    ctx,
+                                    ui,
+                                    &resp,
+                                    &shortcode_list,
+                                    &self.emoji_map,
+                                    &self.emoji_textures,
+                                    self.shortcode_selected,
+                                    &mut clicked_shortcode,
+                                );
+                            }
+
+                            if self.input_has_focus
+                                && !shortcode_list.is_empty()
+                                && pressed_enter
+                            {
+                                if let Some((alias, _ch)) =
+                                    shortcode_list.get(self.shortcode_selected)
+                                {
+                                    clicked_shortcode = Some(alias.clone());
+                                    pressed_enter = false;
+                                }
+                            }
+
+                            if let Some(alias) = clicked_shortcode {
+                                if let Some((start, _)) =
+                                    emoji_shortcode_trigger(&self.input, self.input_cursor_char)
+                                {
+                                    if let Some(ch) = self.emoji_alias_to_char.get(&alias) {
+                                        let end = self.input_cursor_char;
+                                        composer::replace_char_range(
+                                            &mut self.input,
+                                            &mut self.input_cursor_char,
+                                            start,
+                                            end,
+                                            ch,
+                                        );
+                                        composer::sync_cursor(ctx, self.input_cursor_char);
+                                        self.input_has_focus = true;
+                                        self.show_emoji_picker = false;
+                                    }
+                                }
+                            }
+
+                            // Indicateur de frappe
+                            if changed && self.last_typing_broadcast.elapsed().as_millis() > 1500
+                            {
+                                self.last_typing_broadcast = std::time::Instant::now();
+                                let (my_name, target_addrs) = {
+                                    let s = self.state.lock().unwrap();
+                                    let name = s.my_username.clone();
+                                    let addrs = match &s.selected_conversation {
+                                        None => s
+                                            .peers
+                                            .iter()
+                                            .filter(|p| p.online)
+                                            .map(|p| p.addr)
+                                            .collect::<Vec<_>>(),
+                                        // Salon : membres en ligne du groupe.
+                                        Some(conv) => match conv.strip_prefix('#') {
+                                            Some(g) => s.group_member_addrs(g),
+                                            None => s
+                                                .peers
+                                                .iter()
+                                                .find(|p| p.online && &p.username == conv)
+                                                .map(|p| p.addr)
+                                                .into_iter()
+                                                .collect(),
+                                        },
+                                    };
+                                    (name, addrs)
+                                };
+                                for addr in target_addrs {
+                                    let _ = self.send_typing_tx.try_send(TypingRequest {
+                                        to_addr: addr,
+                                        indicator: TypingIndicator {
+                                            from: my_name.clone(),
+                                        },
+                                    });
+                                }
+                            }
+
+                            let pressed_enter_fallback = ui.input(|i| {
+                                i.key_pressed(egui::Key::Enter)
+                                    && !i.modifiers.shift
+                                    && !menu_open_now
+                            });
+
+                            if should_send_message(
+                                pressed_enter,
+                                pressed_enter_fallback,
+                                menu_open_now,
+                                &self.input,
+                            ) && send_current_message(self, selected_addr, &all_peers)
+                            {
+                                self.input_selection_anchor = None;
+                                resp.request_focus();
+                                self.show_emoji_picker = false;
                             }
                         });
                     });
