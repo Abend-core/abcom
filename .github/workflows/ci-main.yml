@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Dépendances système
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxkbcommon-dev
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxkbcommon-dev libgtk-3-dev libayatana-appindicator3-dev libxdo-dev
 
       - name: Rust stable
         uses: dtolnay/rust-toolchain@stable
