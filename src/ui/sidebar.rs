@@ -210,7 +210,7 @@ impl AbcomApp {
             ui.heading(self.tr("🔗 Groupes", "🔗 Groups"));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .small_button("＋")
+                    .small_button("+")
                     .on_hover_text(self.tr("Créer un groupe", "Create a group"))
                     .clicked()
                 {
