@@ -389,38 +389,44 @@ impl AbcomApp {
         self.state.lock().unwrap().selected_conversation = new_conversation.clone();
         self.load_draft(new_conversation.clone());
 
-        // Envoyer les ReadReceipts pour tous les messages privés reçus dans cette conv
-        if let Some(peer_name) = new_conversation.filter(|c| !c.starts_with('#')) {
-            self.send_read_receipts_for_peer(&peer_name);
-        }
+        // ReadReceipts différés pour tous les messages reçus dans cette
+        // conversation (privée, salon #… ou « Tous »).
+        self.send_read_receipts_for_conversation(new_conversation);
     }
 
-    /// Envoie un ReadReceipt pour chaque message privé reçu du pair donné.
-    pub(crate) fn send_read_receipts_for_peer(&mut self, peer_name: &str) {
+    /// Envoie un ReadReceipt pour chaque message reçu d'un autre pair dans la
+    /// conversation donnée : pair (privé), `#nom` (salon) ou `None` (« Tous »).
+    /// En salon/« Tous », l'accusé est diffusé à tous les membres en ligne
+    /// pour que chacun voie le même détail « … » reçu/lu.
+    pub(crate) fn send_read_receipts_for_conversation(&mut self, conv: Option<String>) {
         let s = self.state.lock().unwrap();
         let my_name = s.my_username.clone();
-        let peer_addr = s
-            .peers
-            .iter()
-            .find(|p| p.username == peer_name)
-            .map(|p| p.addr);
-        let Some(addr) = peer_addr else { return };
-
         let now = chrono::Local::now().format("%H:%M").to_string();
-        let receipts: Vec<_> = s
-            .messages
-            .iter()
-            .filter(|m| m.from == peer_name && m.to_user.as_deref() == Some(my_name.as_str()))
-            .map(|m| ReadReceiptRequest {
-                to_addr: addr,
-                receipt: ReadReceipt {
-                    from: my_name.clone(),
-                    to: peer_name.to_string(),
-                    message_hash: crate::app::AppState::message_hash(m),
-                    timestamp: now.clone(),
-                },
-            })
-            .collect();
+
+        let mut receipts: Vec<ReadReceiptRequest> = Vec::new();
+        for m in s.messages.iter().filter(|m| m.from != my_name) {
+            let in_conv = match (conv.as_deref(), m.to_user.as_deref()) {
+                (None, None) => true,
+                (Some(c), Some(t)) if c.starts_with('#') => t == c,
+                (Some(c), Some(t)) => m.from == c && t == my_name,
+                _ => false,
+            };
+            if !in_conv {
+                continue;
+            }
+            let hash = crate::app::AppState::message_hash(m);
+            for addr in s.receipt_recipients(m) {
+                receipts.push(ReadReceiptRequest {
+                    to_addr: addr,
+                    receipt: ReadReceipt {
+                        from: my_name.clone(),
+                        to: m.from.clone(),
+                        message_hash: hash,
+                        timestamp: now.clone(),
+                    },
+                });
+            }
+        }
         drop(s);
 
         for req in receipts {

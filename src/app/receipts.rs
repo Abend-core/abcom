@@ -12,6 +12,14 @@ pub struct PendingMessage {
     pub retry_count: u32,
 }
 
+/// Liste nominative reçu/lu d'un message de groupe ou de « Tous »,
+/// affichée par le popup « … » du fil (noms d'affichage, triés).
+#[derive(Clone, Debug, Default)]
+pub struct ReceiptDetail {
+    pub delivered_by: Vec<String>,
+    pub read_by: Vec<String>,
+}
+
 impl AppState {
     /// Calcule un hash FNV-1a stable entre processus pour identifier les messages.
     ///
@@ -49,6 +57,64 @@ impl AppState {
             .or_default()
             .insert(username);
         self.bump_content();
+    }
+
+    /// Enregistre un ACK de livraison nominatif reçu d'un pair (détail
+    /// « reçu par » des salons et de « Tous »).
+    pub fn mark_message_delivered_by(&mut self, message_hash: u64, username: String) {
+        self.delivered_receipts
+            .entry(message_hash)
+            .or_default()
+            .insert(username);
+        self.bump_content();
+    }
+
+    /// Adresses des pairs qui doivent recevoir un ACK/ReadReceipt concernant `msg`.
+    ///
+    /// - message privé → seulement l'expéditeur ;
+    /// - salon (`#…`) → tous les membres en ligne (moi exclu) ;
+    /// - diffusion (« Tous », `to_user == None`) → tous les pairs en ligne.
+    ///
+    /// Diffuser à tout le salon permet à chaque membre d'accumuler le même
+    /// état reçu/lu et donc d'afficher le détail (« … ») sur chaque message.
+    pub fn receipt_recipients(&self, msg: &ChatMessage) -> Vec<SocketAddr> {
+        match msg.to_user.as_deref() {
+            Some(target) if !target.starts_with('#') => self
+                .peers
+                .iter()
+                .find(|p| p.username == msg.from && p.online && !p.addr.ip().is_unspecified())
+                .map(|p| p.addr)
+                .into_iter()
+                .collect(),
+            Some(group_key) => group_key
+                .strip_prefix('#')
+                .map(|g| self.group_member_addrs(g))
+                .unwrap_or_default(),
+            None => self
+                .peers
+                .iter()
+                .filter(|p| {
+                    p.online && p.username != self.my_username && !p.addr.ip().is_unspecified()
+                })
+                .map(|p| p.addr)
+                .collect(),
+        }
+    }
+
+    /// Liste nominative reçu/lu d'un message (noms d'affichage, triés),
+    /// pour le popup « … » des salons et de « Tous ».
+    pub fn receipt_detail(&self, message_hash: u64) -> ReceiptDetail {
+        let resolve = |users: Option<&std::collections::HashSet<String>>| {
+            let mut names: Vec<String> = users
+                .map(|set| set.iter().map(|u| self.peer_display_name(u)).collect())
+                .unwrap_or_default();
+            names.sort();
+            names
+        };
+        ReceiptDetail {
+            delivered_by: resolve(self.delivered_receipts.get(&message_hash)),
+            read_by: resolve(self.read_receipts.get(&message_hash)),
+        }
     }
 
     #[allow(dead_code)]

@@ -16,7 +16,7 @@ mod transfers;
 mod typing;
 
 pub use peers::Peer;
-pub use receipts::PendingMessage;
+pub use receipts::{PendingMessage, ReceiptDetail};
 pub use storage::{LoadedState, Storage, StorageCmd};
 
 pub struct AppState {
@@ -28,6 +28,9 @@ pub struct AppState {
     pub typing_users: HashMap<String, SystemTime>,
     pub read_counts: HashMap<String, usize>,
     pub read_receipts: HashMap<u64, HashSet<String>>,
+    /// Qui a envoyé un ACK de livraison, par message (détail « reçu par »
+    /// des salons et de « Tous »).
+    pub delivered_receipts: HashMap<u64, HashSet<String>>,
     pub pending_messages: HashMap<u64, PendingMessage>,
     pub peer_records: Vec<PeerRecord>,
     /// Avatar local (octets PNG normalisés), `None` si non défini.
@@ -82,6 +85,7 @@ impl AppState {
             typing_users: HashMap::new(),
             read_counts: loaded.read_counts,
             read_receipts: HashMap::new(),
+            delivered_receipts: HashMap::new(),
             pending_messages: HashMap::new(),
             peer_records: loaded.peer_records,
             my_avatar: None,
@@ -114,6 +118,7 @@ impl AppState {
             typing_users: HashMap::new(),
             read_counts: HashMap::new(),
             read_receipts: HashMap::new(),
+            delivered_receipts: HashMap::new(),
             pending_messages: HashMap::new(),
             peer_records: Vec::new(),
             my_avatar: None,
