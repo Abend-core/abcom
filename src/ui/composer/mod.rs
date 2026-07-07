@@ -155,21 +155,38 @@ fn visual_line_count(caret_points: &[egui::Pos2], line_height: f32) -> usize {
         .max(1)
 }
 
-fn cursor_from_point(points: &[egui::Pos2], target: egui::Pos2) -> usize {
-    let mut best_idx = 0;
-    let mut best_dist = f32::MAX;
+/// Position de curseur la plus proche d'un point cliqué (en coordonnées de
+/// contenu, défilement déjà compensé par l'appelant).
+///
+/// On choisit **d'abord la bonne ligne** (par la position verticale), puis, sur
+/// cette ligne, la colonne la plus proche. Un plus-proche 2D naïf sauterait sur
+/// la ligne du dessus quand on clique à droite d'une ligne courte : la distance
+/// horizontale (ligne longue au-dessus) l'emporterait sur l'espacement vertical.
+fn cursor_from_point(points: &[egui::Pos2], target: egui::Pos2, line_height: f32) -> usize {
+    if points.len() <= 1 {
+        return 0;
+    }
+    let max_line = points
+        .iter()
+        .map(|p| (p.y / line_height).round() as i32)
+        .max()
+        .unwrap_or(0);
+    let target_line = ((target.y / line_height).round() as i32).clamp(0, max_line);
 
+    let mut best_idx = None;
+    let mut best_dx = f32::MAX;
     for (idx, p) in points.iter().enumerate() {
-        let dx = p.x - target.x;
-        let dy = p.y - target.y;
-        let dist = dx * dx + dy * dy;
-        if dist < best_dist {
-            best_dist = dist;
-            best_idx = idx;
+        if (p.y / line_height).round() as i32 == target_line {
+            let dx = (p.x - target.x).abs();
+            if dx < best_dx {
+                best_dx = dx;
+                best_idx = Some(idx);
+            }
         }
     }
-
-    best_idx
+    // La ligne visée contient toujours au moins une position ; repli défensif
+    // sur la fin du texte si ce n'était pas le cas.
+    best_idx.unwrap_or(points.len() - 1)
 }
 
 fn selection_range(selection_anchor: Option<usize>, cursor_char: usize) -> Option<(usize, usize)> {
@@ -343,16 +360,24 @@ pub fn custom_composer_input(
     let max_scroll = (line_count as f32 - visual_lines).max(0.0);
     *scroll_lines = scroll_lines.clamp(0.0, max_scroll);
 
+    // Position écran → coordonnées de contenu pour placer le curseur : compense
+    // le défilement vertical et l'offset de centrage des lignes (le texte est
+    // peint centré à +11 px, cf. rendu), pour qu'un clic tombe sur la ligne
+    // réellement sous le pointeur, y compris quand l'input est défilé.
+    let scroll_px = *scroll_lines * line_height;
+    let to_content = |pos: egui::Pos2| {
+        egui::pos2(
+            (pos.x - content_rect.left()).max(0.0),
+            pos.y - content_rect.top() + scroll_px - 11.0,
+        )
+    };
+
     if ui.input(|i| i.pointer.any_pressed()) && response.hovered() {
         if !ui.input(|i| i.modifiers.shift) {
             clear_selection(selection_anchor);
         }
         if let Some(pos) = response.interact_pointer_pos() {
-            let local = egui::pos2(
-                (pos.x - content_rect.left()).max(0.0),
-                (pos.y - content_rect.top()).max(0.0),
-            );
-            let pressed_cursor = cursor_from_point(&caret_points, local);
+            let pressed_cursor = cursor_from_point(&caret_points, to_content(pos), line_height);
             if selection_anchor.is_none() {
                 *selection_anchor = Some(pressed_cursor);
             }
@@ -364,11 +389,7 @@ pub fn custom_composer_input(
         *input_has_focus = true;
         response.request_focus();
         let clicked_cursor = if let Some(pos) = response.interact_pointer_pos() {
-            let local = egui::pos2(
-                (pos.x - content_rect.left()).max(0.0),
-                (pos.y - content_rect.top()).max(0.0),
-            );
-            cursor_from_point(&caret_points, local)
+            cursor_from_point(&caret_points, to_content(pos), line_height)
         } else {
             input.chars().count()
         };
@@ -387,11 +408,7 @@ pub fn custom_composer_input(
 
     if response.drag_started() && selection_anchor.is_none() {
         if let Some(pos) = response.interact_pointer_pos() {
-            let local = egui::pos2(
-                (pos.x - content_rect.left()).max(0.0),
-                (pos.y - content_rect.top()).max(0.0),
-            );
-            let drag_start_cursor = cursor_from_point(&caret_points, local);
+            let drag_start_cursor = cursor_from_point(&caret_points, to_content(pos), line_height);
             *selection_anchor = Some(drag_start_cursor);
             *cursor_char = drag_start_cursor;
         }
@@ -399,11 +416,7 @@ pub fn custom_composer_input(
 
     if response.dragged() {
         if let Some(pos) = response.interact_pointer_pos() {
-            let local = egui::pos2(
-                (pos.x - content_rect.left()).max(0.0),
-                (pos.y - content_rect.top()).max(0.0),
-            );
-            *cursor_char = cursor_from_point(&caret_points, local);
+            *cursor_char = cursor_from_point(&caret_points, to_content(pos), line_height);
         }
     }
 
@@ -418,16 +431,11 @@ pub fn custom_composer_input(
         *cursor_char = total_chars;
     }
 
-    if let Some(caret) = caret_points.get(*cursor_char) {
-        let caret_line = (caret.y / line_height).floor();
-        if caret_line < *scroll_lines {
-            *scroll_lines = caret_line;
-        }
-        if caret_line >= *scroll_lines + visual_lines {
-            *scroll_lines = caret_line - visual_lines + 1.0;
-        }
-        *scroll_lines = scroll_lines.clamp(0.0, max_scroll);
-    }
+    // Position du curseur avant traitement clavier : si une frappe ou une
+    // navigation la déplace, on fait défiler l'input pour la garder visible
+    // (plus bas). On ne resnappe PAS à chaque frame — sinon la molette et
+    // l'ascenseur ne pourraient jamais défiler loin du curseur.
+    let cursor_before = *cursor_char;
 
     if has_focus {
         let caret = caret_points
@@ -726,6 +734,25 @@ pub fn custom_composer_input(
     if changed {
         caret_points =
             composer_caret_positions(ui, input, emoji_map, 18.0, content_rect.width().max(20.0));
+    }
+
+    // Défilement suiveur : après une frappe ou une navigation clavier, garder la
+    // ligne du curseur dans la fenêtre visible (flèches haut/bas, saisie qui
+    // pousse le texte hors champ). N'agit que si le curseur a bougé, pour ne pas
+    // annuler un défilement molette/ascenseur.
+    if *cursor_char != cursor_before {
+        let recomputed_max_scroll =
+            (visual_line_count(&caret_points, line_height) as f32 - visual_lines).max(0.0);
+        let caret_line = caret_points
+            .get(*cursor_char)
+            .map(|p| (p.y / line_height).round())
+            .unwrap_or(0.0);
+        if caret_line < *scroll_lines {
+            *scroll_lines = caret_line;
+        } else if caret_line > *scroll_lines + visual_lines - 1.0 {
+            *scroll_lines = caret_line - visual_lines + 1.0;
+        }
+        *scroll_lines = scroll_lines.clamp(0.0, recomputed_max_scroll);
     }
 
     let frame_fill = egui::Color32::TRANSPARENT;
