@@ -116,7 +116,7 @@ fn run_composer_frames(
         };
         let _ = ctx.run(raw, |ctx| {
             egui::CentralPanel::default().show(ctx, |ui| {
-                let (_, submit, _) = custom_composer_input(
+                let (_, submit, _, _) = custom_composer_input(
                     ui,
                     input,
                     cursor,
@@ -328,4 +328,19 @@ fn accept_selected_shortcode_uses_highlighted_suggestion() {
     assert!(accepted);
     assert_eq!(input, "hello 😹");
     assert_eq!(cursor, input.chars().count());
+}
+
+// ── normalize_paste : retours à la ligne conservés ────────────
+
+#[test]
+fn paste_keeps_unix_newlines() {
+    assert_eq!(
+        normalize_paste("ligne un\nligne deux"),
+        "ligne un\nligne deux"
+    );
+}
+
+#[test]
+fn paste_normalizes_windows_and_mac_line_endings() {
+    assert_eq!(normalize_paste("a\r\nb\rc\nd"), "a\nb\nc\nd");
 }

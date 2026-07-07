@@ -42,8 +42,9 @@ const MAX_NOISE_MESSAGE: usize = 65535;
 /// Charge utile maximale par frame (tag AEAD de 16 octets déduit).
 pub const MAX_CHUNK: usize = MAX_NOISE_MESSAGE - 16;
 /// Taille maximale d'un message logique reconstitué (paquet JSON ou chunk
-/// média) : borne les allocations d'un pair malveillant.
-const MAX_LOGICAL_MESSAGE: usize = 8 * 1024 * 1024;
+/// média) : borne les allocations d'un pair malveillant. Publique pour que
+/// l'émetteur refuse en amont ce que la réception rejettera (connexion coupée).
+pub const MAX_LOGICAL_MESSAGE: usize = 8 * 1024 * 1024;
 
 fn to_io(e: impl std::fmt::Display) -> std::io::Error {
     std::io::Error::other(e.to_string())

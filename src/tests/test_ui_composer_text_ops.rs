@@ -130,3 +130,25 @@ fn replace_range_shortcode_to_emoji() {
     assert_eq!(t, "je 😊 le");
     assert_eq!(c, 4);
 }
+
+// ── char_prefix ───────────────────────────────────────────────
+
+#[test]
+fn char_prefix_ascii() {
+    assert_eq!(char_prefix("bonjour", 3), "bon");
+    assert_eq!(char_prefix("bonjour", 0), "");
+}
+
+#[test]
+fn char_prefix_shorter_than_max_returns_all() {
+    assert_eq!(char_prefix("salut", 100), "salut");
+}
+
+#[test]
+fn char_prefix_counts_unicode_chars_not_bytes() {
+    // « é » (2 octets) et emoji (4 octets) comptent pour un caractère,
+    // et la coupe ne tombe jamais au milieu d'un point de code UTF-8.
+    assert_eq!(char_prefix("héhé", 2), "hé");
+    assert_eq!(char_prefix("a😀b😀c", 2), "a😀");
+    assert_eq!(char_prefix("ééé", 1), "é");
+}

@@ -20,6 +20,45 @@ use super::chat_panel::{
 use super::markdown::{parse_message, ParsedMarkdown};
 use super::UiLanguage;
 
+/// Seuils de repli des messages très longs : protège le coût de layout du
+/// fil, qui croît linéairement (mesuré : ~14 ms pour 100 k caractères,
+/// ~770 ms pour 8 Mo — un gel d'interface). Comptés en caractères Unicode.
+const COLLAPSE_CHARS: usize = 4_000;
+const COLLAPSE_LINES: usize = 60;
+/// Aperçu affiché quand le message est replié.
+const PREVIEW_CHARS: usize = 2_000;
+const PREVIEW_LINES: usize = 30;
+
+/// Message trop long pour être affiché entier d'emblée : aperçu pré-parsé et
+/// dimensions totales pour le bouton « Afficher la suite ».
+pub(crate) struct CollapseInfo {
+    pub(crate) preview: Arc<ParsedMarkdown>,
+    pub(crate) total_lines: usize,
+    pub(crate) total_chars: usize,
+}
+
+fn collapse_info(content: &str, emoji_map: &HashMap<String, usize>) -> Option<CollapseInfo> {
+    let total_chars = content.chars().count();
+    let total_lines = content.lines().count();
+    if total_chars <= COLLAPSE_CHARS && total_lines <= COLLAPSE_LINES {
+        return None;
+    }
+    let mut preview: String = content
+        .lines()
+        .take(PREVIEW_LINES)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if preview.chars().count() > PREVIEW_CHARS {
+        preview = preview.chars().take(PREVIEW_CHARS).collect();
+    }
+    preview.push_str(" ...");
+    Some(CollapseInfo {
+        preview: Arc::new(parse_message(&preview, emoji_map)),
+        total_lines,
+        total_chars,
+    })
+}
+
 /// Citation de réponse pré-résolue (le message d'origine n'est recherché
 /// qu'à la reconstruction du cache, pas à chaque frame).
 pub(crate) struct ReplyInfo {
@@ -50,6 +89,9 @@ pub(crate) struct ChatRow {
     pub(crate) reactions: Vec<ReactionEntry>,
     pub(crate) display_name: String,
     pub(crate) markdown: Arc<ParsedMarkdown>,
+    /// `Some` pour les messages très longs : affichés repliés (aperçu +
+    /// « Afficher la suite ») pour ne pas geler le layout du fil.
+    pub(crate) collapse: Option<CollapseInfo>,
 }
 
 /// Cache du fil de la conversation sélectionnée.
@@ -257,6 +299,7 @@ impl ChatCache {
                 reactions: s.reactions_for(hash).to_vec(),
                 display_name,
                 markdown,
+                collapse: collapse_info(&msg.content, emoji_map),
             });
         }
 
