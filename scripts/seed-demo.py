@@ -112,10 +112,15 @@ class Seed:
             if not db_path.exists():
                 sys.exit(f"Base absente : {db_path} — lancer l'instance une fois d'abord.")
             con = sqlite3.connect(db_path)
+            # Table rase : uniquement les données du seed subsistent. La table
+            # `peers` (alias, avatars, clés TOFU d'anciens tests) est vidée aussi
+            # — la découverte UDP la repeuple à chaud au prochain lancement. Les
+            # préférences (`kv` : thème, sons, autostart) sont conservées.
             con.execute("DELETE FROM messages")
             con.execute("DELETE FROM reactions")
             con.execute("DELETE FROM groups")
             con.execute("DELETE FROM read_counts")
+            con.execute("DELETE FROM peers")
             for message, dbs in self.rows:
                 if who not in dbs:
                     continue
@@ -158,6 +163,18 @@ class Seed:
             con.close()
 
 
+def reset_instances() -> None:
+    """Repart d'un état propre : vide le cache `media/` de chaque instance
+    (les fichiers du seed y sont réécrits ensuite). Les tables SQLite de contenu
+    et la table `peers` sont réinitialisées dans `Seed.write`. À appeler AVANT
+    toute copie de média du seed."""
+    for instance in INSTANCE.values():
+        media = data_dir(instance) / "media"
+        if media.exists():
+            shutil.rmtree(media)
+        media.mkdir(parents=True, exist_ok=True)
+
+
 def install_media(file_id: str, source: Path, dbs) -> None:
     """Copie un fichier média réel dans le cache media/ des participants."""
     for who in dbs:
@@ -182,6 +199,7 @@ def write_long_txt() -> Path:
 
 
 def main() -> None:
+    reset_instances()  # cache media/ vidé avant de réécrire les médias du seed
     everyone = {ALICE, BOB, CAROL}
     ab = {ALICE, BOB}
     ac = {ALICE, CAROL}
@@ -341,6 +359,8 @@ def main() -> None:
 
     s.write(groups, read_counts)
     total = len(s.rows)
+    print(f"Instances remises à zéro (messages, réactions, groupes, read_counts,"
+          f" peers, cache media/).")
     print(f"Seed écrit : {total} messages, {len(s.reactions)} réactions, "
           f"1 salon, 3 instances (alice, bob, carol).")
 
