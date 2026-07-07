@@ -201,6 +201,9 @@ pub(crate) struct AbcomApp {
     pub(crate) scroll_to_message: Option<u64>,
     /// Message brièvement surligné après un saut (flash qui s'estompe).
     pub(crate) highlight_message: Option<(u64, std::time::Instant)>,
+    /// Messages très longs dépliés par l'utilisateur (« Afficher la suite »),
+    /// par hash — les autres restent repliés en aperçu.
+    pub(crate) expanded_messages: std::collections::HashSet<u64>,
     /// Des pairs sont en train d'écrire (instantané mis à jour par
     /// `process_events`) : impose un repaint de repli court pour faire
     /// expirer l'indicateur même sans nouvel événement réseau.
@@ -340,6 +343,7 @@ impl AbcomApp {
             replying_to: None,
             scroll_to_message: None,
             highlight_message: None,
+            expanded_messages: std::collections::HashSet::new(),
             typing_active: false,
             applied_dark_mode: None,
             tray: None,

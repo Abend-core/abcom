@@ -76,6 +76,16 @@ pub fn insert_emoji_at_cursor(text: &mut String, cursor: &mut usize, emoji: &str
     insert_text_at_cursor(text, cursor, emoji);
 }
 
+/// Préfixe de `text` limité à `max_chars` caractères Unicode, sans jamais
+/// couper au milieu d'un point de code UTF-8 (accents et emoji comptent
+/// chacun pour un caractère).
+pub fn char_prefix(text: &str, max_chars: usize) -> &str {
+    match text.char_indices().nth(max_chars) {
+        Some((byte_idx, _)) => &text[..byte_idx],
+        None => text,
+    }
+}
+
 /// Remplace la plage [start_char, end_char) par `replacement`
 pub fn replace_char_range(
     text: &mut String,

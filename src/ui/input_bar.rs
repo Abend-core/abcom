@@ -343,6 +343,14 @@ fn prepare_and_stream(
     Ok(())
 }
 
+/// Taille filaire d'un message de chat : le JSON de l'enveloppe
+/// `NetworkPacket::Chat`, tel qu'il passera dans le canal chiffré.
+fn chat_wire_size(msg: &ChatMessage) -> usize {
+    serde_json::to_vec(&crate::message::NetworkPacket::Chat(msg.clone()))
+        .map(|bytes| bytes.len())
+        .unwrap_or(usize::MAX)
+}
+
 fn send_current_message(
     app: &mut AbcomApp,
     selected_addr: Option<std::net::SocketAddr>,
@@ -388,6 +396,21 @@ fn send_current_message(
             reply_to: app.replying_to.as_ref().map(|r| r.message_hash),
             nonce: Some(ChatMessage::fresh_nonce()),
         };
+
+        // La réception coupe la connexion au-delà de MAX_LOGICAL_MESSAGE :
+        // refuser ici avec un retour clair plutôt que perdre le message
+        // silencieusement (l'input est conservé).
+        if chat_wire_size(&msg) > crate::network::secure::MAX_LOGICAL_MESSAGE {
+            app.last_notification = Some(
+                app.tr(
+                    "Message trop volumineux pour être envoyé",
+                    "Message too large to send",
+                )
+                .to_string(),
+            );
+            app.notification_time = std::time::Instant::now();
+            return false;
+        }
 
         {
             let msg_hash = AppState::message_hash(&msg);
@@ -469,6 +492,39 @@ fn send_current_message(
 }
 
 impl AbcomApp {
+    /// Un collage dépassant le plafond du composeur devient une pièce jointe
+    /// `.txt` (UTF-8) : écrite dans un fichier temporaire, elle suit le
+    /// pipeline média habituel (progression, acceptation, taille illimitée).
+    fn stash_overflow_paste(&mut self, text: &str) {
+        let filename = format!(
+            "texte-colle-{}.txt",
+            chrono::Local::now().format("%Y%m%d-%H%M%S")
+        );
+        let path = std::env::temp_dir().join(filename);
+        match std::fs::write(&path, text) {
+            Ok(()) => {
+                self.pending_attachments.push(path);
+                self.last_notification = Some(
+                    self.tr(
+                        "Texte collé trop long : joint en fichier .txt",
+                        "Pasted text too long: attached as .txt file",
+                    )
+                    .to_string(),
+                );
+            }
+            Err(err) => {
+                self.last_notification = Some(format!(
+                    "{} : {err}",
+                    self.tr(
+                        "Impossible d'écrire le texte collé",
+                        "Could not write pasted text",
+                    )
+                ));
+            }
+        }
+        self.notification_time = std::time::Instant::now();
+    }
+
     /// Barre de saisie en bas de fenêtre. Retourne `(emoji_cliqué, gif_cliqué)`
     /// pour piloter l'ouverture des sélecteurs respectifs.
     pub(crate) fn show_input_bar(&mut self, ctx: &egui::Context) -> (bool, bool) {
@@ -724,7 +780,7 @@ impl AbcomApp {
 
                             let available_w = ui.available_width();
 
-                            let (resp, mut pressed_enter, changed) =
+                            let (resp, mut pressed_enter, changed, overflow_paste) =
                                 composer::custom_composer_input(
                                     ui,
                                     &mut self.input,
@@ -740,6 +796,13 @@ impl AbcomApp {
                                     available_w,
                                     &mut self.input_selection_anchor,
                                 );
+
+                            // Collage au-delà du plafond : le texte devient une
+                            // pièce jointe .txt (le pipeline média streame sans
+                            // limite) au lieu d'être tronqué ou perdu.
+                            if let Some(text) = overflow_paste {
+                                self.stash_overflow_paste(&text);
+                            }
 
                             ui.add_space(3.0);
                             // Séparateur entre le champ de saisie et la barre
@@ -863,6 +926,27 @@ impl AbcomApp {
                                             self.show_attachment_menu = !self.show_attachment_menu;
                                         }
                                         plus_btn_rect = plus_btn.rect;
+
+                                        // Compteur de caractères, affiché à
+                                        // l'approche du plafond (80 %), rouge
+                                        // une fois la limite atteinte.
+                                        let input_chars = self.input.chars().count();
+                                        if input_chars >= composer::MAX_INPUT_CHARS * 8 / 10 {
+                                            let color =
+                                                if input_chars >= composer::MAX_INPUT_CHARS {
+                                                    egui::Color32::from_rgb(230, 80, 80)
+                                                } else {
+                                                    egui::Color32::from_gray(150)
+                                                };
+                                            ui.label(
+                                                egui::RichText::new(format!(
+                                                    "{input_chars} / {}",
+                                                    composer::MAX_INPUT_CHARS
+                                                ))
+                                                .color(color)
+                                                .small(),
+                                            );
+                                        }
 
                                         // Espace restant (à gauche) : indicateur
                                         // de frappe, vide si personne n'écrit.

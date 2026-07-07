@@ -9,10 +9,22 @@ pub use text_ops::{insert_emoji_at_cursor, replace_char_range};
 use eframe::egui;
 
 use self::text_ops::{
-    char_range_string, insert_text_at_cursor, line_end, line_start, next_word_end, prev_word_start,
+    char_prefix, char_range_string, insert_text_at_cursor, line_end, line_start, next_word_end,
+    prev_word_start,
 };
 
 pub fn sync_cursor(_ctx: &egui::Context, _char_pos: usize) {}
+
+/// Plafond de saisie du composeur, en caractères Unicode (pas en octets :
+/// accents et emoji comptent pour un). Protège le coût de layout par frappe,
+/// pas le protocole — la limite réseau (8 Mio) est vérifiée à l'envoi.
+pub const MAX_INPUT_CHARS: usize = 100_000;
+
+/// Normalise les fins de ligne d'un texte collé (`\r\n` et `\r` → `\n`),
+/// en conservant les retours à la ligne — le fil les affiche tels quels.
+fn normalize_paste(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum EnterKeyAction {
@@ -282,6 +294,8 @@ fn move_cursor_vertical(
 
 // Widget de saisie de bas niveau : état du texte/curseur/sélection et contexte
 // de rendu passés séparément ; un struct n'améliorerait pas la lisibilité.
+// Retourne (réponse, envoi demandé, texte modifié, collage débordant le
+// plafond — à transformer en pièce jointe par l'appelant).
 #[allow(clippy::too_many_arguments)]
 pub fn custom_composer_input(
     ui: &mut egui::Ui,
@@ -297,7 +311,7 @@ pub fn custom_composer_input(
     shortcode_selected: usize,
     width: f32,
     selection_anchor: &mut Option<usize>,
-) -> (egui::Response, bool, bool) {
+) -> (egui::Response, bool, bool, Option<String>) {
     let line_height = 22.0;
     let base_content_width = (width.max(120.0) - 12.0).max(20.0);
     let initial_caret_points =
@@ -396,6 +410,9 @@ pub fn custom_composer_input(
     let has_focus = *input_has_focus || response.has_focus();
     let mut changed = false;
     let mut submit = false;
+    // Collage dépassant le plafond : renvoyé intact à l'appelant (qui le
+    // transforme en pièce jointe .txt) au lieu d'être tronqué ou inséré.
+    let mut overflow_paste: Option<String> = None;
     let total_chars = input.chars().count();
     if *cursor_char > total_chars {
         *cursor_char = total_chars;
@@ -446,20 +463,38 @@ pub fn custom_composer_input(
             match event {
                 egui::Event::Text(t) if !t.contains('\n') && !t.contains('\r') => {
                     replace_selection(input, cursor_char, selection_anchor, "");
-                    insert_text_at_cursor(input, cursor_char, &t);
+                    let room = MAX_INPUT_CHARS.saturating_sub(input.chars().count());
+                    let to_insert = char_prefix(&t, room);
+                    if !to_insert.is_empty() {
+                        insert_text_at_cursor(input, cursor_char, to_insert);
+                    }
                     changed = true;
                 }
                 egui::Event::Ime(egui::ImeEvent::Commit(t))
                     if !t.contains('\n') && !t.contains('\r') && !t.is_empty() =>
                 {
                     replace_selection(input, cursor_char, selection_anchor, "");
-                    insert_text_at_cursor(input, cursor_char, &t);
+                    let room = MAX_INPUT_CHARS.saturating_sub(input.chars().count());
+                    let to_insert = char_prefix(&t, room);
+                    if !to_insert.is_empty() {
+                        insert_text_at_cursor(input, cursor_char, to_insert);
+                    }
                     changed = true;
                 }
                 egui::Event::Paste(t) => {
-                    replace_selection(input, cursor_char, selection_anchor, "");
-                    insert_text_at_cursor(input, cursor_char, &t.replace(['\r', '\n'], " "));
-                    changed = true;
+                    // Retours à la ligne conservés (le fil est multiligne).
+                    let pasted = normalize_paste(&t);
+                    let selected = selection_range(*selection_anchor, *cursor_char)
+                        .map(|(start, end)| end - start)
+                        .unwrap_or(0);
+                    let after = input.chars().count() - selected + pasted.chars().count();
+                    if after > MAX_INPUT_CHARS {
+                        overflow_paste = Some(pasted);
+                    } else {
+                        replace_selection(input, cursor_char, selection_anchor, "");
+                        insert_text_at_cursor(input, cursor_char, &pasted);
+                        changed = true;
+                    }
                 }
                 egui::Event::Copy => {
                     if let Some((start, end)) = selection_range(*selection_anchor, *cursor_char) {
@@ -492,7 +527,9 @@ pub fn custom_composer_input(
                     egui::Key::Enter => match enter_key_action(shortcode_menu_open, modifiers) {
                         EnterKeyAction::InsertNewline => {
                             replace_selection(input, cursor_char, selection_anchor, "");
-                            insert_text_at_cursor(input, cursor_char, "\n");
+                            if input.chars().count() < MAX_INPUT_CHARS {
+                                insert_text_at_cursor(input, cursor_char, "\n");
+                            }
                             changed = true;
                         }
                         EnterKeyAction::AcceptShortcode => {
@@ -855,7 +892,7 @@ pub fn custom_composer_input(
         }
     }
 
-    (response, submit, changed)
+    (response, submit, changed, overflow_paste)
 }
 
 #[cfg(test)]
