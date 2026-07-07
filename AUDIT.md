@@ -202,6 +202,50 @@
 
 ## 7. Performance
 
+### 7a. Empreinte mémoire (mesurée le 07/07, macOS, `vmmap`/`ps`)
+
+> **Constat : ~92-98 Mo RSS par instance, 132 Mo d'empreinte physique**, même au
+> repos (fenêtre visible, aucune conversation active). Répartition réelle mesurée sur
+> une instance (`vmmap --summary`) :
+>
+> | Poste | Taille | Nature |
+> |-------|--------|--------|
+> | **IOAccelerator (graphics)** | **42,4 Mo** | contexte GPU du renderer **Glow/OpenGL** |
+> | Malloc (tas) | ~20 Mo alloués, **24 % de fragmentation** | état app, caches, décodage |
+> | CG Image | 7,9 Mo | images Core Graphics (icône, staging emoji) |
+> | dont textures emoji | ~6,7 Mo GPU | 323 PNG 72×72 décodés **au démarrage** |
+>
+> Le poste dominant n'est pas l'état applicatif (léger) mais **la pile graphique**.
+
+- [ ] 🔴 **Passer le renderer de Glow (OpenGL) à wgpu (Metal natif)** — le plus gros
+  levier mémoire *et* pérennité. OpenGL est déprécié sur macOS et émulé au-dessus de
+  Metal (le binaire lie encore `OpenGL.framework`) : ~42 Mo d'`IOAccelerator` pour une
+  UI 2D triviale. Le seul lien dur à Glow dans le code est **un paramètre inutilisé**
+  (`ui/mod.rs:704 on_exit(_gl: Option<&eframe::glow::Context>)`) ; le reste est
+  `renderer: Renderer::Glow` (`ui/mod.rs:795`) et la feature eframe. Migration à faible
+  risque, gain attendu sur la baseline GPU et le rendu, et aligne l'app sur le backend
+  supporté de macOS. À valider par mesure après bascule.
+- [ ] 🟠 **Décoder les emojis paresseusement**, par catégorie et à la demande : les 323
+  PNG sont décodés et téléversés en GPU **au lancement** (`ui/mod.rs::spawn_emoji_decoder`)
+  même si l'utilisateur n'ouvre jamais le sélecteur — ~6,7 Mo GPU + 6,5 Mo de
+  `ColorImage` CPU + latence de démarrage. Ne décoder que les emojis réellement présents
+  dans le fil visible, et le reste à l'ouverture du picker (par onglet).
+- [ ] 🟠 **Rendre la RAM au système sur repli tray** : `hide_to_tray` libère déjà les
+  textures (bien), mais le RSS ne baisse pas — l'allocateur système ne rend pas les
+  pages à l'OS (24 % de fragmentation constatée). Adopter **mimalloc** (ou jemalloc) en
+  allocateur global et déclencher un *purge/decommit* explicite sur `hide_to_tray` :
+  c'est la seule façon de faire réellement chuter la mémoire de l'app en arrière-plan,
+  qui est l'objectif prioritaire.
+- [ ] 🟠 Sur repli tray, envisager de **libérer aussi le contexte graphique** (ou réduire
+  la fentere à 1×1 / la détruire) plutôt que de garder ~42 Mo d'`IOAccelerator` alloués
+  pendant que l'app ne fait que veiller le réseau — à arbitrer contre le coût de
+  reconstruction à la réouverture.
+- [ ] 🟢 Runtime tokio en **2 worker threads** (`main.rs:56`) pour une charge purement
+  I/O : un runtime `current_thread` (ou 1 worker) suffirait probablement et économise
+  des piles de threads — à mesurer.
+
+### 7b. Chemins chauds & rafraîchissement
+
 - [ ] 🟠 `composer/mod.rs::composer_caret_positions` reconstruit à **chaque frame** un
   `Vec<Pos2>` en itérant tous les caractères de la saisie (avec 1-2 lookups HashMap par
   caractère), même sans changement — et deux fois quand la scrollbar apparaît. Memoïser
@@ -221,9 +265,18 @@
   commit WAL par message. Regrouper les `InsertMessage` en attente dans une transaction
   quand la file en contient plusieurs (`try_recv` en boucle courte). *(WAL +
   `synchronous=NORMAL` + `prepare_cached` déjà en place — c'est le lot qui manque.)*
-- [ ] 🟢 `request_repaint` est appelé depuis 14 endroits de l'UI, dont certains dans la
-  boucle de rendu (survol, flash de highlight) : vérifier qu'on ne force pas un repaint
-  continu à 60 fps hors animation réelle (coût CPU/batterie sur fenêtre inactive).
+- [ ] 🟢 **Rafraîchissement intelligent — déjà solide, à préserver.** L'`update`
+  court-circuite tout rendu quand la fenêtre est cachée/minimisée (`ui/mod.rs:568`), les
+  caches dérivés (fil, sidebar) ne se reconstruisent que sur changement de génération
+  d'état, et les GIFs sortis du fil libèrent leurs frames. C'est le bon modèle. Point de
+  vigilance : `request_repaint` est appelé depuis ~14 endroits, dont certains dans la
+  boucle de rendu (survol, flash de highlight, décodage emoji en attente avec
+  `request_repaint_after(50ms)`) — vérifier qu'aucun ne maintient un repaint continu à
+  60 fps hors animation réelle (coût CPU/batterie sur fenêtre visible mais inactive).
+- [ ] 🟢 egui recalcule le layout de tout le fil visible à chaque frame de repaint : le
+  cache `ChatCache` évite le re-parse markdown mais pas le re-layout galley d'egui.
+  Vérifier que `stick_to_bottom` + fenêtrage (`chat_visible_count`) borne bien le nombre
+  de lignes réellement mises en page, y compris sur un très long historique déroulé.
 
 ## 8. Tests
 
@@ -344,6 +397,14 @@
 | R3 | Remonter les échecs réseau à l'utilisateur (aujourd'hui `eprintln!` invisible) | `network/pool.rs`, `ui/` |
 | R4 | Politique mutex/panic (55 `lock().unwrap()` + `TrustStore`) | tout `ui/`, `app/mod.rs`, `network/secure.rs` |
 
+**Performance mémoire (~92-98 Mo RSS/instance mesuré) :**
+
+| # | Chantier | Gain attendu |
+|---|----------|--------------|
+| P1 | Renderer Glow (OpenGL émulé) → wgpu (Metal natif) | baseline GPU (~42 Mo `IOAccelerator`) + pérennité macOS |
+| P2 | Décodage emoji paresseux par catégorie | ~13 Mo (6,7 GPU + 6,5 CPU) + démarrage plus rapide |
+| P3 | Allocateur mimalloc + purge sur repli tray | RAM en arrière-plan **effectivement** rendue à l'OS |
+
 **Dette & hygiène :**
 
 | # | Chantier | Fichiers principaux |
@@ -353,8 +414,10 @@
 
 ---
 
-*Audit établi en deux passes de vérification, chaque constat recoupé avec le
+*Audit établi en plusieurs passes de vérification, chaque constat recoupé avec le
 code source (métriques recomptées, chemins de fichiers et numéros de ligne
-vérifiés). Les affirmations infirmées par le code ont été retirées ou corrigées
-en cours de route — p. ex. WAL/`prepare_cached` déjà présents côté SQLite,
-`media_id` assaini à l'émission mais pas à la réception.*
+vérifiés) et, pour la mémoire, avec des mesures réelles (`vmmap`/`ps` sur des
+instances en fonctionnement). Les affirmations infirmées par le code ont été
+retirées ou corrigées en cours de route — p. ex. WAL/`prepare_cached` déjà
+présents côté SQLite, `media_id` assaini à l'émission mais pas à la réception,
+rafraîchissement déjà court-circuité en arrière-plan.*
