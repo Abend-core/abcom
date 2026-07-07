@@ -344,3 +344,63 @@ fn paste_keeps_unix_newlines() {
 fn paste_normalizes_windows_and_mac_line_endings() {
     assert_eq!(normalize_paste("a\r\nb\rc\nd"), "a\nb\nc\nd");
 }
+
+// ── cursor_from_point : placement ligne d'abord, puis colonne ──────────────
+
+/// Positions de curseur pour « hello\nhi » : ligne 0 (y=0) longue jusqu'à
+/// x=50, ligne 1 (y=22) courte jusqu'à x=16.
+fn hello_hi_points() -> Vec<egui::Pos2> {
+    vec![
+        egui::pos2(0.0, 0.0),   // 0 : avant 'h'
+        egui::pos2(10.0, 0.0),  // 1
+        egui::pos2(20.0, 0.0),  // 2
+        egui::pos2(30.0, 0.0),  // 3
+        egui::pos2(40.0, 0.0),  // 4
+        egui::pos2(50.0, 0.0),  // 5 : fin de « hello »
+        egui::pos2(0.0, 22.0),  // 6 : début de « hi »
+        egui::pos2(8.0, 22.0),  // 7
+        egui::pos2(16.0, 22.0), // 8 : fin de « hi »
+    ]
+}
+
+#[test]
+fn click_right_of_short_line_stays_on_that_line() {
+    // Clic loin à droite au niveau de la ligne courte (y=22) : le curseur doit
+    // se poser en fin de « hi » (idx 8), PAS sauter sur la ligne du dessus
+    // dont le texte s'étend plus loin — c'était le bug signalé.
+    let points = hello_hi_points();
+    let cursor = cursor_from_point(&points, egui::pos2(400.0, 22.0), 22.0);
+    assert_eq!(cursor, 8);
+}
+
+#[test]
+fn click_far_right_of_long_line_lands_at_its_end() {
+    let points = hello_hi_points();
+    let cursor = cursor_from_point(&points, egui::pos2(400.0, 0.0), 22.0);
+    assert_eq!(cursor, 5);
+}
+
+#[test]
+fn click_picks_nearest_column_on_target_line() {
+    let points = hello_hi_points();
+    // x=12 sur la ligne 0 → entre idx1 (10) et idx2 (20), plus proche de 10.
+    assert_eq!(cursor_from_point(&points, egui::pos2(12.0, 0.0), 22.0), 1);
+    // x=6 sur la ligne 1 → entre idx6 (0) et idx7 (8), plus proche de 8.
+    assert_eq!(cursor_from_point(&points, egui::pos2(6.0, 22.0), 22.0), 7);
+}
+
+#[test]
+fn click_below_all_text_clamps_to_last_line() {
+    let points = hello_hi_points();
+    // Clic bien en dessous (y=200) → dernière ligne, fin du texte.
+    let cursor = cursor_from_point(&points, egui::pos2(400.0, 200.0), 22.0);
+    assert_eq!(cursor, 8);
+}
+
+#[test]
+fn cursor_from_point_empty_is_zero() {
+    assert_eq!(
+        cursor_from_point(&[egui::pos2(0.0, 0.0)], egui::pos2(9.0, 9.0), 22.0),
+        0
+    );
+}
