@@ -96,6 +96,9 @@ pub(crate) fn parse_markdown(input: &str) -> Vec<MarkdownBlock> {
             continue;
         }
 
+        // Sémantique chat (pas CommonMark) : un Entrée dans le composeur est
+        // un vrai retour à la ligne, conservé tel quel dans le paragraphe
+        // (egui rend les `\n` d'un label comme des sauts de ligne).
         let mut paragraph = trimmed.to_string();
         while let Some(next_line) = lines.peek().copied() {
             let next_trimmed = next_line.trim();
@@ -103,12 +106,7 @@ pub(crate) fn parse_markdown(input: &str) -> Vec<MarkdownBlock> {
                 break;
             }
 
-            let separator = if line_ends_with_hard_break(paragraph.as_str()) {
-                "\n"
-            } else {
-                " "
-            };
-            paragraph.push_str(separator);
+            paragraph.push('\n');
             paragraph.push_str(next_trimmed);
             lines.next();
         }
@@ -178,10 +176,6 @@ fn starts_special_block(line: &str) -> bool {
         || ordered_bullet_text(line).is_some()
         || blockquote_text(line).is_some()
         || is_thematic_break(trimmed)
-}
-
-fn line_ends_with_hard_break(line: &str) -> bool {
-    line.ends_with("  ")
 }
 
 fn push_pending_blank(blocks: &mut Vec<MarkdownBlock>) {
