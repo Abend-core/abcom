@@ -1,7 +1,9 @@
 # Audit qualité — abcom
 
 > Checklist complète des améliorations pour un projet propre au maximum.
-> État au 7 juillet 2026, branche `refactor/input-bar-layout`.
+> État au 7 juillet 2026, branche `refactor/input-bar-layout`. Seconde passe
+> approfondie incluse : lecture ligne à ligne de `network/` (pool, découverte,
+> handshake, streaming média), `identity.rs`, `main.rs` et `storage.rs`.
 > Priorités : 🔴 important (correctif ou dette bloquante) · 🟠 recommandé · 🟢 confort/finition.
 > Chaque point référence les fichiers concernés ; cocher au fur et à mesure.
 
@@ -72,9 +74,23 @@
 - [ ] 🟢 `klipy.rs` (API externe) vit à la racine de `src/` à côté de `app/`, `network/`,
   `ui/` — le déplacer dans un module `services/` ou `net/klipy.rs` pour clarifier les
   couches.
+- [ ] 🟠 `AbcomApp` est un god-struct de **90 champs** (`ui/mod.rs`) : état du
+  composeur, pickers, médias, notifications, groupes, réglages… tout au même niveau.
+  Regrouper par sous-structs (`ComposerState`, `PickerState`, `MediaState`…) — c'est le
+  préalable au découpage des gros fichiers UI.
+- [ ] 🟠 `network/sender.rs` : **sept boucles d'émission quasi identiques**
+  (`run_sender`, `_group`, `_typing`, `_read_receipts`, `_ack`, `_avatar`, `_reaction`)
+  + sept canaux et sept spawns dans `main.rs`. Une seule file générique
+  `(SocketAddr, NetworkPacket)` supprimerait ~100 lignes et 6 canaux.
+- [ ] 🟠 `ui::run` prend **14 paramètres positionnels** (`main.rs:149-164`) — les
+  regrouper dans un struct de contexte (erreur de câblage silencieuse garantie sinon).
 - [ ] 🟢 Regrouper l'intégration bureau dans un module `platform/` : aujourd'hui
   `notify.rs` et `autostart.rs` vivent à la racine de `src/`, `tray.rs` dans `ui/`,
   et la bascule Dock macOS dans `ui/mod.rs`.
+- [ ] 🟢 `main.rs` parse `.env` à la main (`split_once('=')`) : pas de guillemets, pas
+  d'échappement, et `set_var` sera `unsafe` en édition 2024. Utiliser `dotenvy` ou
+  restreindre explicitement aux deux clés attendues (`ABCOM_KLIPY_API_KEY`,
+  `ABCOM_PASSPHRASE`).
 
 ## 4. Protocole & robustesse réseau
 
@@ -100,6 +116,19 @@
   07/07) ne couvre que les messages de chat : un avatar volumineux ou un événement de
   groupe énorme peut encore dépasser `MAX_LOGICAL_MESSAGE` et faire couper la connexion
   par le récepteur. Déplacer la vérification dans `pool.send` (générique à tout paquet).
+- [ ] 🟠 `ConnectionPool` n'a **aucune éviction ni limite** (`network/pool.rs`) : une
+  entrée par pair jamais nettoyée, une tâche d'écriture par connexion qui ne se termine
+  qu'en cas d'erreur d'envoi. Sur un LAN mouvant (pairs qui changent d'IP), la map et les
+  tâches s'accumulent. Ajouter un TTL/éviction sur `PeerDisconnected`.
+- [ ] 🟠 `ConnectionPool::connect` **prend un verrou puis fait un handshake réseau sous
+  ce verrou** dans `dial_and_send` (`self.conns.lock().await` autour de `connect`) : deux
+  émissions concurrentes vers le même pair sérialisent un handshake complet, et une
+  émission vers un pair lent bloque l'insertion des autres. Dialer hors verrou, ne
+  verrouiller que pour insérer.
+- [ ] 🟢 La découverte lit dans un **buffer fixe de 1 024 octets** (`discovery.rs:75`) :
+  un `DiscoveryPacket` (username libre + clé hex 64 + port) tient largement, mais un
+  username très long le tronquerait silencieusement (JSON invalide → paquet ignoré).
+  Borner la longueur du username à la source.
 - [ ] 🟠 Les accusés de lecture différés sont **réémis pour toute la fenêtre de
   messages** à chaque ouverture de conversation (`ui/mod.rs::
   send_read_receipts_for_conversation`, 05-07/07) : jusqu'à 2 000 messages × N membres
@@ -117,7 +146,21 @@
   `AvatarAnnounce`) correspond au username authentifié de la connexion. Tout pair
   authentifié peut se faire passer pour n'importe qui (messages, réactions, accusés).
   Passer le `peer` du Hello à `dispatch_packet` et rejeter les paquets dont
-  `from != peer`.
+  `from != peer`. Idem côté média : `stream_in` authentifie le pair (TOFU) mais ne
+  recoupe pas `header.from` avec ce pair (`network/media_stream.rs`).
+- [ ] 🔴 **Le username n'est pas lié à la clé au niveau découverte** : `DiscoveryPacket`
+  annonce `username` + `pubkey` en clair, sans preuve de possession. Un pair malveillant
+  peut annoncer le username d'un autre avec sa propre clé ; à la **première** rencontre
+  (avant tout épinglage TOFU) la victime épingle la mauvaise clé. Le TOFU protège les
+  rencontres suivantes, pas la première. Documenter cette limite et envisager une
+  signature de l'annonce par la clé privée.
+- [ ] 🔴 **Traversée de répertoire à la réception de média** : l'`id` d'un média est
+  assaini à l'émission (`ui/media.rs::media_id` remplace `/` et les caractères non sûrs
+  par `_`), mais **le récepteur écrit `media_dir.join(&header.media.id)` sans ré-assainir**
+  (`network/media_stream.rs:258`) — or `header` vient brut du réseau. Un pair malveillant
+  peut forger un `id` avec des `/` (ou `..`) et faire écrire le fichier reçu hors du
+  dossier `media/`. Ré-assainir `id` et `filename` côté réception, ou rejeter tout
+  séparateur de chemin et `..`.
 - [ ] 🟠 TOFU : le changement de clé déclenche bien alerte + refus (`Trust::Mismatch`),
   mais il n'existe **aucun flux de ré-appairage légitime** (réinstallation d'un pair) —
   l'utilisateur est bloqué sans passer par la suppression manuelle des données. Ajouter
@@ -173,6 +216,14 @@
 - [ ] 🟢 Le cache de textures médias (`media_textures`, `avatar_textures`) n'a pas de
   borne d'éviction explicite hors GIFs — vérifier le comportement sur un long historique
   d'images.
+- [ ] 🟠 Le thread de stockage traite les commandes **une par une, sans transaction de
+  lot** (`app/storage.rs::run`) : une rafale (import, réception de salon actif) fait un
+  commit WAL par message. Regrouper les `InsertMessage` en attente dans une transaction
+  quand la file en contient plusieurs (`try_recv` en boucle courte). *(WAL +
+  `synchronous=NORMAL` + `prepare_cached` déjà en place — c'est le lot qui manque.)*
+- [ ] 🟢 `request_repaint` est appelé depuis 14 endroits de l'UI, dont certains dans la
+  boucle de rendu (survol, flash de highlight) : vérifier qu'on ne force pas un repaint
+  continu à 60 fps hors animation réelle (coût CPU/batterie sur fenêtre inactive).
 
 ## 8. Tests
 
@@ -250,15 +301,60 @@
   salon vide — harmoniser le ton et proposer une action (« Envoyer le premier
   message »).
 
+## 13. Observabilité & robustesse à l'exécution
+
+- [ ] 🔴 **Aucune remontée d'erreur à l'utilisateur pour les échecs réseau** : `pool.rs`
+  et les senders avalent tout en `eprintln!` (`Connexion sécurisée impossible`,
+  `Handshake échoué`…). Sur un binaire release strippé sans console, l'utilisateur ne
+  voit rien — ni « message non parti », ni « pair injoignable ». Relier ces échecs à la
+  bannière de notification déjà présente dans l'UI.
+- [ ] 🟠 **Pas de nettoyage d'arrêt** : `main.rs` termine par `ui::run(...)?; Ok(())` — à
+  la fermeture, `flush_storage` existe mais les tâches tokio et les connexions du pool
+  sont abandonnées brutalement. Vérifier qu'aucune écriture SQLite n'est perdue et
+  fermer proprement (le WAL aide, mais un flush explicite du pool serait plus sûr).
+- [ ] 🟠 Le `TrustStore` utilise `Mutex::lock().unwrap()` (`secure.rs:281`) dans les
+  tâches réseau : une panique côté écriture SQLite empoisonnerait ce verrou et bloquerait
+  toute nouvelle connexion. Même politique anti-empoisonnement que le point §2.
+- [ ] 🟢 Ajouter des métriques de session minimales (messages envoyés/reçus, pairs vus,
+  reconnexions, paquets jetés par `try_send`) accessibles depuis Paramètres — aide au
+  diagnostic sans logging verbeux.
+- [ ] 🟢 Timeouts explicites sur les handshakes sortants (`pool::connect`,
+  `media_stream::connect_secure`) : un pair qui accepte la TCP mais ne répond pas au
+  handshake bloque la tâche indéfiniment (le streaming média a un `DECISION_TIMEOUT`,
+  mais pas le handshake lui-même).
+
 ---
 
-## Synthèse des 6 chantiers prioritaires (🔴)
+## Synthèse des chantiers prioritaires (🔴)
+
+**Sécurité — à traiter en premier :**
 
 | # | Chantier | Fichiers principaux |
 |---|----------|--------------------|
-| 1 | Vérifier `from` == pair authentifié (anti-usurpation) | `network/server.rs` |
-| 2 | Implémenter le retry réel des messages non ACKés | `ui/events.rs`, `app/receipts.rs`, `network/pool.rs` |
-| 3 | Politique mutex/panic (55 `lock().unwrap()`) | tout `ui/`, `app/mod.rs` |
-| 4 | Versionner le protocole réseau | `message/`, `network/secure.rs` |
-| 5 | Logging structuré à la place des `eprintln!` | transversal |
-| 6 | Nettoyage dépôt (`old/`, versionnage Cargo) | racine |
+| S1 | Traversée de répertoire à la réception de média (`id` non ré-assaini) | `network/media_stream.rs`, `ui/media.rs` |
+| S2 | Vérifier `from` == pair authentifié, chat **et** média (anti-usurpation) | `network/server.rs`, `network/media_stream.rs` |
+| S3 | Première rencontre TOFU : username non lié à la clé en découverte | `discovery.rs`, `message/` |
+
+**Robustesse & fiabilité :**
+
+| # | Chantier | Fichiers principaux |
+|---|----------|--------------------|
+| R1 | Implémenter le retry réel des messages non ACKés (aujourd'hui un stub) | `ui/events.rs`, `app/receipts.rs`, `network/pool.rs` |
+| R2 | Versionner le protocole réseau | `message/`, `network/secure.rs` |
+| R3 | Remonter les échecs réseau à l'utilisateur (aujourd'hui `eprintln!` invisible) | `network/pool.rs`, `ui/` |
+| R4 | Politique mutex/panic (55 `lock().unwrap()` + `TrustStore`) | tout `ui/`, `app/mod.rs`, `network/secure.rs` |
+
+**Dette & hygiène :**
+
+| # | Chantier | Fichiers principaux |
+|---|----------|--------------------|
+| D1 | Logging structuré à la place des 34 `eprintln!` | transversal |
+| D2 | Nettoyage dépôt (`old/`, `font 2/`, versionnage Cargo) | racine |
+
+---
+
+*Audit établi en deux passes de vérification, chaque constat recoupé avec le
+code source (métriques recomptées, chemins de fichiers et numéros de ligne
+vérifiés). Les affirmations infirmées par le code ont été retirées ou corrigées
+en cours de route — p. ex. WAL/`prepare_cached` déjà présents côté SQLite,
+`media_id` assaini à l'émission mais pas à la réception.*
