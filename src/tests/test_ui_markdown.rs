@@ -50,11 +50,14 @@ fn parses_ordered_quotes_and_links() {
 }
 
 #[test]
-fn merges_plain_lines_into_single_paragraph() {
+fn keeps_newlines_between_plain_lines() {
+    // Sémantique chat : Entrée = retour à la ligne conservé dans le rendu.
     assert_eq!(
         parse_markdown("ligne un\nligne deux\n\n- suite"),
         vec![
-            MarkdownBlock::Paragraph(vec![MarkdownSpan::Text("ligne un ligne deux".to_string(),)]),
+            MarkdownBlock::Paragraph(vec![
+                MarkdownSpan::Text("ligne un\nligne deux".to_string(),)
+            ]),
             MarkdownBlock::Blank,
             MarkdownBlock::Bullet(vec![MarkdownSpan::Text("suite".to_string())]),
         ]

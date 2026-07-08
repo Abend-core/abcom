@@ -49,3 +49,38 @@ fn pinned_group_sorts_before_unpinned() {
     assert!(cache.group_pinned[0]);
     assert!(!cache.group_pinned[1]);
 }
+
+// ── Repli des messages très longs ─────────────────────────────────────────
+
+#[test]
+fn short_message_is_not_collapsed() {
+    let emoji_map = std::collections::HashMap::new();
+    assert!(super::collapse_info("un message normal", &emoji_map).is_none());
+}
+
+#[test]
+fn very_long_single_line_is_collapsed_with_char_preview() {
+    let emoji_map = std::collections::HashMap::new();
+    let content = "mot ".repeat(2_000); // 8 000 caractères, une seule ligne
+    let info = super::collapse_info(&content, &emoji_map).expect("doit être replié");
+    assert_eq!(info.total_chars, 8_000);
+    assert_eq!(info.total_lines, 1);
+}
+
+#[test]
+fn many_lines_are_collapsed_even_if_short_in_chars() {
+    let emoji_map = std::collections::HashMap::new();
+    let content = "ligne\n".repeat(100); // 100 lignes, ~600 caractères
+    let info = super::collapse_info(&content, &emoji_map).expect("doit être replié");
+    assert_eq!(info.total_lines, 100);
+}
+
+#[test]
+fn collapse_preview_counts_unicode_chars_not_bytes() {
+    let emoji_map = std::collections::HashMap::new();
+    // Contenu 100 % multi-octets : la coupe de l'aperçu ne doit pas
+    // paniquer sur une frontière UTF-8.
+    let content = "héhé😀".repeat(1_000); // 5 000 caractères
+    let info = super::collapse_info(&content, &emoji_map).expect("doit être replié");
+    assert_eq!(info.total_chars, 5_000);
+}

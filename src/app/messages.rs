@@ -40,6 +40,8 @@ impl AppState {
             self.messages.iter().map(Self::message_hash).collect();
         self.reactions.retain(|hash, _| live.contains(hash));
         self.read_receipts.retain(|hash, _| live.contains(hash));
+        self.delivered_receipts
+            .retain(|hash, _| live.contains(hash));
         self.pending_messages.retain(|hash, _| live.contains(hash));
     }
 

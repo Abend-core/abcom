@@ -8,9 +8,23 @@ pub use text_ops::{insert_emoji_at_cursor, replace_char_range};
 
 use eframe::egui;
 
-use self::text_ops::{insert_text_at_cursor, remove_next_char, remove_prev_char};
+use self::text_ops::{
+    char_prefix, char_range_string, insert_text_at_cursor, line_end, line_start, next_word_end,
+    prev_word_start,
+};
 
 pub fn sync_cursor(_ctx: &egui::Context, _char_pos: usize) {}
+
+/// Plafond de saisie du composeur, en caractères Unicode (pas en octets :
+/// accents et emoji comptent pour un). Protège le coût de layout par frappe,
+/// pas le protocole — la limite réseau (8 Mio) est vérifiée à l'envoi.
+pub const MAX_INPUT_CHARS: usize = 100_000;
+
+/// Normalise les fins de ligne d'un texte collé (`\r\n` et `\r` → `\n`),
+/// en conservant les retours à la ligne — le fil les affiche tels quels.
+fn normalize_paste(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum EnterKeyAction {
@@ -19,13 +33,16 @@ enum EnterKeyAction {
     Submit,
 }
 
-fn enter_key_action(shortcode_menu_open: bool, shift: bool) -> EnterKeyAction {
-    if shift {
-        EnterKeyAction::InsertNewline
-    } else if shortcode_menu_open {
+/// Entrée insère une nouvelle ligne (comme Shift+Entrée) ; l'envoi se fait par
+/// Cmd+Entrée (macOS) ou Ctrl+Entrée. Entrée seule valide le shortcode quand le
+/// menu de suggestions est ouvert.
+fn enter_key_action(shortcode_menu_open: bool, modifiers: egui::Modifiers) -> EnterKeyAction {
+    if modifiers.command || modifiers.ctrl {
+        EnterKeyAction::Submit
+    } else if shortcode_menu_open && !modifiers.shift {
         EnterKeyAction::AcceptShortcode
     } else {
-        EnterKeyAction::Submit
+        EnterKeyAction::InsertNewline
     }
 }
 
@@ -138,21 +155,38 @@ fn visual_line_count(caret_points: &[egui::Pos2], line_height: f32) -> usize {
         .max(1)
 }
 
-fn cursor_from_point(points: &[egui::Pos2], target: egui::Pos2) -> usize {
-    let mut best_idx = 0;
-    let mut best_dist = f32::MAX;
+/// Position de curseur la plus proche d'un point cliqué (en coordonnées de
+/// contenu, défilement déjà compensé par l'appelant).
+///
+/// On choisit **d'abord la bonne ligne** (par la position verticale), puis, sur
+/// cette ligne, la colonne la plus proche. Un plus-proche 2D naïf sauterait sur
+/// la ligne du dessus quand on clique à droite d'une ligne courte : la distance
+/// horizontale (ligne longue au-dessus) l'emporterait sur l'espacement vertical.
+fn cursor_from_point(points: &[egui::Pos2], target: egui::Pos2, line_height: f32) -> usize {
+    if points.len() <= 1 {
+        return 0;
+    }
+    let max_line = points
+        .iter()
+        .map(|p| (p.y / line_height).round() as i32)
+        .max()
+        .unwrap_or(0);
+    let target_line = ((target.y / line_height).round() as i32).clamp(0, max_line);
 
+    let mut best_idx = None;
+    let mut best_dx = f32::MAX;
     for (idx, p) in points.iter().enumerate() {
-        let dx = p.x - target.x;
-        let dy = p.y - target.y;
-        let dist = dx * dx + dy * dy;
-        if dist < best_dist {
-            best_dist = dist;
-            best_idx = idx;
+        if (p.y / line_height).round() as i32 == target_line {
+            let dx = (p.x - target.x).abs();
+            if dx < best_dx {
+                best_dx = dx;
+                best_idx = Some(idx);
+            }
         }
     }
-
-    best_idx
+    // La ligne visée contient toujours au moins une position ; repli défensif
+    // sur la fin du texte si ce n'était pas le cas.
+    best_idx.unwrap_or(points.len() - 1)
 }
 
 fn selection_range(selection_anchor: Option<usize>, cursor_char: usize) -> Option<(usize, usize)> {
@@ -197,7 +231,9 @@ fn paint_selection(
         Some(range) => range,
         None => return,
     };
-    if start >= end || end > caret_points.len() {
+    // `end` indexe `caret_points` directement : il doit rester strictement
+    // sous `len` (le dernier point valide est `len - 1`).
+    if start >= end || end >= caret_points.len() {
         return;
     }
 
@@ -275,6 +311,8 @@ fn move_cursor_vertical(
 
 // Widget de saisie de bas niveau : état du texte/curseur/sélection et contexte
 // de rendu passés séparément ; un struct n'améliorerait pas la lisibilité.
+// Retourne (réponse, envoi demandé, texte modifié, collage débordant le
+// plafond — à transformer en pièce jointe par l'appelant).
 #[allow(clippy::too_many_arguments)]
 pub fn custom_composer_input(
     ui: &mut egui::Ui,
@@ -290,49 +328,56 @@ pub fn custom_composer_input(
     shortcode_selected: usize,
     width: f32,
     selection_anchor: &mut Option<usize>,
-) -> (egui::Response, bool, bool) {
+) -> (egui::Response, bool, bool, Option<String>) {
     let line_height = 22.0;
     let base_content_width = (width.max(120.0) - 12.0).max(20.0);
     let initial_caret_points =
         composer_caret_positions(ui, input, emoji_map, 18.0, base_content_width);
     let mut line_count = visual_line_count(&initial_caret_points, line_height);
     let needs_scrollbar = line_count > 10;
-    let content_width = if needs_scrollbar {
-        (width.max(120.0) - 20.0).max(20.0)
+    // La largeur de contenu de chaque branche coïncide avec celle du
+    // `content_rect` correspondant : les points calculés ici sont réutilisés
+    // tels quels pour le rendu (une seule passe de mesure par frame).
+    let mut caret_points = if needs_scrollbar {
+        let content_width = (width.max(120.0) - 20.0).max(20.0);
+        let points = composer_caret_positions(ui, input, emoji_map, 18.0, content_width);
+        line_count = visual_line_count(&points, line_height);
+        points
     } else {
-        base_content_width
+        initial_caret_points
     };
-    if needs_scrollbar {
-        let scrollbar_caret_points =
-            composer_caret_positions(ui, input, emoji_map, 18.0, content_width);
-        line_count = visual_line_count(&scrollbar_caret_points, line_height);
-    }
     let visual_lines = line_count.clamp(1, 10) as f32;
-    let desired_size = egui::vec2(width.max(120.0), 16.0 + visual_lines * line_height);
+    let desired_size = egui::vec2(width.max(120.0), 10.0 + visual_lines * line_height);
     let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
     let content_rect = if needs_scrollbar {
         egui::Rect::from_min_max(
-            rect.min + egui::vec2(6.0, 6.0),
-            rect.max - egui::vec2(14.0, 6.0),
+            rect.min + egui::vec2(6.0, 5.0),
+            rect.max - egui::vec2(14.0, 5.0),
         )
     } else {
-        rect.shrink2(egui::vec2(6.0, 6.0))
+        rect.shrink2(egui::vec2(6.0, 5.0))
     };
-    let caret_points =
-        composer_caret_positions(ui, input, emoji_map, 18.0, content_rect.width().max(20.0));
     let max_scroll = (line_count as f32 - visual_lines).max(0.0);
     *scroll_lines = scroll_lines.clamp(0.0, max_scroll);
+
+    // Position écran → coordonnées de contenu pour placer le curseur : compense
+    // le défilement vertical et l'offset de centrage des lignes (le texte est
+    // peint centré à +11 px, cf. rendu), pour qu'un clic tombe sur la ligne
+    // réellement sous le pointeur, y compris quand l'input est défilé.
+    let scroll_px = *scroll_lines * line_height;
+    let to_content = |pos: egui::Pos2| {
+        egui::pos2(
+            (pos.x - content_rect.left()).max(0.0),
+            pos.y - content_rect.top() + scroll_px - 11.0,
+        )
+    };
 
     if ui.input(|i| i.pointer.any_pressed()) && response.hovered() {
         if !ui.input(|i| i.modifiers.shift) {
             clear_selection(selection_anchor);
         }
         if let Some(pos) = response.interact_pointer_pos() {
-            let local = egui::pos2(
-                (pos.x - content_rect.left()).max(0.0),
-                (pos.y - content_rect.top()).max(0.0),
-            );
-            let pressed_cursor = cursor_from_point(&caret_points, local);
+            let pressed_cursor = cursor_from_point(&caret_points, to_content(pos), line_height);
             if selection_anchor.is_none() {
                 *selection_anchor = Some(pressed_cursor);
             }
@@ -344,11 +389,7 @@ pub fn custom_composer_input(
         *input_has_focus = true;
         response.request_focus();
         let clicked_cursor = if let Some(pos) = response.interact_pointer_pos() {
-            let local = egui::pos2(
-                (pos.x - content_rect.left()).max(0.0),
-                (pos.y - content_rect.top()).max(0.0),
-            );
-            cursor_from_point(&caret_points, local)
+            cursor_from_point(&caret_points, to_content(pos), line_height)
         } else {
             input.chars().count()
         };
@@ -367,11 +408,7 @@ pub fn custom_composer_input(
 
     if response.drag_started() && selection_anchor.is_none() {
         if let Some(pos) = response.interact_pointer_pos() {
-            let local = egui::pos2(
-                (pos.x - content_rect.left()).max(0.0),
-                (pos.y - content_rect.top()).max(0.0),
-            );
-            let drag_start_cursor = cursor_from_point(&caret_points, local);
+            let drag_start_cursor = cursor_from_point(&caret_points, to_content(pos), line_height);
             *selection_anchor = Some(drag_start_cursor);
             *cursor_char = drag_start_cursor;
         }
@@ -379,32 +416,26 @@ pub fn custom_composer_input(
 
     if response.dragged() {
         if let Some(pos) = response.interact_pointer_pos() {
-            let local = egui::pos2(
-                (pos.x - content_rect.left()).max(0.0),
-                (pos.y - content_rect.top()).max(0.0),
-            );
-            *cursor_char = cursor_from_point(&caret_points, local);
+            *cursor_char = cursor_from_point(&caret_points, to_content(pos), line_height);
         }
     }
 
     let has_focus = *input_has_focus || response.has_focus();
     let mut changed = false;
     let mut submit = false;
+    // Collage dépassant le plafond : renvoyé intact à l'appelant (qui le
+    // transforme en pièce jointe .txt) au lieu d'être tronqué ou inséré.
+    let mut overflow_paste: Option<String> = None;
     let total_chars = input.chars().count();
     if *cursor_char > total_chars {
         *cursor_char = total_chars;
     }
 
-    if let Some(caret) = caret_points.get(*cursor_char) {
-        let caret_line = (caret.y / line_height).floor();
-        if caret_line < *scroll_lines {
-            *scroll_lines = caret_line;
-        }
-        if caret_line >= *scroll_lines + visual_lines {
-            *scroll_lines = caret_line - visual_lines + 1.0;
-        }
-        *scroll_lines = scroll_lines.clamp(0.0, max_scroll);
-    }
+    // Position du curseur avant traitement clavier : si une frappe ou une
+    // navigation la déplace, on fait défiler l'input pour la garder visible
+    // (plus bas). On ne resnappe PAS à chaque frame — sinon la molette et
+    // l'ascenseur ne pourraient jamais défiler loin du curseur.
+    let cursor_before = *cursor_char;
 
     if has_focus {
         let caret = caret_points
@@ -440,20 +471,51 @@ pub fn custom_composer_input(
             match event {
                 egui::Event::Text(t) if !t.contains('\n') && !t.contains('\r') => {
                     replace_selection(input, cursor_char, selection_anchor, "");
-                    insert_text_at_cursor(input, cursor_char, &t);
+                    let room = MAX_INPUT_CHARS.saturating_sub(input.chars().count());
+                    let to_insert = char_prefix(&t, room);
+                    if !to_insert.is_empty() {
+                        insert_text_at_cursor(input, cursor_char, to_insert);
+                    }
                     changed = true;
                 }
                 egui::Event::Ime(egui::ImeEvent::Commit(t))
                     if !t.contains('\n') && !t.contains('\r') && !t.is_empty() =>
                 {
                     replace_selection(input, cursor_char, selection_anchor, "");
-                    insert_text_at_cursor(input, cursor_char, &t);
+                    let room = MAX_INPUT_CHARS.saturating_sub(input.chars().count());
+                    let to_insert = char_prefix(&t, room);
+                    if !to_insert.is_empty() {
+                        insert_text_at_cursor(input, cursor_char, to_insert);
+                    }
                     changed = true;
                 }
                 egui::Event::Paste(t) => {
-                    replace_selection(input, cursor_char, selection_anchor, "");
-                    insert_text_at_cursor(input, cursor_char, &t.replace(['\r', '\n'], " "));
-                    changed = true;
+                    // Retours à la ligne conservés (le fil est multiligne).
+                    let pasted = normalize_paste(&t);
+                    let selected = selection_range(*selection_anchor, *cursor_char)
+                        .map(|(start, end)| end - start)
+                        .unwrap_or(0);
+                    let after = input.chars().count() - selected + pasted.chars().count();
+                    if after > MAX_INPUT_CHARS {
+                        overflow_paste = Some(pasted);
+                    } else {
+                        replace_selection(input, cursor_char, selection_anchor, "");
+                        insert_text_at_cursor(input, cursor_char, &pasted);
+                        changed = true;
+                    }
+                }
+                egui::Event::Copy => {
+                    if let Some((start, end)) = selection_range(*selection_anchor, *cursor_char) {
+                        ui.ctx().copy_text(char_range_string(input, start, end));
+                    }
+                }
+                egui::Event::Cut => {
+                    if let Some((start, end)) = selection_range(*selection_anchor, *cursor_char) {
+                        ui.ctx().copy_text(char_range_string(input, start, end));
+                        replace_char_range(input, cursor_char, start, end, "");
+                        clear_selection(selection_anchor);
+                        changed = true;
+                    }
                 }
                 egui::Event::Key {
                     key,
@@ -470,27 +532,27 @@ pub fn custom_composer_input(
                             clear_selection(selection_anchor);
                         }
                     }
-                    egui::Key::Enter => {
-                        match enter_key_action(shortcode_menu_open, modifiers.shift) {
-                            EnterKeyAction::InsertNewline => {
-                                replace_selection(input, cursor_char, selection_anchor, "");
+                    egui::Key::Enter => match enter_key_action(shortcode_menu_open, modifiers) {
+                        EnterKeyAction::InsertNewline => {
+                            replace_selection(input, cursor_char, selection_anchor, "");
+                            if input.chars().count() < MAX_INPUT_CHARS {
                                 insert_text_at_cursor(input, cursor_char, "\n");
-                                changed = true;
                             }
-                            EnterKeyAction::AcceptShortcode => {
-                                changed |= accept_selected_shortcode(
-                                    input,
-                                    cursor_char,
-                                    emoji_alias_to_char,
-                                    emoji_aliases,
-                                    shortcode_selected,
-                                );
-                            }
-                            EnterKeyAction::Submit => {
-                                submit = true;
-                            }
+                            changed = true;
                         }
-                    }
+                        EnterKeyAction::AcceptShortcode => {
+                            changed |= accept_selected_shortcode(
+                                input,
+                                cursor_char,
+                                emoji_alias_to_char,
+                                emoji_aliases,
+                                shortcode_selected,
+                            );
+                        }
+                        EnterKeyAction::Submit => {
+                            submit = true;
+                        }
+                    },
                     egui::Key::Tab => {
                         let suggestions = crate::ui::emoji_picker::shortcode_suggestions(
                             input,
@@ -512,21 +574,40 @@ pub fn custom_composer_input(
                         }
                     }
                     egui::Key::Backspace => {
-                        if !replace_selection(input, cursor_char, selection_anchor, "") {
-                            let before = input.len();
-                            remove_prev_char(input, cursor_char);
-                            changed |= input.len() != before;
-                        } else {
+                        if replace_selection(input, cursor_char, selection_anchor, "") {
                             changed = true;
+                        } else {
+                            // Cmd+Backspace : jusqu'au début de ligne (macOS) ;
+                            // Option/Ctrl+Backspace : mot précédent ;
+                            // sinon caractère précédent.
+                            let target = if modifiers.mac_cmd {
+                                line_start(input, *cursor_char)
+                            } else if modifiers.alt || modifiers.ctrl {
+                                prev_word_start(input, *cursor_char)
+                            } else {
+                                cursor_char.saturating_sub(1)
+                            };
+                            if target < *cursor_char {
+                                replace_char_range(input, cursor_char, target, *cursor_char, "");
+                                changed = true;
+                            }
                         }
                     }
                     egui::Key::Delete => {
-                        if !replace_selection(input, cursor_char, selection_anchor, "") {
-                            let before = input.len();
-                            remove_next_char(input, cursor_char);
-                            changed |= input.len() != before;
-                        } else {
+                        if replace_selection(input, cursor_char, selection_anchor, "") {
                             changed = true;
+                        } else {
+                            // Option/Ctrl+Delete : mot suivant ; sinon caractère
+                            // suivant.
+                            let target = if modifiers.alt || modifiers.ctrl {
+                                next_word_end(input, *cursor_char)
+                            } else {
+                                (*cursor_char + 1).min(input.chars().count())
+                            };
+                            if target > *cursor_char {
+                                replace_char_range(input, cursor_char, *cursor_char, target, "");
+                                changed = true;
+                            }
                         }
                     }
                     egui::Key::ArrowLeft => {
@@ -537,9 +618,15 @@ pub fn custom_composer_input(
                         } else {
                             clear_selection(selection_anchor);
                         }
-                        if *cursor_char > 0 {
-                            *cursor_char -= 1;
-                        }
+                        // Cmd+← : début de ligne (macOS) ; Option/Ctrl+← : mot
+                        // précédent ; sinon caractère précédent.
+                        *cursor_char = if modifiers.mac_cmd {
+                            line_start(input, *cursor_char)
+                        } else if modifiers.alt || modifiers.ctrl {
+                            prev_word_start(input, *cursor_char)
+                        } else {
+                            cursor_char.saturating_sub(1)
+                        };
                         if selection_range(*selection_anchor, *cursor_char).is_none() {
                             clear_selection(selection_anchor);
                         }
@@ -552,10 +639,15 @@ pub fn custom_composer_input(
                         } else {
                             clear_selection(selection_anchor);
                         }
-                        let len = input.chars().count();
-                        if *cursor_char < len {
-                            *cursor_char += 1;
-                        }
+                        // Cmd+→ : fin de ligne (macOS) ; Option/Ctrl+→ : mot
+                        // suivant ; sinon caractère suivant.
+                        *cursor_char = if modifiers.mac_cmd {
+                            line_end(input, *cursor_char)
+                        } else if modifiers.alt || modifiers.ctrl {
+                            next_word_end(input, *cursor_char)
+                        } else {
+                            (*cursor_char + 1).min(input.chars().count())
+                        };
                         if selection_range(*selection_anchor, *cursor_char).is_none() {
                             clear_selection(selection_anchor);
                         }
@@ -625,6 +717,44 @@ pub fn custom_composer_input(
         }
     }
 
+    // Les événements ci-dessus ont pu modifier le texte : re-clampe curseur et
+    // ancre de sélection puis recalcule les positions de caractères avant le
+    // rendu, sinon la peinture de la sélection lit des points périmés (panique
+    // « index out of bounds » quand saisie et sélection tombent dans la même
+    // frame).
+    let total_chars = input.chars().count();
+    if *cursor_char > total_chars {
+        *cursor_char = total_chars;
+    }
+    if let Some(anchor) = *selection_anchor {
+        if anchor > total_chars {
+            *selection_anchor = Some(total_chars);
+        }
+    }
+    if changed {
+        caret_points =
+            composer_caret_positions(ui, input, emoji_map, 18.0, content_rect.width().max(20.0));
+    }
+
+    // Défilement suiveur : après une frappe ou une navigation clavier, garder la
+    // ligne du curseur dans la fenêtre visible (flèches haut/bas, saisie qui
+    // pousse le texte hors champ). N'agit que si le curseur a bougé, pour ne pas
+    // annuler un défilement molette/ascenseur.
+    if *cursor_char != cursor_before {
+        let recomputed_max_scroll =
+            (visual_line_count(&caret_points, line_height) as f32 - visual_lines).max(0.0);
+        let caret_line = caret_points
+            .get(*cursor_char)
+            .map(|p| (p.y / line_height).round())
+            .unwrap_or(0.0);
+        if caret_line < *scroll_lines {
+            *scroll_lines = caret_line;
+        } else if caret_line > *scroll_lines + visual_lines - 1.0 {
+            *scroll_lines = caret_line - visual_lines + 1.0;
+        }
+        *scroll_lines = scroll_lines.clamp(0.0, recomputed_max_scroll);
+    }
+
     let frame_fill = egui::Color32::TRANSPARENT;
     let frame_stroke = egui::Stroke::NONE;
 
@@ -640,7 +770,7 @@ pub fn custom_composer_input(
         ui.painter().text(
             content_rect.left_center(),
             egui::Align2::LEFT_CENTER,
-            "Send a message...",
+            "Send a message... Ctrl/Cmd + Enter ",
             egui::TextStyle::Body.resolve(ui.style()),
             egui::Color32::from_rgb(185, 187, 192),
         );
@@ -760,6 +890,14 @@ pub fn custom_composer_input(
     }
 
     if has_focus {
+        // Le clignotement a besoin d'une frame à chaque bascule (250 ms) ;
+        // sans ça le trait reste figé jusqu'au prochain repaint (jusqu'à 5 s
+        // au repos). Uniquement fenêtre au premier plan : en arrière-plan on
+        // garde le rythme quasi dormant.
+        if ui.input(|i| i.focused) {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_millis(250));
+        }
         let blink_on = ((ui.input(|i| i.time) * 2.0) as i64) % 2 == 0;
         if blink_on {
             let caret = caret_points
@@ -781,7 +919,7 @@ pub fn custom_composer_input(
         }
     }
 
-    (response, submit, changed)
+    (response, submit, changed, overflow_paste)
 }
 
 #[cfg(test)]
