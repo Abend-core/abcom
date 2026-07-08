@@ -131,7 +131,9 @@ pub(crate) fn emoji_shortcode_trigger(input: &str, cursor_char: usize) -> Option
         start -= 1;
     }
 
-    if start >= chars.len() || chars[start] != ':' {
+    // `start == cursor_char` : le curseur est placé AVANT le `:` (pas dedans),
+    // et la slice `start + 1..cursor_char` serait inversée → panique.
+    if start >= cursor_char || chars[start] != ':' {
         return None;
     }
 
@@ -346,3 +348,7 @@ fn github_key_to_emoji(key: &str) -> Option<String> {
     }
     Some(out)
 }
+
+#[cfg(test)]
+#[path = "../tests/test_ui_emoji_picker.rs"]
+mod tests;

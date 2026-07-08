@@ -22,8 +22,26 @@ Dans les fils multi-participants (« Tous » et salons), chaque auteur a une cou
 - **Emojis** : picker par catégories, recherche, saisie par `:shortcode:` avec menu de suggestions ; un message composé uniquement d'emojis est affiché en grand. Jeu de 323 emojis embarqué dans le binaire.
 - **Réactions** : barre au survol d'un message ; les réactions des autres s'agrègent sous le message et se togglent au clic.
 - **Réponses** : répondre cite le message d'origine (auteur + extrait), cliquable pour y remonter.
-- **Frappe** : « écrit… » apparaît sous la barre de saisie pendant que l'interlocuteur tape ; en salon, l'indicateur n'est envoyé qu'aux membres.
+- **Frappe** : « écrit… » apparaît dans la barre de saisie (rangée des boutons) pendant que l'interlocuteur tape ; en salon, l'indicateur n'est envoyé qu'aux membres.
 - **Sélection** : le texte du fil se sélectionne au clic-glisser.
+
+### Raccourcis clavier de la zone de saisie
+
+| Raccourci | Action |
+|---|---|
+| `Entrée` ou `Maj+Entrée` | Nouvelle ligne |
+| `Cmd+Entrée` (macOS) / `Ctrl+Entrée` | Envoyer le message |
+| `Entrée` (menu de shortcodes ouvert) | Insérer l'emoji sélectionné |
+| `Tab` | Compléter le shortcode avec la première suggestion |
+| `↑` / `↓` (menu de shortcodes ouvert) | Naviguer dans les suggestions |
+| `Option+⌫` (macOS) / `Ctrl+⌫` | Supprimer le mot précédent |
+| `Option+Suppr` (macOS) / `Ctrl+Suppr` | Supprimer le mot suivant |
+| `Cmd+⌫` (macOS) | Supprimer jusqu'au début de la ligne |
+| `Option+←/→` (macOS) / `Ctrl+←/→` | Se déplacer de mot en mot |
+| `Cmd+←/→` (macOS), `Début`/`Fin` | Aller au début / à la fin de la ligne |
+| `Cmd/Ctrl+A` | Tout sélectionner |
+| `Cmd/Ctrl+C`, `X`, `V` | Copier, couper, coller |
+| `Maj+flèches/clic` | Étendre la sélection |
 
 ## Accusés de réception (conversations privées uniquement)
 

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use chrono::{Local, NaiveDate};
 use eframe::egui;
 
-use crate::app::{AppState, Peer};
+use crate::app::{AppState, Peer, ReceiptDetail};
 use crate::message::{ChatMessage, Group, ReactionEntry};
 
 use super::chat_panel::{
@@ -19,6 +19,45 @@ use super::chat_panel::{
 };
 use super::markdown::{parse_message, ParsedMarkdown};
 use super::UiLanguage;
+
+/// Seuils de repli des messages très longs : protège le coût de layout du
+/// fil, qui croît linéairement (mesuré : ~14 ms pour 100 k caractères,
+/// ~770 ms pour 8 Mo — un gel d'interface). Comptés en caractères Unicode.
+const COLLAPSE_CHARS: usize = 4_000;
+const COLLAPSE_LINES: usize = 60;
+/// Aperçu affiché quand le message est replié.
+const PREVIEW_CHARS: usize = 2_000;
+const PREVIEW_LINES: usize = 30;
+
+/// Message trop long pour être affiché entier d'emblée : aperçu pré-parsé et
+/// dimensions totales pour le bouton « Afficher la suite ».
+pub(crate) struct CollapseInfo {
+    pub(crate) preview: Arc<ParsedMarkdown>,
+    pub(crate) total_lines: usize,
+    pub(crate) total_chars: usize,
+}
+
+fn collapse_info(content: &str, emoji_map: &HashMap<String, usize>) -> Option<CollapseInfo> {
+    let total_chars = content.chars().count();
+    let total_lines = content.lines().count();
+    if total_chars <= COLLAPSE_CHARS && total_lines <= COLLAPSE_LINES {
+        return None;
+    }
+    let mut preview: String = content
+        .lines()
+        .take(PREVIEW_LINES)
+        .collect::<Vec<_>>()
+        .join("\n");
+    if preview.chars().count() > PREVIEW_CHARS {
+        preview = preview.chars().take(PREVIEW_CHARS).collect();
+    }
+    preview.push_str(" ...");
+    Some(CollapseInfo {
+        preview: Arc::new(parse_message(&preview, emoji_map)),
+        total_lines,
+        total_chars,
+    })
+}
 
 /// Citation de réponse pré-résolue (le message d'origine n'est recherché
 /// qu'à la reconstruction du cache, pas à chaque frame).
@@ -41,12 +80,18 @@ pub(crate) struct ChatRow {
     pub(crate) starts_group: bool,
     pub(crate) header_time: String,
     pub(crate) name_color: egui::Color32,
-    /// Pour nos messages : (livré, lu).
+    /// Pour nos messages en 1-à-1 : (livré, lu). Toujours `None` en salon.
     pub(crate) receipt: Option<(bool, bool)>,
+    /// Salons et « Tous » : liste nominative reçu/lu (popup « … »), portée
+    /// par l'en-tête de chaque groupe de messages, quel qu'en soit l'auteur.
+    pub(crate) receipt_detail: Option<ReceiptDetail>,
     pub(crate) reply: Option<ReplyInfo>,
     pub(crate) reactions: Vec<ReactionEntry>,
     pub(crate) display_name: String,
     pub(crate) markdown: Arc<ParsedMarkdown>,
+    /// `Some` pour les messages très longs : affichés repliés (aperçu +
+    /// « Afficher la suite ») pour ne pas geler le layout du fil.
+    pub(crate) collapse: Option<CollapseInfo>,
 }
 
 /// Cache du fil de la conversation sélectionnée.
@@ -173,8 +218,6 @@ impl ChatCache {
             } else {
                 PEER_NAME_COLOR
             };
-            let receipt = is_me.then(|| (!s.is_message_pending(hash), s.get_read_count(hash) > 0));
-
             let reply = msg.reply_to.map(|reply_hash| {
                 let resolved = s.find_message_by_hash(reply_hash).cloned();
                 let author = resolved
@@ -250,12 +293,40 @@ impl ChatCache {
                 starts_group,
                 header_time: header_time(msg),
                 name_color,
-                receipt,
+                receipt: None,
+                receipt_detail: None,
                 reply,
                 reactions: s.reactions_for(hash).to_vec(),
                 display_name,
                 markdown,
+                collapse: collapse_info(&msg.content, emoji_map),
             });
+        }
+
+        // Accusés portés par l'en-tête de chaque groupe de messages, calculés
+        // sur le DERNIER message du groupe (4 messages d'affilée → un seul
+        // indicateur, à jour sur le dernier). En 1-à-1 : coches sur nos
+        // messages. En salon/« Tous » : détail nominatif « … » sur tous les
+        // messages (les coches n'ont pas de sens à plusieurs, chacun pouvant
+        // avoir reçu ou lu indépendamment).
+        let mut start = 0;
+        while start < rows.len() {
+            let mut end = start + 1;
+            while end < rows.len() && !rows[end].starts_group {
+                end += 1;
+            }
+            let last_hash = rows[end - 1].hash;
+            if rows[start].starts_group {
+                if self.multi_person {
+                    rows[start].receipt_detail = Some(s.receipt_detail(last_hash));
+                } else if rows[start].msg.from == self.my_name {
+                    rows[start].receipt = Some((
+                        !s.is_message_pending(last_hash),
+                        s.get_read_count(last_hash) > 0,
+                    ));
+                }
+            }
+            start = end;
         }
 
         self.rows = Arc::new(rows);

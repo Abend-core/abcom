@@ -184,13 +184,18 @@ fn render_day_divider(ui: &mut egui::Ui, label: &str) {
 }
 
 /// En-tête d'un groupe de messages : nom coloré suivi, collé à droite, de
-/// l'heure d'envoi (format 24 h) et, pour nos messages, de l'accusé de lecture.
+/// l'heure d'envoi (format 24 h) et de l'accusé de lecture — coches pour nos
+/// messages en 1-à-1, bouton « … » (liste nominative reçu/lu) en salon/« Tous ».
+#[allow(clippy::too_many_arguments)]
 fn render_message_header(
     ui: &mut egui::Ui,
     display_name: &str,
     timestamp: &str,
     name_color: egui::Color32,
     receipt: Option<(bool, bool)>,
+    receipt_detail: Option<&crate::app::ReceiptDetail>,
+    row_hash: u64,
+    language: UiLanguage,
 ) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 6.0;
@@ -204,37 +209,129 @@ fn render_message_header(
                 .small()
                 .color(egui::Color32::from_gray(140)),
         );
-        if let Some((delivered, read)) = receipt {
+        if let Some(detail) = receipt_detail {
+            show_receipt_detail_button(ui, detail, row_hash, language);
+        } else if let Some((delivered, read)) = receipt {
             show_receipt(ui, delivered, read);
         }
     });
 }
 
-/// Rend le corps d'un message (texte Markdown puis média éventuel) et renvoie
-/// l'action déclenchée sur le média, le cas échéant.
+/// Bouton « … » des salons et de « Tous » : ouvre un popup listant qui a
+/// reçu et qui a lu le message (glyphe ASCII, les coches n'ayant pas de sens
+/// quand chaque membre peut avoir reçu ou lu indépendamment).
+fn show_receipt_detail_button(
+    ui: &mut egui::Ui,
+    detail: &crate::app::ReceiptDetail,
+    row_hash: u64,
+    language: UiLanguage,
+) {
+    let popup_id = ui.make_persistent_id(("receipt_popup", row_hash));
+    let btn = ui.small_button("...");
+    if btn.clicked() {
+        ui.memory_mut(|m| m.toggle_popup(popup_id));
+    }
+    egui::popup_below_widget(
+        ui,
+        popup_id,
+        &btn,
+        egui::PopupCloseBehavior::CloseOnClickOutside,
+        |ui| {
+            ui.set_min_width(160.0);
+            let (delivered_lbl, read_lbl) = match language {
+                UiLanguage::French => ("Reçu par", "Lu par"),
+                UiLanguage::English => ("Delivered to", "Read by"),
+            };
+            ui.label(egui::RichText::new(delivered_lbl).strong());
+            if detail.delivered_by.is_empty() {
+                ui.label(egui::RichText::new("—").weak());
+            } else {
+                for name in &detail.delivered_by {
+                    ui.label(name);
+                }
+            }
+            ui.separator();
+            ui.label(egui::RichText::new(read_lbl).strong());
+            if detail.read_by.is_empty() {
+                ui.label(egui::RichText::new("—").weak());
+            } else {
+                for name in &detail.read_by {
+                    ui.label(name);
+                }
+            }
+        },
+    );
+}
+
+/// Rend le corps d'un message (texte Markdown puis média éventuel). Les
+/// messages très longs (`collapse` présent) s'affichent repliés : aperçu +
+/// « Afficher la suite » ; dépliés, un bouton « Réduire » les referme.
+/// Renvoie (action média éventuelle, bascule replié/déplié cliquée).
 #[allow(clippy::too_many_arguments)]
 fn render_message_body(
     ui: &mut egui::Ui,
     msg: &ChatMessage,
     parsed: &super::markdown::ParsedMarkdown,
+    collapse: Option<&super::snapshot::CollapseInfo>,
+    expanded: bool,
+    language: UiLanguage,
     emoji_map: &std::collections::HashMap<String, usize>,
     emoji_textures: &[(String, egui::TextureHandle)],
     media_textures: &std::collections::HashMap<String, Option<egui::TextureHandle>>,
     media_progress: &std::collections::HashMap<String, crate::message::MediaProgress>,
-) -> Option<super::media::MediaAction> {
+) -> (Option<super::media::MediaAction>, bool) {
+    let mut toggled = false;
     if !msg.content.is_empty() {
-        super::markdown::render_parsed_markdown(ui, parsed, emoji_map, emoji_textures);
+        match collapse {
+            Some(info) if !expanded => {
+                super::markdown::render_parsed_markdown(
+                    ui,
+                    &info.preview,
+                    emoji_map,
+                    emoji_textures,
+                );
+                let label = match language {
+                    UiLanguage::French => format!(
+                        "Afficher la suite ({} lignes · {} caractères)",
+                        info.total_lines, info.total_chars
+                    ),
+                    UiLanguage::English => format!(
+                        "Show more ({} lines · {} characters)",
+                        info.total_lines, info.total_chars
+                    ),
+                };
+                if ui.small_button(label).clicked() {
+                    toggled = true;
+                }
+            }
+            Some(_) => {
+                super::markdown::render_parsed_markdown(ui, parsed, emoji_map, emoji_textures);
+                let label = match language {
+                    UiLanguage::French => "Réduire",
+                    UiLanguage::English => "Show less",
+                };
+                if ui.small_button(label).clicked() {
+                    toggled = true;
+                }
+            }
+            None => {
+                super::markdown::render_parsed_markdown(ui, parsed, emoji_map, emoji_textures);
+            }
+        }
     }
     if let Some(media) = &msg.media {
         // Pendant le transfert : barre de progression au lieu de la carte.
         if let Some(progress) = media_progress.get(&media.id) {
             super::media::render_media_progress(ui, media, progress);
-            return None;
+            return (None, toggled);
         }
         let texture = media_textures.get(&media.id).and_then(|t| t.as_ref());
-        return super::media::render_media_block(ui, media, texture);
+        return (
+            super::media::render_media_block(ui, media, texture),
+            toggled,
+        );
     }
-    None
+    (None, toggled)
 }
 
 /// Enregistre l'action média choisie (ouverture ou téléchargement) dans les
@@ -913,6 +1010,7 @@ impl AbcomApp {
             );
             let reply_label = self.tr("Répondre", "Reply");
             let add_reaction_label = self.tr("Ajouter une réaction", "Add reaction");
+            let language = self.ui_language;
 
             // Aire de messages. Le collage au bas est suspendu quand un saut
             // vers un message est en attente : sinon il écrase le
@@ -928,6 +1026,12 @@ impl AbcomApp {
                             egui::RichText::new(self.tr("Aucun message", "No message")).weak(),
                         );
                     }
+
+                    // Une seule ligne peut revendiquer le survol par frame :
+                    // les rects de survol débordent de 2 px sur leurs voisins
+                    // (couverture des interstices), sans ce verrou deux lignes
+                    // adjacentes pouvaient se surligner en même temps.
+                    let mut hover_claimed = false;
 
                     for (i, row) in rows[start..].iter().enumerate() {
                         let msg = &row.msg;
@@ -954,6 +1058,8 @@ impl AbcomApp {
 
                         let mut reaction_clicked: Option<String> = None;
                         let mut reply_quote_clicked = false;
+                        let mut collapse_toggled = false;
+                        let expanded = self.expanded_messages.contains(&hash);
 
                         // Fond pleine largeur de la ligne (survol / flash de
                         // surlignage), inséré sous le contenu et rempli après
@@ -1015,16 +1121,24 @@ impl AbcomApp {
                                             &row.header_time,
                                             row.name_color,
                                             row.receipt,
+                                            row.receipt_detail.as_ref(),
+                                            row.hash,
+                                            language,
                                         );
-                                        if let Some(action) = render_message_body(
+                                        let (media_action, toggled) = render_message_body(
                                             ui,
                                             msg,
                                             &row.markdown,
+                                            row.collapse.as_ref(),
+                                            expanded,
+                                            language,
                                             &self.emoji_map,
                                             &self.emoji_textures,
                                             &media_textures,
                                             &self.media_progress,
-                                        ) {
+                                        );
+                                        collapse_toggled |= toggled;
+                                        if let Some(action) = media_action {
                                             apply_media_action(
                                                 action,
                                                 msg,
@@ -1055,15 +1169,20 @@ impl AbcomApp {
                                 // ligne, dès que celle-ci est survolée.
                                 gutter_rect = Some(rect);
                                 ui.vertical(|ui| {
-                                    if let Some(action) = render_message_body(
+                                    let (media_action, toggled) = render_message_body(
                                         ui,
                                         msg,
                                         &row.markdown,
+                                        row.collapse.as_ref(),
+                                        expanded,
+                                        language,
                                         &self.emoji_map,
                                         &self.emoji_textures,
                                         &media_textures,
                                         &self.media_progress,
-                                    ) {
+                                    );
+                                    collapse_toggled |= toggled;
+                                    if let Some(action) = media_action {
                                         apply_media_action(
                                             action,
                                             msg,
@@ -1103,9 +1222,10 @@ impl AbcomApp {
                         // "+", répondre). Reste affichée tant que le pointeur
                         // est sur la ligne ou sur la barre elle-même, pour
                         // éviter tout clignotement en s'y déplaçant.
-                        let row_hovered = ui.rect_contains_pointer(row_rect);
+                        let row_hovered = !hover_claimed && ui.rect_contains_pointer(row_rect);
                         if row_hovered {
                             self.hover_toolbar_target = Some((abs_idx, hash));
+                            hover_claimed = true;
                         }
                         // Ligne « active » : survolée, ou pointeur sur sa
                         // barre d'actions flottante.
@@ -1178,6 +1298,9 @@ impl AbcomApp {
                             reply_requested = result.reply_clicked;
                         }
 
+                        if collapse_toggled && !self.expanded_messages.remove(&hash) {
+                            self.expanded_messages.insert(hash);
+                        }
                         if let Some(emoji) = reaction_clicked {
                             self.send_reaction(hash, &emoji);
                         }
@@ -1208,12 +1331,15 @@ impl AbcomApp {
             if let Some(prev_height) = self.chat_prepend_fix {
                 let delta = scroll_out.content_size.y - prev_height;
                 if delta > 0.0 {
-                    // Le contenu ajouté est arrivé : compenser l'offset.
+                    // Le contenu ajouté est arrivé : compenser l'offset, puis
+                    // jeter la frame courante (rendue avec l'ancien offset) et
+                    // re-rendre immédiatement — sans ça, une frame décalée
+                    // s'affiche à chaque lot chargé (tremblement du fil).
                     self.chat_prepend_fix = None;
                     let mut state = scroll_out.state;
                     state.offset.y += delta;
                     state.store(ctx, scroll_out.id);
-                    ctx.request_repaint();
+                    ctx.request_discard("chat prepend anchor");
                 }
                 // delta == 0 : requête SQLite encore en vol, on attend.
             } else if scroll_out.state.offset.y < 400.0 && !rows.is_empty() {

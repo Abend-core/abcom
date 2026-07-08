@@ -1,5 +1,5 @@
-use crate::app::AppState;
-use crate::message::ChatMessage;
+use crate::app::{AppState, Peer};
+use crate::message::{ChatMessage, Group};
 use std::net::SocketAddr;
 use std::time::SystemTime;
 
@@ -8,6 +8,19 @@ fn state() -> AppState {
     s.messages.clear();
     s.peers.clear();
     s
+}
+
+fn peer(name: &str, port: u16, online: bool) -> Peer {
+    Peer {
+        username: name.to_string(),
+        addr: format!("127.0.0.1:{port}").parse().unwrap(),
+        last_seen: 0,
+        online,
+    }
+}
+
+fn addr(port: u16) -> SocketAddr {
+    format!("127.0.0.1:{port}").parse().unwrap()
 }
 
 fn make_msg(from: &str, content: &str) -> ChatMessage {
@@ -102,6 +115,76 @@ fn test_get_read_count() {
     s.mark_message_read(hash, "bob".to_string());
     s.mark_message_read(hash, "charlie".to_string());
     assert_eq!(s.get_read_count(hash), 2);
+}
+
+// ── receipt_recipients : à qui diffuser nos ACK/ReadReceipts ──────────────
+
+#[test]
+fn recipients_private_only_sender() {
+    let mut s = state();
+    s.peers = vec![peer("bob", 9001, true), peer("carol", 9002, true)];
+    let mut m = make_msg("bob", "salut");
+    m.to_user = Some("alice".to_string()); // privé vers moi
+    assert_eq!(s.receipt_recipients(&m), vec![addr(9001)]);
+}
+
+#[test]
+fn recipients_broadcast_all_online_peers() {
+    let mut s = state();
+    s.peers = vec![
+        peer("bob", 9001, true),
+        peer("carol", 9002, true),
+        peer("dan", 9003, false), // hors-ligne → exclu
+    ];
+    let m = make_msg("bob", "à tous"); // to_user None = « Tous »
+    let mut got = s.receipt_recipients(&m);
+    got.sort();
+    assert_eq!(got, vec![addr(9001), addr(9002)]);
+}
+
+#[test]
+fn recipients_group_only_online_members() {
+    let mut s = state();
+    s.peers = vec![
+        peer("bob", 9001, true),
+        peer("carol", 9002, true),
+        peer("eve", 9004, true), // pas membre → exclue
+    ];
+    s.groups = vec![Group {
+        name: "team".to_string(),
+        owner: "alice".to_string(),
+        members: vec!["alice".to_string(), "bob".to_string(), "carol".to_string()],
+        created_at: "2026-01-01 00:00:00".to_string(),
+    }];
+    let mut m = make_msg("bob", "coucou groupe");
+    m.to_user = Some("#team".to_string());
+    let mut got = s.receipt_recipients(&m);
+    got.sort();
+    assert_eq!(got, vec![addr(9001), addr(9002)]);
+}
+
+// ── détail nominatif reçu/lu (popup « … ») ─────────────────────────────────
+
+#[test]
+fn test_mark_delivered_by_feeds_detail() {
+    let mut s = state();
+    let hash = AppState::message_hash(&make_msg("alice", "test"));
+    s.mark_message_delivered_by(hash, "bob".to_string());
+    let detail = s.receipt_detail(hash);
+    assert_eq!(detail.delivered_by, vec!["bob"]);
+    assert!(detail.read_by.is_empty());
+}
+
+#[test]
+fn test_receipt_detail_sorted() {
+    let mut s = state();
+    let hash = AppState::message_hash(&make_msg("alice", "y"));
+    s.mark_message_delivered_by(hash, "zara".to_string());
+    s.mark_message_delivered_by(hash, "bob".to_string());
+    s.mark_message_read(hash, "carol".to_string());
+    let detail = s.receipt_detail(hash);
+    assert_eq!(detail.delivered_by, vec!["bob", "zara"]);
+    assert_eq!(detail.read_by, vec!["carol"]);
 }
 
 #[test]

@@ -91,41 +91,60 @@ impl AbcomApp {
                         }
                     }
 
-                    // ACK automatique (livraison) pour les messages privés
-                    // uniquement (pas d'accusés multi-destinataires en salon).
-                    // Le ReadReceipt (lecture) n'est envoyé que si la conversation
-                    // est déjà ouverte et la fenêtre active — sinon différé à l'ouverture.
-                    if group_conv.is_none() && msg.to_user.is_some() && msg.from != s.my_username {
-                        if let Some(peer) = s.peers.iter().find(|p| p.username == msg.from) {
+                    // ACK automatique (livraison) pour tout message reçu d'un
+                    // autre pair — privé, salon (#…) ou diffusion (« Tous »).
+                    // En salon/« Tous », l'accusé est diffusé à tous les membres
+                    // (pas seulement l'expéditeur) pour que chacun puisse
+                    // consulter le détail « … » reçu/lu. Le ReadReceipt (lecture)
+                    // n'est envoyé que si la conversation est déjà ouverte et la
+                    // fenêtre active — sinon différé à l'ouverture.
+                    if msg.from != s.my_username {
+                        let recipients = s.receipt_recipients(&msg);
+                        if !recipients.is_empty() {
                             let msg_hash = AppState::message_hash(&msg);
-                            let ack = MessageAck {
-                                from: s.my_username.clone(),
-                                to: msg.from.clone(),
-                                message_hash: msg_hash,
-                                timestamp: chrono::Local::now().format("%H:%M").to_string(),
-                            };
-                            let ack_req = MessageAckRequest {
-                                to_addr: peer.addr,
-                                ack,
-                            };
+                            let now = chrono::Local::now().format("%H:%M").to_string();
 
-                            // ReadReceipt uniquement si la conv est déjà ouverte + fenêtre focalisée
-                            let already_reading = self.window_focused
-                                && s.selected_conversation == Some(msg.from.clone());
-                            let receipt_req = already_reading.then(|| ReadReceiptRequest {
-                                to_addr: peer.addr,
-                                receipt: ReadReceipt {
-                                    from: s.my_username.clone(),
-                                    to: msg.from.clone(),
-                                    message_hash: msg_hash,
-                                    timestamp: chrono::Local::now().format("%H:%M").to_string(),
-                                },
-                            });
+                            // Conversation source côté destinataire : « Tous »
+                            // (None), le salon (#…) ou le pair émetteur.
+                            let source_conv: Option<String> = match &msg.to_user {
+                                None => None,
+                                Some(t) if t.starts_with('#') => Some(t.clone()),
+                                Some(_) => Some(msg.from.clone()),
+                            };
+                            let already_reading =
+                                self.window_focused && s.selected_conversation == source_conv;
+
+                            let mut ack_reqs = Vec::with_capacity(recipients.len());
+                            let mut receipt_reqs = Vec::new();
+                            for addr in recipients {
+                                ack_reqs.push(MessageAckRequest {
+                                    to_addr: addr,
+                                    ack: MessageAck {
+                                        from: s.my_username.clone(),
+                                        to: msg.from.clone(),
+                                        message_hash: msg_hash,
+                                        timestamp: now.clone(),
+                                    },
+                                });
+                                if already_reading {
+                                    receipt_reqs.push(ReadReceiptRequest {
+                                        to_addr: addr,
+                                        receipt: ReadReceipt {
+                                            from: s.my_username.clone(),
+                                            to: msg.from.clone(),
+                                            message_hash: msg_hash,
+                                            timestamp: now.clone(),
+                                        },
+                                    });
+                                }
+                            }
 
                             drop(s);
-                            let _ = self.send_ack_tx.try_send(ack_req);
-                            if let Some(rr) = receipt_req {
-                                let _ = self.send_read_receipt_tx.try_send(rr);
+                            for req in ack_reqs {
+                                let _ = self.send_ack_tx.try_send(req);
+                            }
+                            for req in receipt_reqs {
+                                let _ = self.send_read_receipt_tx.try_send(req);
                             }
                             s = self.state.lock().unwrap();
                         }
@@ -259,6 +278,8 @@ impl AbcomApp {
                 }
                 AppEvent::MessageAckReceived(ack) => {
                     s.mark_message_acked(ack.message_hash);
+                    // Détail nominatif « reçu par » (popup « … » des salons).
+                    s.mark_message_delivered_by(ack.message_hash, ack.from.clone());
                 }
                 AppEvent::ReactionReceived(event) => {
                     s.apply_reaction_event(&event);

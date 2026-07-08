@@ -73,53 +73,41 @@ fn insert_emoji_moves_cursor() {
     assert_eq!(c, 3); // 1 char
 }
 
-// ── remove_prev_char ─────────────────────────────────────────
+// ── prev_word_start / next_word_end ──────────────────────────
 
 #[test]
-fn remove_prev_normal() {
-    let mut t = "hello".to_string();
-    let mut c = 3;
-    remove_prev_char(&mut t, &mut c);
-    assert_eq!(t, "helo");
-    assert_eq!(c, 2);
+fn prev_word_start_skips_trailing_spaces_then_word() {
+    assert_eq!(prev_word_start("hello world", 11), 6);
+    assert_eq!(prev_word_start("hello world  ", 13), 6);
+    assert_eq!(prev_word_start("hello", 3), 0);
+    assert_eq!(prev_word_start("hello", 0), 0);
 }
 
 #[test]
-fn remove_prev_at_zero_noop() {
-    let mut t = "hello".to_string();
-    let mut c = 0;
-    remove_prev_char(&mut t, &mut c);
-    assert_eq!(t, "hello");
-    assert_eq!(c, 0);
+fn next_word_end_skips_leading_spaces_then_word() {
+    assert_eq!(next_word_end("hello world", 0), 5);
+    assert_eq!(next_word_end("hello world", 5), 11);
+    assert_eq!(next_word_end("hello", 5), 5);
 }
 
+// ── line_start / line_end ─────────────────────────────────────
+
 #[test]
-fn remove_prev_multibyte() {
-    let mut t = "café".to_string();
-    let total = t.chars().count(); // 4
-    let mut c = total;
-    remove_prev_char(&mut t, &mut c);
-    assert_eq!(t, "caf");
-    assert_eq!(c, 3);
+fn line_bounds_with_newlines() {
+    let t = "salut\nles amis";
+    assert_eq!(line_start(t, 14), 6);
+    assert_eq!(line_start(t, 3), 0);
+    assert_eq!(line_end(t, 0), 5);
+    assert_eq!(line_end(t, 6), 14);
 }
 
-// ── remove_next_char ─────────────────────────────────────────
+// ── char_range_string ─────────────────────────────────────────
 
 #[test]
-fn remove_next_normal() {
-    let mut t = "hello".to_string();
-    let mut c = 1;
-    remove_next_char(&mut t, &mut c);
-    assert_eq!(t, "hllo");
-    assert_eq!(c, 1);
-}
-
-#[test]
-fn remove_next_at_end_noop() {
-    let mut t = "hello".to_string();
-    let mut c = 5;
-    remove_next_char(&mut t, &mut c);
-    assert_eq!(t, "hello");
+fn char_range_string_handles_multibyte_and_inverted_range() {
+    assert_eq!(char_range_string("a🎉b", 1, 2), "🎉");
+    assert_eq!(char_range_string("hello", 1, 4), "ell");
+    assert_eq!(char_range_string("hello", 4, 1), "");
 }
 
 // ── replace_char_range ────────────────────────────────────────
@@ -141,4 +129,26 @@ fn replace_range_shortcode_to_emoji() {
     replace_char_range(&mut t, &mut c, 3, 9, "😊");
     assert_eq!(t, "je 😊 le");
     assert_eq!(c, 4);
+}
+
+// ── char_prefix ───────────────────────────────────────────────
+
+#[test]
+fn char_prefix_ascii() {
+    assert_eq!(char_prefix("bonjour", 3), "bon");
+    assert_eq!(char_prefix("bonjour", 0), "");
+}
+
+#[test]
+fn char_prefix_shorter_than_max_returns_all() {
+    assert_eq!(char_prefix("salut", 100), "salut");
+}
+
+#[test]
+fn char_prefix_counts_unicode_chars_not_bytes() {
+    // « é » (2 octets) et emoji (4 octets) comptent pour un caractère,
+    // et la coupe ne tombe jamais au milieu d'un point de code UTF-8.
+    assert_eq!(char_prefix("héhé", 2), "hé");
+    assert_eq!(char_prefix("a😀b😀c", 2), "a😀");
+    assert_eq!(char_prefix("ééé", 1), "é");
 }
