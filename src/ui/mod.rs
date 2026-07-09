@@ -445,7 +445,14 @@ impl AbcomApp {
     /// l'application quitte aussi le Dock (politique Accessory) : elle ne
     /// vit plus que dans la barre de menus.
     pub(crate) fn hide_to_tray(&mut self, ctx: &egui::Context) {
+        // Windows : on garde la fenêtre « visible » pour l'OS mais hors écran
+        // et hors barre des tâches, sinon (SW_HIDE) egui cesse d'être appelé
+        // et le menu du tray devient inerte. Ailleurs, masquage classique.
+        #[cfg(windows)]
+        tray::win::hide_offscreen();
+        #[cfg(not(windows))]
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+
         set_dock_visible(false);
         self.window_hidden = true;
         self.window_focused = false;
@@ -477,6 +484,9 @@ impl AbcomApp {
         }
         self.window_hidden = false;
         set_dock_visible(true);
+        #[cfg(windows)]
+        tray::win::restore_onscreen();
+        #[cfg(not(windows))]
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         self.emoji_decode_rx = Some(spawn_emoji_decoder());
@@ -511,7 +521,14 @@ impl AbcomApp {
 }
 
 impl eframe::App for AbcomApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // HWND natif capté une fois : permet de replier/restaurer la fenêtre
+        // au niveau OS sous Windows (voir tray::win).
+        #[cfg(windows)]
+        tray::capture_window_handle(frame);
+        #[cfg(not(windows))]
+        let _ = &frame;
+
         // Icône résidente, créée paresseusement (macOS impose le thread
         // principal avec l'event loop démarrée — c'est le cas ici).
         if self.tray.is_none() && !self.tray_init_failed {
