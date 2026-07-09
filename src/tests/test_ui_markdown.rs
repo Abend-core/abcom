@@ -120,3 +120,102 @@ fn keeps_single_line_triple_backticks_as_inline_code() {
         )])]
     );
 }
+
+#[test]
+fn parses_strikethrough_span() {
+    assert_eq!(
+        parse_markdown("un ~~barre~~ texte"),
+        vec![MarkdownBlock::Paragraph(vec![
+            MarkdownSpan::Text("un ".to_string()),
+            MarkdownSpan::Strikethrough("barre".to_string()),
+            MarkdownSpan::Text(" texte".to_string()),
+        ])]
+    );
+}
+
+#[test]
+fn parses_task_items() {
+    assert_eq!(
+        parse_markdown("- [ ] a faire\n- [x] fait"),
+        vec![
+            MarkdownBlock::TaskItem {
+                checked: false,
+                spans: vec![MarkdownSpan::Text("a faire".to_string())],
+            },
+            MarkdownBlock::TaskItem {
+                checked: true,
+                spans: vec![MarkdownSpan::Text("fait".to_string())],
+            },
+        ]
+    );
+}
+
+#[test]
+fn parses_gfm_table_with_alignments() {
+    assert_eq!(
+        parse_markdown("| Nom | Age |\n| :--- | ---: |\n| Alice | 30 |\n| Bob | 25 |"),
+        vec![MarkdownBlock::Table {
+            alignments: vec![ColumnAlignment::Left, ColumnAlignment::Right],
+            header: vec![
+                vec![MarkdownSpan::Text("Nom".to_string())],
+                vec![MarkdownSpan::Text("Age".to_string())],
+            ],
+            rows: vec![
+                vec![
+                    vec![MarkdownSpan::Text("Alice".to_string())],
+                    vec![MarkdownSpan::Text("30".to_string())],
+                ],
+                vec![
+                    vec![MarkdownSpan::Text("Bob".to_string())],
+                    vec![MarkdownSpan::Text("25".to_string())],
+                ],
+            ],
+        }]
+    );
+}
+
+#[test]
+fn table_normalizes_ragged_rows_and_keeps_inline_markup() {
+    assert_eq!(
+        parse_markdown("| a | b |\n| --- | --- |\n| **gras** |"),
+        vec![MarkdownBlock::Table {
+            alignments: vec![ColumnAlignment::None, ColumnAlignment::None],
+            header: vec![
+                vec![MarkdownSpan::Text("a".to_string())],
+                vec![MarkdownSpan::Text("b".to_string())],
+            ],
+            rows: vec![vec![
+                vec![MarkdownSpan::Strong("gras".to_string())],
+                Vec::new(),
+            ]],
+        }]
+    );
+}
+
+#[test]
+fn escaped_pipe_stays_in_table_cell() {
+    assert_eq!(
+        parse_markdown("| a | b |\n| --- | --- |\n| x \\| y | z |"),
+        vec![MarkdownBlock::Table {
+            alignments: vec![ColumnAlignment::None, ColumnAlignment::None],
+            header: vec![
+                vec![MarkdownSpan::Text("a".to_string())],
+                vec![MarkdownSpan::Text("b".to_string())],
+            ],
+            rows: vec![vec![
+                vec![MarkdownSpan::Text("x | y".to_string())],
+                vec![MarkdownSpan::Text("z".to_string())],
+            ]],
+        }]
+    );
+}
+
+#[test]
+fn pipes_without_delimiter_row_stay_paragraph() {
+    assert_eq!(
+        parse_markdown("a | b | c"),
+        vec![MarkdownBlock::Paragraph(vec![MarkdownSpan::Text(
+            "a | b | c".to_string()
+        )])]
+    );
+}
