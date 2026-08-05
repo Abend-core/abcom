@@ -4,7 +4,7 @@ version = "0.0.1"
 edition = "2021"
 description = "P2P LAN chat with automatic peer discovery and native GUI"
 license = "MIT"
-repository = "https://github.com/rxdy/abcom"
+repository = "https://github.com/Abend-core/abcom"
 
 [[bin]]
 name = "abcom"
