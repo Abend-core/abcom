@@ -145,7 +145,7 @@ pub(crate) fn render_media_progress(
                 ui.label(
                     egui::RichText::new(format_bytes(progress.total))
                         .small()
-                        .color(egui::Color32::from_gray(150)),
+                        .color(super::theme::TEXT_MUTED),
                 );
                 return;
             }
@@ -164,7 +164,7 @@ pub(crate) fn render_media_progress(
                     format_bytes(progress.total)
                 ))
                 .small()
-                .color(egui::Color32::from_gray(150)),
+                .color(super::theme::TEXT_MUTED),
             );
         });
 }
@@ -248,7 +248,7 @@ fn file_card(ui: &mut egui::Ui, media: &MediaAttachment) -> Option<MediaAction> 
                     ui.label(
                         egui::RichText::new(format_bytes(media.size_bytes))
                             .small()
-                            .color(egui::Color32::from_gray(150)),
+                            .color(super::theme::TEXT_MUTED),
                     );
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

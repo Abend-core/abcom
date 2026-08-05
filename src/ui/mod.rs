@@ -28,6 +28,7 @@ mod settings;
 mod sidebar;
 mod snapshot;
 mod sound;
+mod theme;
 pub(crate) mod tray;
 
 /// Nombre de messages affichés au départ et pas de chargement du fenêtrage
