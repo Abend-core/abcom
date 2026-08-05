@@ -169,7 +169,11 @@ impl AbcomApp {
     /// (appelé à la fermeture du picker : les frames WebP décodées des
     /// aperçus représentent plusieurs dizaines de Mo par page).
     pub(crate) fn forget_gif_previews(&self, ctx: &egui::Context) {
-        for feed in [&self.gif_feed, &self.meme_feed, &self.sticker_feed] {
+        for feed in [
+            &self.gif_picker.feed,
+            &self.gif_picker.meme_feed,
+            &self.gif_picker.sticker_feed,
+        ] {
             for item in feed.lock().items.iter() {
                 ctx.forget_image(&item.preview_url);
             }
@@ -177,16 +181,16 @@ impl AbcomApp {
     }
 
     pub(crate) fn show_gif_picker_window(&mut self, ctx: &egui::Context, gif_button_clicked: bool) {
-        if !self.show_gif_picker {
-            if self.gif_picker_was_open {
-                self.gif_picker_was_open = false;
+        if !self.gif_picker.show {
+            if self.gif_picker.was_open {
+                self.gif_picker.was_open = false;
                 self.forget_gif_previews(ctx);
             }
             return;
         }
-        self.gif_picker_was_open = true;
+        self.gif_picker.was_open = true;
         let Some(key) = crate::config::klipy_api_key() else {
-            self.show_gif_picker = false;
+            self.gif_picker.show = false;
             return;
         };
         let locale = match self.ui_language {
@@ -195,8 +199,8 @@ impl AbcomApp {
         };
 
         // Charge les tendances de l'onglet GIF dès l'ouverture.
-        if needs_init(&self.gif_feed) {
-            self.gif_feed.load_trending(ctx, &key, locale);
+        if needs_init(&self.gif_picker.feed) {
+            self.gif_picker.feed.load_trending(ctx, &key, locale);
         }
 
         let tab_gif_label = "GIF";
@@ -222,16 +226,16 @@ impl AbcomApp {
             ui.vertical_centered(|ui| {
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
-                    let tab = self.gif_picker_tab;
+                    let tab = self.gif_picker.tab;
 
                     if ui
                         .selectable_label(tab == GifPickerTab::Gif, tab_gif_label)
                         .clicked()
                         && tab != GifPickerTab::Gif
                     {
-                        self.gif_picker_tab = GifPickerTab::Gif;
-                        if needs_init(&self.gif_feed) {
-                            self.gif_feed.load_trending(ctx, &key, locale);
+                        self.gif_picker.tab = GifPickerTab::Gif;
+                        if needs_init(&self.gif_picker.feed) {
+                            self.gif_picker.feed.load_trending(ctx, &key, locale);
                         }
                     }
                     if ui
@@ -239,9 +243,9 @@ impl AbcomApp {
                         .clicked()
                         && tab != GifPickerTab::Meme
                     {
-                        self.gif_picker_tab = GifPickerTab::Meme;
-                        if needs_init(&self.meme_feed) {
-                            self.meme_feed.load_trending(ctx, &key, locale);
+                        self.gif_picker.tab = GifPickerTab::Meme;
+                        if needs_init(&self.gif_picker.meme_feed) {
+                            self.gif_picker.meme_feed.load_trending(ctx, &key, locale);
                         }
                     }
                     if ui
@@ -249,9 +253,11 @@ impl AbcomApp {
                         .clicked()
                         && tab != GifPickerTab::Sticker
                     {
-                        self.gif_picker_tab = GifPickerTab::Sticker;
-                        if needs_init(&self.sticker_feed) {
-                            self.sticker_feed.load_trending(ctx, &key, locale);
+                        self.gif_picker.tab = GifPickerTab::Sticker;
+                        if needs_init(&self.gif_picker.sticker_feed) {
+                            self.gif_picker
+                                .sticker_feed
+                                .load_trending(ctx, &key, locale);
                         }
                     }
                 });
@@ -260,7 +266,7 @@ impl AbcomApp {
 
             // ── Barre de recherche ───────────────────────────────────────────
             let edit = ui.add(
-                egui::TextEdit::singleline(&mut self.gif_query)
+                egui::TextEdit::singleline(&mut self.gif_picker.query)
                     .hint_text(search_hint)
                     .desired_width(f32::INFINITY),
             );
@@ -268,21 +274,29 @@ impl AbcomApp {
                 edit.request_focus();
             }
             if edit.changed() {
-                self.gif_last_input = std::time::Instant::now();
+                self.gif_picker.last_input = std::time::Instant::now();
             }
             ui.separator();
 
             // ── Grille de l'onglet actif ─────────────────────────────────────
-            let (c, w) = match self.gif_picker_tab {
-                GifPickerTab::Gif => {
-                    show_feed_grid(ui, &self.gif_feed, loading_label, empty_label, error_label)
-                }
-                GifPickerTab::Meme => {
-                    show_feed_grid(ui, &self.meme_feed, loading_label, empty_label, error_label)
-                }
+            let (c, w) = match self.gif_picker.tab {
+                GifPickerTab::Gif => show_feed_grid(
+                    ui,
+                    &self.gif_picker.feed,
+                    loading_label,
+                    empty_label,
+                    error_label,
+                ),
+                GifPickerTab::Meme => show_feed_grid(
+                    ui,
+                    &self.gif_picker.meme_feed,
+                    loading_label,
+                    empty_label,
+                    error_label,
+                ),
                 GifPickerTab::Sticker => show_feed_grid(
                     ui,
-                    &self.sticker_feed,
+                    &self.gif_picker.sticker_feed,
                     loading_label,
                     empty_label,
                     error_label,
@@ -311,18 +325,24 @@ impl AbcomApp {
         }
 
         // ── Debounce recherche (300 ms) sur l'onglet actif ───────────────────
-        let pending = self.gif_query.trim().to_string();
-        let feed_query = match self.gif_picker_tab {
-            GifPickerTab::Gif => self.gif_feed.lock().query.clone(),
-            GifPickerTab::Meme => self.meme_feed.lock().query.clone(),
-            GifPickerTab::Sticker => self.sticker_feed.lock().query.clone(),
+        let pending = self.gif_picker.query.trim().to_string();
+        let feed_query = match self.gif_picker.tab {
+            GifPickerTab::Gif => self.gif_picker.feed.lock().query.clone(),
+            GifPickerTab::Meme => self.gif_picker.meme_feed.lock().query.clone(),
+            GifPickerTab::Sticker => self.gif_picker.sticker_feed.lock().query.clone(),
         };
         if pending != feed_query {
-            if self.gif_last_input.elapsed() >= std::time::Duration::from_millis(300) {
-                match self.gif_picker_tab {
-                    GifPickerTab::Gif => self.gif_feed.search(ctx, &key, locale, &pending),
-                    GifPickerTab::Meme => self.meme_feed.search(ctx, &key, locale, &pending),
-                    GifPickerTab::Sticker => self.sticker_feed.search(ctx, &key, locale, &pending),
+            if self.gif_picker.last_input.elapsed() >= std::time::Duration::from_millis(300) {
+                match self.gif_picker.tab {
+                    GifPickerTab::Gif => self.gif_picker.feed.search(ctx, &key, locale, &pending),
+                    GifPickerTab::Meme => self
+                        .gif_picker
+                        .meme_feed
+                        .search(ctx, &key, locale, &pending),
+                    GifPickerTab::Sticker => self
+                        .gif_picker
+                        .sticker_feed
+                        .search(ctx, &key, locale, &pending),
                 }
             } else {
                 ctx.request_repaint_after(std::time::Duration::from_millis(300));
@@ -330,23 +350,23 @@ impl AbcomApp {
         }
 
         if want_load_more {
-            match self.gif_picker_tab {
-                GifPickerTab::Gif => self.gif_feed.load_more(ctx, &key, locale),
-                GifPickerTab::Meme => self.meme_feed.load_more(ctx, &key, locale),
-                GifPickerTab::Sticker => self.sticker_feed.load_more(ctx, &key, locale),
+            match self.gif_picker.tab {
+                GifPickerTab::Gif => self.gif_picker.feed.load_more(ctx, &key, locale),
+                GifPickerTab::Meme => self.gif_picker.meme_feed.load_more(ctx, &key, locale),
+                GifPickerTab::Sticker => self.gif_picker.sticker_feed.load_more(ctx, &key, locale),
             }
         }
 
         if let Some(gif) = chosen {
             send_gif(self, &gif);
-            self.show_gif_picker = false;
+            self.gif_picker.show = false;
         }
 
         if !gif_button_clicked && ctx.input(|i| i.pointer.any_pressed()) {
             if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
                 if let Some(rect) = picker_rect {
                     if !rect.contains(pos) {
-                        self.show_gif_picker = false;
+                        self.gif_picker.show = false;
                     }
                 }
             }

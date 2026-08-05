@@ -872,7 +872,7 @@ impl AbcomApp {
                                             };
                                         if emoji_btn.clicked() {
                                             self.show_emoji_picker = !self.show_emoji_picker;
-                                            self.show_gif_picker = false;
+                                            self.gif_picker.show = false;
                                             emoji_button_clicked = true;
                                         }
 
@@ -882,11 +882,11 @@ impl AbcomApp {
                                                 .size(10.5)
                                                 .color(egui::Color32::from_rgb(244, 245, 247)),
                                             gif_label,
-                                            self.show_gif_picker,
+                                            self.gif_picker.show,
                                         );
                                         if gif_btn.clicked() {
                                             if crate::config::klipy_api_key().is_some() {
-                                                self.show_gif_picker = !self.show_gif_picker;
+                                                self.gif_picker.show = !self.gif_picker.show;
                                                 self.show_emoji_picker = false;
                                                 gif_button_clicked = true;
                                             } else {
