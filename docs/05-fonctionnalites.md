@@ -95,8 +95,8 @@ Création par le `+` de la barre latérale (validation du nom en direct, cases �
 
 ## Fichiers et médias
 
-- **Envoi** : fichier ou dossier (compressé en ZIP à la volée, [archive.rs](../src/archive.rs)), vers un pair ou les membres d'un salon. Aucune limite pratique de taille (streaming par tranches de 64 Ko, accepté au-delà de 1 Go).
-- **Acceptation** : le destinataire reçoit une proposition, choisit d'accepter (et où enregistrer) ou de refuser. Progression affichée des deux côtés. Protection contre le path traversal à la réception.
+- **Envoi** : fichier ou dossier (compressé en ZIP à la volée, [archive.rs](../src/archive.rs)), vers un pair ou les membres d'un salon. Aucune limite pratique de taille (streaming par tranches de 60 Ko, accepté au-delà de 1 Go).
+- **Acceptation** : au-delà de 1 Go, le destinataire reçoit une proposition qu'il accepte ou refuse (sans réponse sous 120 s, le transfert est abandonné) ; en deçà, la réception est automatique. Progression affichée des deux côtés. Le fichier reçu est rangé par l'application dans son dossier `media/` ; depuis la visionneuse, le bouton « ⬇ Télécharger » en dépose une copie dans le dossier Téléchargements du système.
 - **Images** : vignette dans le fil (360×300 max, ratio préservé), visionneuse plein écran au clic.
 - **GIF, mèmes, stickers** : sélecteur Klipy à trois onglets (recherche avec anti-rebond de 300 ms, scroll infini). Le GIF est transmis **par URL** : chaque pair le charge depuis le CDN Klipy. Nécessite la clé `ABCOM_KLIPY_API_KEY` ; sans elle, le bouton GIF affiche une notification au lieu du sélecteur. Attribution « Powered by KLIPY » dans le pied du sélecteur, crédits détaillés dans Paramètres.
 

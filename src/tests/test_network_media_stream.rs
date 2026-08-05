@@ -202,3 +202,63 @@ async fn large_media_declined_writes_nothing() {
     std::fs::remove_dir_all(&media_dir).ok();
     std::fs::remove_file(&source).ok();
 }
+
+#[test]
+fn safe_media_id_accepts_normal_rejects_traversal() {
+    assert!(is_safe_media_id("1720000000-photo.png"));
+    assert!(is_safe_media_id("file_with-dots.tar.gz"));
+    assert!(!is_safe_media_id("../secret"));
+    assert!(!is_safe_media_id("a/b"));
+    assert!(!is_safe_media_id("/etc/passwd"));
+    assert!(!is_safe_media_id(".."));
+    assert!(!is_safe_media_id("."));
+    assert!(!is_safe_media_id(""));
+}
+
+#[tokio::test]
+async fn rejects_path_traversal_id_and_writes_nothing() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let media_dir = unique_dir("trav");
+
+    let (event_tx, mut event_rx) = mpsc::channel::<AppEvent>(256);
+    let (offer_tx, _offer_rx) = mpsc::channel::<MediaStreamOffer>(4);
+
+    let dir = media_dir.clone();
+    let server_ctx = test_ctx("ellis", event_tx.clone());
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        stream_in(stream, server_ctx, offer_tx, dir).await
+    });
+
+    let source = std::env::temp_dir().join(format!("abcom_trav_src_{}.bin", std::process::id()));
+    std::fs::write(&source, vec![7u8; 20_000]).unwrap();
+
+    // Un pair malveillant annonce un id qui tenterait de sortir de `media/`.
+    let job = MediaSendJob {
+        to_addr: format!("127.0.0.1:{}", port - 1).parse().unwrap(),
+        source_path: source.clone(),
+        header: header("../../../../tmp/abcom_evil", 20_000, false),
+    };
+
+    let client_ctx = test_ctx("bob", event_tx.clone());
+    let _ = stream_out(&job, &client_ctx).await; // peut échouer : le serveur coupe
+
+    // Le serveur rejette l'en-tête avant toute écriture : erreur, aucun dossier
+    // `media/` créé, aucune réception annoncée à l'UI.
+    assert!(
+        server.await.unwrap().is_err(),
+        "un id de path traversal doit être rejeté"
+    );
+    assert!(!media_dir.exists(), "aucun fichier ne doit être écrit");
+    let mut incoming = false;
+    while let Ok(event) = event_rx.try_recv() {
+        if let AppEvent::MediaIncoming(_) = event {
+            incoming = true;
+        }
+    }
+    assert!(!incoming, "aucune réception ne doit démarrer");
+
+    std::fs::remove_dir_all(&media_dir).ok();
+    std::fs::remove_file(&source).ok();
+}

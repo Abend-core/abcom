@@ -34,7 +34,7 @@ L'annonce transporte l'empreinte de clé **avant** toute connexion TCP : l'assoc
 
 **Passphrase de salon (optionnelle).** Si la variable `ABCOM_PASSPHRASE` est définie (environnement ou fichier `.env`), le handshake passe en `XXpsk3` avec un secret pré-partagé dérivé de la passphrase (BLAKE2s). Sans la bonne passphrase, aucun handshake n'aboutit : c'est un moyen simple de cloisonner un groupe de machines sur un réseau partagé. L'état (actif ou non) est visible dans Paramètres → Profil. Tous les pairs doivent partager la même valeur.
 
-**Médias.** Le port média utilise la même mécanique (handshake Noise, trames chiffrées). Les fichiers sont découpés en tranches de 64 Ko ; la progression est signalée à l'UI au plus toutes les 100 ms pour ne pas plafonner le débit sur la boucle de rendu.
+**Médias.** Le port média utilise la même mécanique (handshake Noise, trames chiffrées). Les fichiers sont découpés en tranches de 60 Ko ; la progression est signalée à l'UI au plus toutes les 100 ms pour ne pas plafonner le débit sur la boucle de rendu.
 
 ## Types de paquets
 
