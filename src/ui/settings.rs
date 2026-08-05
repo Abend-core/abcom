@@ -40,7 +40,7 @@ impl AbcomApp {
     /// remplace l'ancien bandeau supérieur. Un bandeau d'onglets permet de
     /// naviguer entre Général, Crédits et Licence.
     pub(crate) fn render_settings(&mut self, ctx: &egui::Context) {
-        if !self.show_settings {
+        if !self.modals.settings_open {
             return;
         }
 
@@ -104,7 +104,7 @@ impl AbcomApp {
         // ne change pas de dimensions quand on bascule d'un onglet à l'autre.
         const SETTINGS_SIZE: egui::Vec2 = egui::vec2(640.0, 480.0);
 
-        let mut open = self.show_settings;
+        let mut open = self.modals.settings_open;
         egui::Window::new(title)
             .open(&mut open)
             .resizable(false)
@@ -127,17 +127,17 @@ impl AbcomApp {
                         (SettingsTab::License, license_label),
                     ] {
                         if ui
-                            .selectable_label(self.settings_tab == tab, label)
+                            .selectable_label(self.modals.settings_tab == tab, label)
                             .clicked()
                         {
-                            self.settings_tab = tab;
+                            self.modals.settings_tab = tab;
                         }
                     }
                 });
                 ui.separator();
                 ui.add_space(8.0);
 
-                match self.settings_tab {
+                match self.modals.settings_tab {
                     SettingsTab::Profile => {
                         ui.label(egui::RichText::new(profile_heading).strong());
                         ui.add_space(8.0);
@@ -421,7 +421,7 @@ impl AbcomApp {
                     }
                 }
             });
-        self.show_settings = open;
+        self.modals.settings_open = open;
 
         // Application différée des actions de l'onglet Profil (hors closure pour
         // éviter tout emprunt concurrent de `self`).

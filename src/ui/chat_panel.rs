@@ -809,7 +809,7 @@ impl AbcomApp {
                             .button(self.tr("👥 Voir les participants", "👥 View participants"))
                             .clicked()
                         {
-                            self.show_participants = true;
+                            self.modals.participants_open = true;
                             ui.close_menu();
                         }
                         if let Some(gname) = &selected_group_name {
@@ -817,8 +817,8 @@ impl AbcomApp {
                                 .button(self.tr("⚙ Gérer le groupe", "⚙ Manage group"))
                                 .clicked()
                             {
-                                self.group_manage_target = Some(gname.clone());
-                                self.group_manage_confirm = None;
+                                self.modals.group_manage_target = Some(gname.clone());
+                                self.modals.group_manage_confirm = None;
                                 ui.close_menu();
                             }
                         }
@@ -827,7 +827,7 @@ impl AbcomApp {
                                 .button(self.tr("Renommer ce contact", "Rename contact"))
                                 .clicked()
                             {
-                                self.rename_input = self
+                                self.modals.rename_input = self
                                     .state
                                     .lock()
                                     .unwrap()
@@ -836,7 +836,7 @@ impl AbcomApp {
                                     .find(|r| &r.username == user)
                                     .and_then(|r| r.alias.clone())
                                     .unwrap_or_default();
-                                self.rename_target = Some(user.clone());
+                                self.modals.rename_target = Some(user.clone());
                                 ui.close_menu();
                             }
                         }
@@ -854,7 +854,7 @@ impl AbcomApp {
             ui.separator();
 
             // Popup participants (instantané depuis le cache latéral).
-            if self.show_participants {
+            if self.modals.participants_open {
                 let conv_name = self
                     .sidebar_cache
                     .selected_conversation
@@ -874,7 +874,7 @@ impl AbcomApp {
                             .find(|g| g.name == name)
                             .cloned()
                     });
-                let mut open = self.show_participants;
+                let mut open = self.modals.participants_open;
                 egui::Window::new(self.tr("Participants", "Participants"))
                     .open(&mut open)
                     .resizable(false)
@@ -926,13 +926,13 @@ impl AbcomApp {
                             }
                         }
                     });
-                self.show_participants = open;
+                self.modals.participants_open = open;
             }
 
             // Modale de renommage de contact
-            if let Some(target) = self.rename_target.clone() {
+            if let Some(target) = self.modals.rename_target.clone() {
                 // Libellés calculés avant la closure (évite d'emprunter `self`
-                // pendant qu'on édite `self.rename_input`).
+                // pendant qu'on édite `self.modals.rename_input`).
                 let title = self.tr("Renommer le contact", "Rename contact");
                 let lbl_original = self.tr("Nom d'origine", "Original name");
                 let hint = self.tr("Alias (vide = retirer)", "Alias (empty = remove)");
@@ -951,7 +951,7 @@ impl AbcomApp {
                         ui.label(format!("{}: {}", lbl_original, target));
                         ui.add_space(6.0);
                         ui.add(
-                            egui::TextEdit::singleline(&mut self.rename_input)
+                            egui::TextEdit::singleline(&mut self.modals.rename_input)
                                 .hint_text(hint)
                                 .desired_width(240.0),
                         );
@@ -963,15 +963,15 @@ impl AbcomApp {
                     });
 
                 if do_save {
-                    let trimmed = self.rename_input.trim();
+                    let trimmed = self.modals.rename_input.trim();
                     let alias = (!trimmed.is_empty()).then(|| trimmed.to_string());
                     self.state.lock_safe().set_peer_alias(&target, alias);
-                    self.rename_target = None;
+                    self.modals.rename_target = None;
                 } else if do_clear {
                     self.state.lock_safe().set_peer_alias(&target, None);
-                    self.rename_target = None;
+                    self.modals.rename_target = None;
                 } else if !open {
-                    self.rename_target = None;
+                    self.modals.rename_target = None;
                 }
             }
 

@@ -42,8 +42,8 @@ impl AbcomApp {
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if gear_button(ui).on_hover_text(settings_tip).clicked() {
-                                self.settings_tab = super::SettingsTab::General;
-                                self.show_settings = true;
+                                self.modals.settings_tab = super::SettingsTab::General;
+                                self.modals.settings_open = true;
                             }
                         });
                     });
@@ -215,9 +215,9 @@ impl AbcomApp {
                     .on_hover_text(self.tr("Créer un groupe", "Create a group"))
                     .clicked()
                 {
-                    self.show_group_modal = true;
-                    self.group_name_input.clear();
-                    self.group_members_selected.clear();
+                    self.modals.group_modal_open = true;
+                    self.modals.group_name_input.clear();
+                    self.modals.group_members_selected.clear();
                 }
             });
         });
