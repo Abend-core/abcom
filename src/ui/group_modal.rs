@@ -49,7 +49,7 @@ impl AbcomApp {
     fn send_group_event(&self, addrs: &[std::net::SocketAddr], action: GroupAction) {
         let event = GroupEvent { action };
         for addr in addrs {
-            let _ = self.send_group_tx.try_send(SendGroupRequest {
+            let _ = self.net.send_group_tx.try_send(SendGroupRequest {
                 to_addr: *addr,
                 event: event.clone(),
             });

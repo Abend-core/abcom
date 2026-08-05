@@ -71,7 +71,7 @@ impl AbcomApp {
     /// Dépile les événements réseau reçus depuis les tâches tokio
     pub(crate) fn process_events(&mut self) {
         let mut s = self.state.lock_safe();
-        while let Ok(evt) = self.event_rx.try_recv() {
+        while let Ok(evt) = self.net.event_rx.try_recv() {
             match evt {
                 AppEvent::MessageReceived(msg) => {
                     // Message de salon : `to_user` porte la clé `#nom`. Un salon
@@ -142,10 +142,10 @@ impl AbcomApp {
 
                             drop(s);
                             for req in ack_reqs {
-                                let _ = self.send_ack_tx.try_send(req);
+                                let _ = self.net.send_ack_tx.try_send(req);
                             }
                             for req in receipt_reqs {
-                                let _ = self.send_read_receipt_tx.try_send(req);
+                                let _ = self.net.send_read_receipt_tx.try_send(req);
                             }
                             s = self.state.lock_safe();
                         }
@@ -199,7 +199,7 @@ impl AbcomApp {
                         })
                         .collect();
                     for event in sync_events {
-                        let _ = self.send_group_tx.try_send(SendGroupRequest {
+                        let _ = self.net.send_group_tx.try_send(SendGroupRequest {
                             to_addr: addr,
                             event,
                         });
@@ -212,7 +212,7 @@ impl AbcomApp {
                                 to_addr: addr,
                                 announce,
                             };
-                            if self.send_avatar_tx.try_send(request).is_ok() {
+                            if self.net.send_avatar_tx.try_send(request).is_ok() {
                                 self.avatar_sent_to.insert(username);
                             }
                         }
