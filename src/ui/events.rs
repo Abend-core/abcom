@@ -357,8 +357,8 @@ impl AbcomApp {
                     if progress.failed {
                         // Refus ou erreur : on retire la carte, le message et le
                         // fichier (côté émetteur comme destinataire).
-                        self.media_progress.remove(&id);
-                        self.media_textures.remove(&id);
+                        self.media.progress.remove(&id);
+                        self.media.textures.remove(&id);
                         s.remove_media_message(&id);
                         self.last_notification = Some(
                             self.tr("Transfert média interrompu", "Media transfer interrupted")
@@ -366,18 +366,18 @@ impl AbcomApp {
                         );
                         self.notification_time = std::time::Instant::now();
                     } else if progress.finished {
-                        self.media_progress.remove(&id);
+                        self.media.progress.remove(&id);
                         // Le fichier est complet : recharger une éventuelle vignette.
-                        self.media_textures.remove(&id);
+                        self.media.textures.remove(&id);
                     } else {
-                        self.media_progress.insert(id, progress);
+                        self.media.progress.insert(id, progress);
                     }
                 }
                 AppEvent::MediaDeclined(header) => {
                     // Côté émetteur : on retire la carte « en attente » et on
                     // annote le fil que le fichier a été refusé.
-                    self.media_progress.remove(&header.media.id);
-                    self.media_textures.remove(&header.media.id);
+                    self.media.progress.remove(&header.media.id);
+                    self.media.textures.remove(&header.media.id);
                     s.remove_media_message(&header.media.id);
                     s.add_message(super::media::refused_media_message(
                         &header.from,
@@ -394,7 +394,7 @@ impl AbcomApp {
     /// Récupère les offres de médias volumineux (> 1 Go) en attente d'accord et
     /// les ajoute au bandeau d'acceptation.
     pub(crate) fn process_media_offers(&mut self) {
-        while let Ok(offer) = self.media_offer_rx.try_recv() {
+        while let Ok(offer) = self.media.offer_rx.try_recv() {
             let label = self.tr("vous envoie un fichier", "is sending you a file");
             self.last_notification = Some(format!("{} {}", offer.from, label));
             self.notification_time = std::time::Instant::now();
@@ -404,7 +404,7 @@ impl AbcomApp {
             } else if self.enable_sound_notifications {
                 play_notification_sound();
             }
-            self.pending_media_offers.push(offer);
+            self.media.pending_offers.push(offer);
         }
     }
 

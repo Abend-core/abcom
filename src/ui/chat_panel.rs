@@ -1153,7 +1153,7 @@ impl AbcomApp {
                                             &self.emoji.map,
                                             &self.emoji.textures,
                                             &media_textures,
-                                            &self.media_progress,
+                                            &self.media.progress,
                                         );
                                         collapse_toggled |= toggled;
                                         if let Some(action) = media_action {
@@ -1197,7 +1197,7 @@ impl AbcomApp {
                                         &self.emoji.map,
                                         &self.emoji.textures,
                                         &media_textures,
-                                        &self.media_progress,
+                                        &self.media.progress,
                                     );
                                     collapse_toggled |= toggled;
                                     if let Some(action) = media_action {
@@ -1374,7 +1374,7 @@ impl AbcomApp {
 
             // Application des actions médias collectées pendant le rendu.
             if let Some(id) = media_view_open {
-                self.media_viewer = Some(id);
+                self.media.viewer = Some(id);
             }
             if let Some((id, filename)) = media_download {
                 self.download_media(&id, &filename);
@@ -1385,12 +1385,12 @@ impl AbcomApp {
     /// Bandeaux d'acceptation des médias volumineux (> 1 Go) reçus. Accepter →
     /// le pair streame alors le média ; Refuser → l'envoi est abandonné.
     fn render_media_offers(&mut self, ui: &mut egui::Ui) {
-        if self.pending_media_offers.is_empty() {
+        if self.media.pending_offers.is_empty() {
             return;
         }
         let mut decided: Option<(usize, bool)> = None;
 
-        for (index, offer) in self.pending_media_offers.iter().enumerate() {
+        for (index, offer) in self.media.pending_offers.iter().enumerate() {
             ui.add_space(6.0);
             egui::Frame::group(ui.style())
                 .fill(egui::Color32::from_rgb(48, 52, 60))
@@ -1428,7 +1428,7 @@ impl AbcomApp {
         }
 
         if let Some((index, accept)) = decided {
-            let offer = self.pending_media_offers.remove(index);
+            let offer = self.media.pending_offers.remove(index);
             if !accept {
                 // Refus : annoter le fil (message attribué à l'expéditeur).
                 let mut s = self.state.lock_safe();

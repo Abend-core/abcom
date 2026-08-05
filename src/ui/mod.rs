@@ -163,6 +163,29 @@ pub(crate) struct ModalsState {
     pub(crate) settings_tab: SettingsTab,
 }
 
+/// État des médias du fil : caches de textures (éviction LRU), visionneuse
+/// plein écran, et réception/décision des offres de transfert volumineux.
+pub(crate) struct MediaState {
+    /// Textures des médias image, indexées par identifiant (None = échec/non-image).
+    pub(crate) textures: std::collections::HashMap<String, Option<egui::TextureHandle>>,
+    /// Identifiant du média affiché en grand dans la visionneuse (None = fermée).
+    pub(crate) viewer: Option<String>,
+    /// Réception des offres de médias volumineux (> 1 Go) à accepter/refuser.
+    pub(crate) offer_rx: mpsc::Receiver<MediaStreamOffer>,
+    /// Offres de médias volumineux en attente de décision (bandeau).
+    pub(crate) pending_offers: Vec<MediaStreamOffer>,
+    /// Progression des transferts média en cours, par identifiant.
+    pub(crate) progress: std::collections::HashMap<String, MediaProgress>,
+    /// URLs des GIFs actuellement dans le fil rendu : celles qui en sortent
+    /// (changement de conversation, drain) sont retirées du cache d'images.
+    pub(crate) known_gif_urls: std::collections::HashSet<String>,
+    /// Ordre d'accès des textures médias (éviction LRU, cf. `media_texture`).
+    pub(crate) texture_lru: Vec<String>,
+    /// Texture pleine résolution de la visionneuse, libérée à sa fermeture
+    /// (le fil n'affiche que des textures réduites).
+    pub(crate) viewer_texture: Option<(String, egui::TextureHandle)>,
+}
+
 /// État de l'application UI
 pub(crate) struct AbcomApp {
     pub(crate) state: Arc<Mutex<AppState>>,
@@ -212,16 +235,7 @@ pub(crate) struct AbcomApp {
     pub(crate) avatar_sent_to: std::collections::HashSet<String>,
     /// Sélection d'image de profil différée (sélecteur natif, voir `update`).
     pub(crate) pending_avatar_pick: bool,
-    /// Textures des médias image, indexées par identifiant (None = échec/non-image).
-    pub(crate) media_textures: std::collections::HashMap<String, Option<egui::TextureHandle>>,
-    /// Identifiant du média affiché en grand dans la visionneuse (None = fermée).
-    pub(crate) media_viewer: Option<String>,
-    /// Réception des offres de médias volumineux (> 1 Go) à accepter/refuser.
-    pub(crate) media_offer_rx: mpsc::Receiver<MediaStreamOffer>,
-    /// Offres de médias volumineux en attente de décision (bandeau).
-    pub(crate) pending_media_offers: Vec<MediaStreamOffer>,
-    /// Progression des transferts média en cours, par identifiant.
-    pub(crate) media_progress: std::collections::HashMap<String, MediaProgress>,
+    pub(crate) media: MediaState,
     /// Ligne dont la barre d'actions au survol est affichée : (index absolu
     /// dans le fil, hash du message). L'index désambiguïse les messages au
     /// hash identique (anciens messages sans nonce) : une seule barre à la fois.
@@ -260,14 +274,6 @@ pub(crate) struct AbcomApp {
     /// Une page d'historique plus ancienne est en cours de chargement
     /// (évite les demandes répétées pendant le vol de la requête).
     pub(crate) loading_older: bool,
-    /// URLs des GIFs actuellement dans le fil rendu : celles qui en sortent
-    /// (changement de conversation, drain) sont retirées du cache d'images.
-    pub(crate) known_gif_urls: std::collections::HashSet<String>,
-    /// Ordre d'accès des textures médias (éviction LRU, cf. `media_texture`).
-    pub(crate) media_texture_lru: Vec<String>,
-    /// Texture pleine résolution de la visionneuse, libérée à sa fermeture
-    /// (le fil n'affiche que des textures réduites).
-    pub(crate) viewer_texture: Option<(String, egui::TextureHandle)>,
 }
 
 impl AbcomApp {
@@ -316,9 +322,16 @@ impl AbcomApp {
                 send_reaction_tx,
                 send_media_tx,
             },
-            media_offer_rx,
-            pending_media_offers: Vec::new(),
-            media_progress: std::collections::HashMap::new(),
+            media: MediaState {
+                textures: std::collections::HashMap::new(),
+                viewer: None,
+                offer_rx: media_offer_rx,
+                pending_offers: Vec::new(),
+                progress: std::collections::HashMap::new(),
+                known_gif_urls: std::collections::HashSet::new(),
+                texture_lru: Vec::new(),
+                viewer_texture: None,
+            },
             composer: ComposerState {
                 text: String::new(),
                 cursor_char: 0,
@@ -377,8 +390,6 @@ impl AbcomApp {
             avatar_textures: std::collections::HashMap::new(),
             avatar_sent_to: std::collections::HashSet::new(),
             pending_avatar_pick: false,
-            media_textures: std::collections::HashMap::new(),
-            media_viewer: None,
             hover_toolbar_target: None,
             reaction_picker_open: None,
             recent_reaction_emojis: DEFAULT_RECENT_EMOJIS
@@ -402,9 +413,6 @@ impl AbcomApp {
             chat_visible_count: CHAT_WINDOW_STEP,
             chat_prepend_fix: None,
             loading_older: false,
-            known_gif_urls: std::collections::HashSet::new(),
-            media_texture_lru: Vec::new(),
-            viewer_texture: None,
         }
     }
 
@@ -509,12 +517,12 @@ impl AbcomApp {
         self.window_focused = false;
 
         // Purge mémoire : textures GPU et caches d'images.
-        self.media_textures.clear();
-        self.media_texture_lru.clear();
+        self.media.textures.clear();
+        self.media.texture_lru.clear();
         self.avatar_textures.clear();
-        self.viewer_texture = None;
-        self.media_viewer = None;
-        for url in &self.known_gif_urls {
+        self.media.viewer_texture = None;
+        self.media.viewer = None;
+        for url in &self.media.known_gif_urls {
             ctx.forget_image(url);
         }
         self.forget_gif_previews(ctx);
@@ -656,10 +664,14 @@ impl eframe::App for AbcomApp {
                 }
                 // Les GIFs sortis du fil (changement de conversation ou
                 // expiration du ring-buffer) libèrent leurs frames décodées.
-                for url in self.known_gif_urls.difference(&self.chat_cache.gif_urls) {
+                for url in self
+                    .media
+                    .known_gif_urls
+                    .difference(&self.chat_cache.gif_urls)
+                {
                     ctx.forget_image(url);
                 }
-                self.known_gif_urls = self.chat_cache.gif_urls.clone();
+                self.media.known_gif_urls = self.chat_cache.gif_urls.clone();
             }
         }
 
