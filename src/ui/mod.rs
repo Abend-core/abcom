@@ -539,7 +539,7 @@ impl eframe::App for AbcomApp {
             );
             if self.tray.is_none() {
                 self.tray_init_failed = true;
-                eprintln!("[tray] Icône résidente indisponible : la croix quittera l'application");
+                tracing::warn!("icône résidente indisponible : la croix quittera l'application");
             }
         }
 
@@ -681,7 +681,7 @@ impl eframe::App for AbcomApp {
                         self.broadcast_my_avatar();
                     }
                     Err(e) => {
-                        eprintln!("[ui] Avatar non chargé : {}", e);
+                        tracing::warn!("avatar non chargé : {}", e);
                         self.last_notification = Some(error_msg.to_string());
                         self.notification_time = std::time::Instant::now();
                     }
@@ -747,12 +747,12 @@ fn build_fonts() -> egui::FontDefinitions {
 
 fn app_icon_data() -> Option<egui::IconData> {
     let data = include_bytes!("../../assets/app_icon.png");
-    eprintln!("[ui] Chargement icône PNG ({} bytes)", data.len());
+    tracing::debug!("chargement icône PNG ({} bytes)", data.len());
     match image::load_from_memory(data) {
         Ok(img) => {
             let rgba = img.to_rgba8();
             let (w, h) = rgba.dimensions();
-            eprintln!("[ui] Icône chargée : {}x{}", w, h);
+            tracing::debug!("icône chargée : {}x{}", w, h);
             Some(egui::IconData {
                 rgba: rgba.to_vec(),
                 width: w,
@@ -760,7 +760,7 @@ fn app_icon_data() -> Option<egui::IconData> {
             })
         }
         Err(err) => {
-            eprintln!("[ui] Erreur icône PNG : {}", err);
+            tracing::warn!("erreur icône PNG : {}", err);
             let mut rgba = vec![0u8; 32 * 32 * 4];
             for i in 0..(32 * 32) {
                 rgba[i * 4] = 200;
@@ -843,8 +843,8 @@ pub fn run(
         }),
     )
     .map_err(|e| {
-        eprintln!("Erreur GUI : {}", e);
-        eprintln!("Sur WSL sans GPU, utilisez make run-windows.");
+        tracing::error!("erreur GUI : {}", e);
+        tracing::error!("sur WSL sans GPU, utilisez make run-windows.");
         anyhow::anyhow!("Échec GUI : {}", e)
     })?;
 

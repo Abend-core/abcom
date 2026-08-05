@@ -38,8 +38,8 @@ impl NetContext {
 impl NetContext {
     /// Signale à l'UI qu'une clé de pair a changé (connexion refusée).
     pub async fn report_key_mismatch(&self, username: &str) {
-        eprintln!(
-            "[secure] Clé inattendue pour « {username} » : connexion refusée (usurpation possible ?)"
+        tracing::warn!(
+            "clé inattendue pour « {username} » : connexion refusée (usurpation possible ?)"
         );
         let _ = self
             .event_tx

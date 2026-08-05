@@ -18,6 +18,13 @@ mod ui;
 mod util;
 
 fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "abcom=info".into()),
+        )
+        .init();
+
     if let Ok(content) = std::fs::read_to_string(".env") {
         for line in content.lines() {
             let line = line.trim();
@@ -90,7 +97,7 @@ fn main() -> anyhow::Result<()> {
         .map(|p| network::secure::derive_psk(p.trim()));
     let psk_active = psk.is_some();
     if psk_active {
-        eprintln!("[secure] Passphrase de salon active (handshake XXpsk3)");
+        tracing::info!("passphrase de salon active (handshake XXpsk3)");
     }
 
     let net_ctx = Arc::new(network::NetContext {

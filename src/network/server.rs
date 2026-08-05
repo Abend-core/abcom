@@ -18,7 +18,7 @@ pub async fn run_server(ctx: Arc<NetContext>) {
     let listener = match TcpListener::bind(format!("0.0.0.0:{}", config::chat_port())).await {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("[network] Erreur de bind TCP: {}", e);
+            tracing::error!("erreur de bind TCP : {}", e);
             return;
         }
     };
@@ -33,7 +33,7 @@ pub async fn run_server_on(listener: TcpListener, ctx: Arc<NetContext>) {
                 let ctx = ctx.clone();
                 tokio::spawn(async move {
                     if let Err(e) = handle_incoming(stream, ctx).await {
-                        eprintln!("[network] Connexion entrante terminée : {e}");
+                        tracing::debug!("connexion entrante terminée : {e}");
                     }
                 });
             }
@@ -87,10 +87,7 @@ async fn dispatch_packet(bytes: &[u8], tx: &tokio::sync::mpsc::Sender<AppEvent>)
         Ok(NetworkPacket::Reaction(event)) => {
             let _ = tx.send(AppEvent::ReactionReceived(event)).await;
         }
-        Err(_) => eprintln!(
-            "[network] Paquet entrant non reconnu ({} bytes)",
-            bytes.len()
-        ),
+        Err(_) => tracing::warn!("paquet entrant non reconnu ({} bytes)", bytes.len()),
     }
 }
 

@@ -54,7 +54,7 @@ pub async fn run(username: String, pubkey_hex: String, tx: Sender<AppEvent>) {
     let socket = match bind_discovery_socket() {
         Ok(s) => s,
         Err(e) => {
-            eprintln!("[discovery] Erreur de bind: {}", e);
+            tracing::error!("erreur de bind : {}", e);
             return;
         }
     };

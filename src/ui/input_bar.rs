@@ -264,7 +264,7 @@ fn send_one_media(
         if let Err(e) =
             prepare_and_stream(&state, &send_media_tx, &path, &my_name, &to_user, &targets)
         {
-            eprintln!("[ui] préparation média échouée ({}): {}", path.display(), e);
+            tracing::warn!("préparation média échouée ({}): {}", path.display(), e);
         }
     });
 }
