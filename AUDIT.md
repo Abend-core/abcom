@@ -1,11 +1,34 @@
 # Audit qualité — abcom
 
 > Checklist complète des améliorations pour un projet propre au maximum.
-> État au 7 juillet 2026, branche `refactor/input-bar-layout`. Seconde passe
-> approfondie incluse : lecture ligne à ligne de `network/` (pool, découverte,
-> handshake, streaming média), `identity.rs`, `main.rs` et `storage.rs`.
+> **Révisé le 5 août 2026, branche `dev`** (passe initiale : 7 juillet 2026).
+> Seconde passe approfondie incluse : lecture ligne à ligne de `network/` (pool,
+> découverte, handshake, streaming média), `identity.rs`, `main.rs` et `storage.rs`.
 > Priorités : 🔴 important (correctif ou dette bloquante) · 🟠 recommandé · 🟢 confort/finition.
 > Chaque point référence les fichiers concernés ; cocher au fur et à mesure.
+>
+> **Un plan d'exécution détaillé et séquencé — pensé pour être déroulé pas à pas —
+> est dans [`PLAN-MAINTENABILITE.md`](PLAN-MAINTENABILITE.md).**
+
+### Revérification du 5 août 2026 (branche `dev`)
+
+Métriques recomptées sur le code actuel — **inchangées** depuis le 7 juillet sauf mention :
+
+| Signal | 07/07 | 05/08 | État |
+|--------|-------|-------|------|
+| `unwrap`/`expect`/`panic!` hors tests | 62 | **62** | inchangé |
+| dont `lock().unwrap()` | 55 | **55** | inchangé |
+| `eprintln!`/`println!` de prod | 34 | **34** | inchangé |
+| `#[allow(dead_code)]` | 16 | **16** | inchangé |
+| `let _ = …` (erreurs silencées) | — | **61** | mesuré |
+| Tests (`#[test]`/`#[tokio::test]`) | 259 | **272** | +13 |
+| `clippy -D warnings` / `fmt --check` | vert | **vert** | CI bloquante OK |
+| Plus gros fichier (`chat_panel.rs`) | 1 506 | **1 522** | +16 |
+
+**Corrigé depuis (à cocher ci-dessous) :** ✅ la traversée de répertoire à la
+réception de média est fermée par `is_safe_media_id` (`media_stream.rs`, PR #28) —
+**S1 résolu**. Toujours ouverts : S2 (vérif `from` == pair authentifié), R1 (retry
+réel, encore un `eprintln!` stub à `events.rs:418`), R2/R3/R4 et toute la dette §2.
 
 ---
 
@@ -39,9 +62,11 @@
 - [ ] 🟠 Purger les **16 `#[allow(dead_code)]`** : soit le code sert (le brancher), soit
   il meurt (`app/receipts.rs::is_message_pending`, `app/messages.rs::get_conversations`,
   `composer/cursor.rs` entier, etc.).
-- [ ] 🟠 Découper les gros fichiers UI : `chat_panel.rs` (1 506 lignes),
-  `input_bar.rs` (1 164), `ui/mod.rs` (898). Extraire par exemple le rendu d'une ligne
-  de fil, la barre de survol, et le popup notifications dans des sous-modules.
+- [ ] 🟠 Découper les gros fichiers UI : `chat_panel.rs` (1 522 lignes),
+  `input_bar.rs` (1 164), `markdown.rs` (996), `composer/mod.rs` (927), `ui/mod.rs` (915).
+  Extraire par exemple le rendu d'une ligne de fil, la barre de survol, et le popup
+  notifications dans des sous-modules (le modèle `composer/` — cursor/text_ops/shortcode/
+  render — est à répliquer).
 - [ ] 🟠 Dédupliquer le scan d'emojis : `markdown.rs::is_text_emoji_only`,
   `emoji_picker.rs::render_inline` et `composer/mod.rs::composer_caret_positions`
   réimplémentent tous trois la même itération « séquence de 2 puis 1 caractères dans
@@ -154,13 +179,11 @@
   (avant tout épinglage TOFU) la victime épingle la mauvaise clé. Le TOFU protège les
   rencontres suivantes, pas la première. Documenter cette limite et envisager une
   signature de l'annonce par la clé privée.
-- [ ] 🔴 **Traversée de répertoire à la réception de média** : l'`id` d'un média est
-  assaini à l'émission (`ui/media.rs::media_id` remplace `/` et les caractères non sûrs
-  par `_`), mais **le récepteur écrit `media_dir.join(&header.media.id)` sans ré-assainir**
-  (`network/media_stream.rs:258`) — or `header` vient brut du réseau. Un pair malveillant
-  peut forger un `id` avec des `/` (ou `..`) et faire écrire le fichier reçu hors du
-  dossier `media/`. Ré-assainir `id` et `filename` côté réception, ou rejeter tout
-  séparateur de chemin et `..`.
+- [x] 🔴 **Traversée de répertoire à la réception de média** — ✅ **Résolu (PR #28).**
+  Le récepteur valide désormais l'`id` via `is_safe_media_id` avant tout écriture
+  (`network/media_stream.rs:246`) et rejette tout composant de chemin non simple
+  (`.`, `..`, séparateurs). *(Constat initial : `media_dir.join(&header.media.id)` était
+  écrit sans ré-assainir un `header` venu brut du réseau.)*
 - [ ] 🟠 TOFU : le changement de clé déclenche bien alerte + refus (`Trust::Mismatch`),
   mais il n'existe **aucun flux de ré-appairage légitime** (réinstallation d'un pair) —
   l'utilisateur est bloqué sans passer par la suppression manuelle des données. Ajouter
@@ -384,7 +407,7 @@
 
 | # | Chantier | Fichiers principaux |
 |---|----------|--------------------|
-| S1 | Traversée de répertoire à la réception de média (`id` non ré-assaini) | `network/media_stream.rs`, `ui/media.rs` |
+| ~~S1~~ | ~~Traversée de répertoire à la réception de média~~ — ✅ **résolu (PR #28)** | `network/media_stream.rs` |
 | S2 | Vérifier `from` == pair authentifié, chat **et** média (anti-usurpation) | `network/server.rs`, `network/media_stream.rs` |
 | S3 | Première rencontre TOFU : username non lié à la clé en découverte | `discovery.rs`, `message/` |
 
