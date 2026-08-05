@@ -884,14 +884,18 @@ fn render_table_row(
         // ligne (marges déjà déduites) : identique pour l'en-tête et le corps,
         // donc les colonnes restent alignées et le tableau ne déborde jamais.
         let avail = ui.available_width() - 0.5;
-        let col_width = ((avail - TABLE_COL_GAP * (columns as f32 - 1.0)) / columns as f32).max(24.0);
+        let col_width =
+            ((avail - TABLE_COL_GAP * (columns as f32 - 1.0)) / columns as f32).max(24.0);
 
         ui.with_layout(egui::Layout::left_to_right(egui::Align::TOP), |ui| {
             ui.spacing_mut().item_spacing.x = TABLE_COL_GAP;
             let empty = Vec::new();
             for column in 0..columns {
                 let spans = cells.get(column).unwrap_or(&empty);
-                let alignment = alignments.get(column).copied().unwrap_or(ColumnAlignment::None);
+                let alignment = alignments
+                    .get(column)
+                    .copied()
+                    .unwrap_or(ColumnAlignment::None);
                 let cross = match alignment {
                     ColumnAlignment::Right => egui::Align::RIGHT,
                     ColumnAlignment::Center => egui::Align::Center,
