@@ -1,55 +1,85 @@
 # Audit qualité — abcom
 
 > Checklist complète des améliorations pour un projet propre au maximum.
-> État au 7 juillet 2026, branche `refactor/input-bar-layout`. Seconde passe
-> approfondie incluse : lecture ligne à ligne de `network/` (pool, découverte,
-> handshake, streaming média), `identity.rs`, `main.rs` et `storage.rs`.
+> **Révisé le 5 août 2026, branche `dev`** (passe initiale : 7 juillet 2026).
+> Seconde passe approfondie incluse : lecture ligne à ligne de `network/` (pool,
+> découverte, handshake, streaming média), `identity.rs`, `main.rs` et `storage.rs`.
 > Priorités : 🔴 important (correctif ou dette bloquante) · 🟠 recommandé · 🟢 confort/finition.
 > Chaque point référence les fichiers concernés ; cocher au fur et à mesure.
+>
+> **Un plan d'exécution détaillé et séquencé — pensé pour être déroulé pas à pas —
+> est dans [`PLAN-MAINTENABILITE.md`](PLAN-MAINTENABILITE.md).**
+
+### Revérification du 5 août 2026 (branche `dev`)
+
+Métriques recomptées sur le code actuel — **inchangées** depuis le 7 juillet sauf mention :
+
+| Signal | 07/07 | 05/08 (avant) | 05/08 (après P1-P6) | État |
+|--------|-------|----------------|----------------------|------|
+| `unwrap`/`expect`/`panic!` hors tests | 62 | 62 | **~7** (hors `lock_safe`) | ✅ P2 |
+| dont `lock().unwrap()` | 55 | 55 | **0** | ✅ P2 |
+| `eprintln!`/`println!` de prod | 34 | 34 | **0** (`tracing`) | ✅ P3 |
+| `#[allow(dead_code)]` | 16 | 16 | **4** (tous justifiés) | ✅ P4 |
+| Tests (`#[test]`/`#[tokio::test]`) | 259 | 272 | **257** (dead code purgé) | — |
+| `clippy -D warnings` / `fmt --check` | vert | vert | **vert** | CI bloquante OK |
+| Champs `AbcomApp` (god-struct) | 90 | 90 | **46** en 6 sous-structs | ✅ P6 |
+| Scan emoji dupliqué | 3 copies | 4 copies | **1** (`match_emoji_at`) | ✅ P5 |
+
+**Exécuté le 5 août 2026 : les 6 phases de [`PLAN-MAINTENABILITE.md`](PLAN-MAINTENABILITE.md)
+(P1 hygiène, P2 mutex, P3 logging, P4 dead code, P5 thème/dédup, P6 découpage
+AbcomApp) — 6 commits sur `dev`, barrière verte (`fmt`+`clippy -D warnings`+`test`)
+à chaque étape. Détail des sous-structs P6 : `NetworkChannels`, `EmojiPickerState`,
+`GifPickerState`, `ComposerState`, `ModalsState`, `MediaState`.**
+
+**Sécurité — corrigé depuis (à cocher ci-dessous) :** ✅ la traversée de répertoire à la
+réception de média est fermée par `is_safe_media_id` (`media_stream.rs`, PR #28) —
+**S1 résolu**. Toujours ouverts : S2 (vérif `from` == pair authentifié), R1 (retry
+réel, encore un `eprintln!` stub à `events.rs:418`), R2/R3/R4 et toute la dette §2.
 
 ---
 
 ## 1. Hygiène du dépôt
 
-- [ ] 🔴 Supprimer `old/` (24 fichiers de documentation legacy suivis par git) après avoir
-  vérifié que tout le contenu utile a bien été migré vers `docs/` — le doublon crée de la
-  confusion sur la doc de référence.
-- [ ] 🟠 Supprimer le dossier vide `font 2/` à la racine (non suivi, nom avec espace —
-  résidu de manipulation macOS).
-- [ ] 🟠 Compléter `.gitignore` : `.DS_Store`, `nohup.out` y est déjà, ajouter `*.log`
-  éventuels des scripts de test.
+- [x] ~~🔴 Supprimer `old/`~~ — **invalidé (05/08)** : `old/` est référencé
+  explicitement comme archive historique volontaire par `README.md`,
+  `docs/07-developpement.md` et `docs/08-historique-et-audits.md` (« conservé tel
+  quel », renvois précis §-par-§). Ce n'est pas un doublon oublié mais une
+  décision documentée — à conserver.
+- [x] 🟠 Supprimer le dossier vide `font 2/` à la racine — **fait (05/08)**.
+- [x] 🟠 Compléter `.gitignore` (`.DS_Store`, `*.log`) — **fait (05/08)**.
 - [ ] 🟠 `Cargo.toml` : la version est figée à `0.0.1` alors que le projet a un CHANGELOG —
   adopter un versionnage réel (bump à chaque merge sur `main`, tags git).
-- [ ] 🟢 Vérifier que l'URL `repository` de `Cargo.toml` (`github.com/rxdy/abcom`)
-  correspond bien au remote effectif (org `Abend-core` vue dans les PR).
+- [x] 🟢 Vérifier l'URL `repository` de `Cargo.toml` — **fait (05/08)** : corrigée en
+  `https://github.com/Abend-core/abcom` (remote réel confirmé via `git remote -v`).
 - [ ] 🟢 `scripts/` : préfixer chaque script d'un en-tête d'usage homogène et lister les
   scripts dans `docs/07-developpement.md` (`integration_test.sh` tourne en CI main,
   `QUICK_START_TEST.sh` est un pense-bête interactif — clarifier le rôle de chacun).
 
 ## 2. Qualité du code
 
-- [ ] 🔴 **62 `unwrap()`/`expect()`/`panic!` hors tests**, dont **55 `lock().unwrap()`**
-  sur le mutex `AppState` : un thread qui panique en tenant le verrou empoisonne le mutex
-  et fait tomber toute l'app en cascade. Introduire un helper
-  (`fn state(&self) -> MutexGuard<…>` avec `unwrap_or_else(|e| e.into_inner())`) ou
-  passer à `parking_lot::Mutex` (pas d'empoisonnement).
-- [ ] 🔴 Remplacer les **34 `eprintln!`/`println!`** de production par un vrai logging
-  (`log` + `env_logger`, ou `tracing`) : niveaux, horodatage, et possibilité d'écrire
-  dans un fichier pour diagnostiquer chez un utilisateur.
-- [ ] 🟠 Purger les **16 `#[allow(dead_code)]`** : soit le code sert (le brancher), soit
-  il meurt (`app/receipts.rs::is_message_pending`, `app/messages.rs::get_conversations`,
-  `composer/cursor.rs` entier, etc.).
-- [ ] 🟠 Découper les gros fichiers UI : `chat_panel.rs` (1 506 lignes),
-  `input_bar.rs` (1 164), `ui/mod.rs` (898). Extraire par exemple le rendu d'une ligne
-  de fil, la barre de survol, et le popup notifications dans des sous-modules.
-- [ ] 🟠 Dédupliquer le scan d'emojis : `markdown.rs::is_text_emoji_only`,
-  `emoji_picker.rs::render_inline` et `composer/mod.rs::composer_caret_positions`
-  réimplémentent tous trois la même itération « séquence de 2 puis 1 caractères dans
-  `emoji_map` » — extraire un itérateur commun.
-- [ ] 🟠 Centraliser les constantes visuelles dupliquées : `line_height = 22.0` apparaît
-  en dur dans plusieurs fonctions du composeur ; couleurs (gris 140/150/160, bleu
-  80-180-255…) dispersées dans `chat_panel.rs`, `input_bar.rs`, `sidebar.rs` → un module
-  `ui/theme.rs`.
+- [x] 🔴 **55 `lock().unwrap()`** sur le mutex `AppState` — **fait (05/08, P2)** : trait
+  `util::MutexExt::lock_safe()` (`unwrap_or_else(|e| e.into_inner())`), remplacement
+  mécanique des 55 sites de production.
+- [x] 🔴 **34 `eprintln!`/`println!`** de production — **fait (05/08, P3)** : migration vers
+  `tracing`/`tracing-subscriber` (niveaux, horodatage, filtre `RUST_LOG`).
+- [x] 🟠 Purger les **16 `#[allow(dead_code)]`** — **fait (05/08, P4)** : 12 supprimés
+  (dont les modules orphelins entiers `composer/cursor.rs`, `composer/render.rs`,
+  `composer/shortcode.rs`, superseded par `emoji_picker.rs`/`composer/mod.rs`), 4 restants
+  justifiés par un commentaire (drop `Tray::icon`, `Identity::ephemeral` utilisé par les
+  tests, `cleanup_inactive_peers` filet de sécurité, `rename_group` gap fonctionnel UI).
+- [ ] 🟠 Découper les gros fichiers UI : `chat_panel.rs` (1 522 lignes),
+  `input_bar.rs` (1 164), `markdown.rs` (996), `composer/mod.rs` (927), `ui/mod.rs` (915).
+  Extraire par exemple le rendu d'une ligne de fil, la barre de survol, et le popup
+  notifications dans des sous-modules (le modèle `composer/` — cursor/text_ops/shortcode/
+  render — est à répliquer).
+- [x] 🟠 Dédupliquer le scan d'emojis — **fait (05/08, P5)** : les 4 sites
+  (`markdown.rs`, `emoji_picker.rs`, `composer/mod.rs` ×2) consomment désormais
+  `emoji_picker::match_emoji_at`, point d'entrée unique.
+- [x] 🟠 Centraliser les constantes visuelles dupliquées — **fait (05/08, P5)** :
+  `ui/theme.rs` regroupe les 3 valeurs réellement dupliquées (`LINE_HEIGHT`,
+  `SEPARATOR`, `TEXT_MUTED`). Les teintes proches mais choisies indépendamment
+  (gris 140/160/165/190, bleu du récépissé lu) restent en dur à leur point d'usage
+  — les fusionner créerait un couplage visuel qui n'existe pas dans le code.
 - [ ] 🟠 i18n : `tr(fr, en)` retourne des `&'static str` éparpillés dans tout le code UI,
   et plusieurs rendus contournent `tr` avec des `match language` locaux
   (`chat_panel.rs::show_receipt_detail_button`, `render_message_body`). Centraliser les
@@ -74,10 +104,11 @@
 - [ ] 🟢 `klipy.rs` (API externe) vit à la racine de `src/` à côté de `app/`, `network/`,
   `ui/` — le déplacer dans un module `services/` ou `net/klipy.rs` pour clarifier les
   couches.
-- [ ] 🟠 `AbcomApp` est un god-struct de **90 champs** (`ui/mod.rs`) : état du
-  composeur, pickers, médias, notifications, groupes, réglages… tout au même niveau.
-  Regrouper par sous-structs (`ComposerState`, `PickerState`, `MediaState`…) — c'est le
-  préalable au découpage des gros fichiers UI.
+- [x] 🟠 `AbcomApp` était un god-struct de **90 champs** — **fait (05/08, P6)** : éclaté
+  en 6 sous-structs (`NetworkChannels`, `EmojiPickerState`, `GifPickerState`,
+  `ComposerState`, `ModalsState`, `MediaState`), 46 champs restants à plat. Un commit
+  par sous-struct, migration mécanique des ~280 sites d'accès au total. Préalable posé
+  pour le découpage des gros fichiers UI (toujours ouvert ci-dessus).
 - [ ] 🟠 `network/sender.rs` : **sept boucles d'émission quasi identiques**
   (`run_sender`, `_group`, `_typing`, `_read_receipts`, `_ack`, `_avatar`, `_reaction`)
   + sept canaux et sept spawns dans `main.rs`. Une seule file générique
@@ -154,13 +185,11 @@
   (avant tout épinglage TOFU) la victime épingle la mauvaise clé. Le TOFU protège les
   rencontres suivantes, pas la première. Documenter cette limite et envisager une
   signature de l'annonce par la clé privée.
-- [ ] 🔴 **Traversée de répertoire à la réception de média** : l'`id` d'un média est
-  assaini à l'émission (`ui/media.rs::media_id` remplace `/` et les caractères non sûrs
-  par `_`), mais **le récepteur écrit `media_dir.join(&header.media.id)` sans ré-assainir**
-  (`network/media_stream.rs:258`) — or `header` vient brut du réseau. Un pair malveillant
-  peut forger un `id` avec des `/` (ou `..`) et faire écrire le fichier reçu hors du
-  dossier `media/`. Ré-assainir `id` et `filename` côté réception, ou rejeter tout
-  séparateur de chemin et `..`.
+- [x] 🔴 **Traversée de répertoire à la réception de média** — ✅ **Résolu (PR #28).**
+  Le récepteur valide désormais l'`id` via `is_safe_media_id` avant tout écriture
+  (`network/media_stream.rs:246`) et rejette tout composant de chemin non simple
+  (`.`, `..`, séparateurs). *(Constat initial : `media_dir.join(&header.media.id)` était
+  écrit sans ré-assainir un `header` venu brut du réseau.)*
 - [ ] 🟠 TOFU : le changement de clé déclenche bien alerte + refus (`Trust::Mismatch`),
   mais il n'existe **aucun flux de ré-appairage légitime** (réinstallation d'un pair) —
   l'utilisateur est bloqué sans passer par la suppression manuelle des données. Ajouter
@@ -384,7 +413,7 @@
 
 | # | Chantier | Fichiers principaux |
 |---|----------|--------------------|
-| S1 | Traversée de répertoire à la réception de média (`id` non ré-assaini) | `network/media_stream.rs`, `ui/media.rs` |
+| ~~S1~~ | ~~Traversée de répertoire à la réception de média~~ — ✅ **résolu (PR #28)** | `network/media_stream.rs` |
 | S2 | Vérifier `from` == pair authentifié, chat **et** média (anti-usurpation) | `network/server.rs`, `network/media_stream.rs` |
 | S3 | Première rencontre TOFU : username non lié à la clé en découverte | `discovery.rs`, `message/` |
 
@@ -407,10 +436,10 @@
 
 **Dette & hygiène :**
 
-| # | Chantier | Fichiers principaux |
-|---|----------|--------------------|
-| D1 | Logging structuré à la place des 34 `eprintln!` | transversal |
-| D2 | Nettoyage dépôt (`old/`, `font 2/`, versionnage Cargo) | racine |
+| # | Chantier | État |
+|---|----------|------|
+| ~~D1~~ | ~~Logging structuré à la place des 34 `eprintln!`~~ | ✅ **fait (05/08, P3)** |
+| D2 | Nettoyage dépôt (`font 2/`, gitignore, URL repo) | ✅ **fait (05/08, P1)** — `old/` conservé (archive volontaire) ; versionnage Cargo (`0.0.1`) toujours en suspens |
 
 ---
 

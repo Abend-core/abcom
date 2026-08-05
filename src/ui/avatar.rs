@@ -13,6 +13,7 @@ use std::path::Path;
 use eframe::egui;
 
 use crate::message::{AvatarAnnounce, AvatarRequest};
+use crate::util::MutexExt;
 
 use super::AbcomApp;
 
@@ -143,7 +144,7 @@ impl AbcomApp {
             return Some(texture.clone());
         }
 
-        let bytes = self.state.lock().unwrap().avatar_bytes(username)?;
+        let bytes = self.state.lock_safe().avatar_bytes(username)?;
         let image = image::load_from_memory(&bytes).ok()?;
         let rgba = image.to_rgba8();
         let (width, height) = rgba.dimensions();
@@ -165,7 +166,7 @@ impl AbcomApp {
     /// changement d'avatar ; un PNG vide signale le retrait aux destinataires.
     pub(crate) fn broadcast_my_avatar(&mut self) {
         let (my_name, png) = {
-            let s = self.state.lock().unwrap();
+            let s = self.state.lock_safe();
             (
                 s.my_username.clone(),
                 s.my_avatar.clone().unwrap_or_default(),
@@ -179,7 +180,7 @@ impl AbcomApp {
     /// pour éviter les répétitions lors des prochaines découvertes.
     fn send_avatar_announce(&mut self, announce: AvatarAnnounce) {
         let online: Vec<(String, std::net::SocketAddr)> = {
-            let s = self.state.lock().unwrap();
+            let s = self.state.lock_safe();
             s.peers
                 .iter()
                 .filter(|p| p.online)
@@ -192,7 +193,7 @@ impl AbcomApp {
                 to_addr: addr,
                 announce: announce.clone(),
             };
-            if self.send_avatar_tx.try_send(request).is_ok() {
+            if self.net.send_avatar_tx.try_send(request).is_ok() {
                 self.avatar_sent_to.insert(username);
             }
         }

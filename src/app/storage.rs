@@ -508,10 +508,7 @@ impl Storage {
                 if tx_ok {
                     let _ = self.conn.execute_batch("COMMIT");
                 }
-                eprintln!(
-                    "[storage] Migration : {} message(s) importé(s)",
-                    messages.len()
-                );
+                tracing::info!("migration : {} message(s) importé(s)", messages.len());
             }
         }
         if let Some(content) = read("reactions.json") {
@@ -609,7 +606,7 @@ fn run(storage: Storage, rx: Receiver<StorageCmd>, event_tx: tokio::sync::mpsc::
             }
         };
         if let Err(e) = result {
-            eprintln!("[storage] Erreur d'écriture : {e}");
+            tracing::error!("erreur d'écriture : {e}");
         }
     }
 }

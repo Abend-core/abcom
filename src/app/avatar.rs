@@ -67,7 +67,7 @@ impl AppState {
             let _ = std::fs::create_dir_all(parent);
         }
         if let Err(e) = std::fs::write(&self.avatar_path, png) {
-            eprintln!("[app] Erreur écriture avatar.png: {}", e);
+            tracing::warn!("erreur écriture avatar.png : {}", e);
         }
     }
 }

@@ -1,7 +1,3 @@
-#[allow(dead_code)]
-pub mod cursor;
-pub mod render;
-pub mod shortcode;
 pub mod text_ops;
 
 pub use text_ops::{insert_emoji_at_cursor, replace_char_range};
@@ -95,7 +91,7 @@ fn composer_caret_positions(
 ) -> Vec<egui::Pos2> {
     let chars: Vec<char> = text.chars().collect();
     let mut i = 0;
-    let line_height = 22.0;
+    let line_height = super::theme::LINE_HEIGHT;
     let mut x = 0.0;
     let mut y = 0.0;
     let mut points = Vec::with_capacity(chars.len() + 1);
@@ -110,26 +106,22 @@ fn composer_caret_positions(
             continue;
         }
 
-        let mut matched = false;
-        for len in [2usize, 1usize] {
-            if i + len <= chars.len() {
-                let s: String = chars[i..i + len].iter().collect();
-                if emoji_map.contains_key(&s) {
-                    let advance = emoji_size + 2.0;
-                    if x + advance > max_width && x > 0.0 {
-                        x = 0.0;
-                        y += line_height;
-                    }
-                    x += advance;
-                    for _ in 0..len {
-                        points.push(egui::pos2(x, y));
-                    }
-                    i += len;
-                    matched = true;
-                    break;
+        let matched =
+            if let Some((len, _)) = super::emoji_picker::match_emoji_at(&chars, i, emoji_map) {
+                let advance = emoji_size + 2.0;
+                if x + advance > max_width && x > 0.0 {
+                    x = 0.0;
+                    y += line_height;
                 }
-            }
-        }
+                x += advance;
+                for _ in 0..len {
+                    points.push(egui::pos2(x, y));
+                }
+                i += len;
+                true
+            } else {
+                false
+            };
 
         if !matched {
             let ch = chars[i].to_string();
@@ -329,7 +321,7 @@ pub fn custom_composer_input(
     width: f32,
     selection_anchor: &mut Option<usize>,
 ) -> (egui::Response, bool, bool, Option<String>) {
-    let line_height = 22.0;
+    let line_height = super::theme::LINE_HEIGHT;
     let base_content_width = (width.max(120.0) - 12.0).max(20.0);
     let initial_caret_points =
         composer_caret_positions(ui, input, emoji_map, 18.0, base_content_width);
@@ -802,35 +794,24 @@ pub fn custom_composer_input(
             }
 
             let mut matched = false;
-            for len in [2usize, 1usize] {
-                if i + len <= chars.len() {
-                    let s: String = chars[i..i + len].iter().collect();
-                    if let Some(&idx) = emoji_map.get(&s) {
-                        if let Some((_, tex)) = emoji_textures.get(idx) {
-                            if x + 20.0 > right && x > content_rect.left() {
-                                x = content_rect.left();
-                                y += line_height;
-                            }
-                            let img_rect = egui::Rect::from_min_size(
-                                egui::pos2(x, y - 9.0),
-                                egui::vec2(18.0, 18.0),
-                            );
-                            painter.image(
-                                tex.id(),
-                                img_rect,
-                                egui::Rect::from_min_max(
-                                    egui::pos2(0.0, 0.0),
-                                    egui::pos2(1.0, 1.0),
-                                ),
-                                egui::Color32::WHITE,
-                            );
-                            x += 20.0;
-                        }
-                        i += len;
-                        matched = true;
-                        break;
+            if let Some((len, idx)) = super::emoji_picker::match_emoji_at(&chars, i, emoji_map) {
+                if let Some((_, tex)) = emoji_textures.get(idx) {
+                    if x + 20.0 > right && x > content_rect.left() {
+                        x = content_rect.left();
+                        y += line_height;
                     }
+                    let img_rect =
+                        egui::Rect::from_min_size(egui::pos2(x, y - 9.0), egui::vec2(18.0, 18.0));
+                    painter.image(
+                        tex.id(),
+                        img_rect,
+                        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+                        egui::Color32::WHITE,
+                    );
+                    x += 20.0;
                 }
+                i += len;
+                matched = true;
             }
 
             if !matched {

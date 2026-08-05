@@ -1,6 +1,7 @@
 use eframe::egui;
 
 use crate::message::{GroupAction, GroupEvent, SendGroupRequest};
+use crate::util::MutexExt;
 
 use super::AbcomApp;
 
@@ -48,7 +49,7 @@ impl AbcomApp {
     fn send_group_event(&self, addrs: &[std::net::SocketAddr], action: GroupAction) {
         let event = GroupEvent { action };
         for addr in addrs {
-            let _ = self.send_group_tx.try_send(SendGroupRequest {
+            let _ = self.net.send_group_tx.try_send(SendGroupRequest {
                 to_addr: *addr,
                 event: event.clone(),
             });
@@ -58,7 +59,7 @@ impl AbcomApp {
     /// Modal de création de groupe : nom validé en direct (charte + doublon),
     /// sélection des membres avec présence, créateur inclus d'office.
     pub(crate) fn render_group_modal(&mut self, ctx: &egui::Context) {
-        if !self.show_group_modal {
+        if !self.modals.group_modal_open {
             return;
         }
 
@@ -69,7 +70,7 @@ impl AbcomApp {
         // Validation vivante, avant la fenêtre : le bouton « Créer » n'est
         // actif que si tout est bon (le create_group ne peut alors échouer
         // que sur une course réseau, signalée en notification).
-        let trimmed = self.group_name_input.trim().to_string();
+        let trimmed = self.modals.group_name_input.trim().to_string();
         let name_valid = !trimmed.is_empty()
             && trimmed.len() <= 50
             && trimmed
@@ -120,14 +121,17 @@ impl AbcomApp {
                 ui.label(egui::RichText::new(lbl_name).strong());
                 ui.horizontal(|ui| {
                     let resp = ui.add(
-                        egui::TextEdit::singleline(&mut self.group_name_input)
+                        egui::TextEdit::singleline(&mut self.modals.group_name_input)
                             .hint_text(hint_name)
                             .desired_width(250.0),
                     );
                     ui.label(
-                        egui::RichText::new(format!("{}/50", self.group_name_input.trim().len()))
-                            .small()
-                            .weak(),
+                        egui::RichText::new(format!(
+                            "{}/50",
+                            self.modals.group_name_input.trim().len()
+                        ))
+                        .small()
+                        .weak(),
                     );
                     // Entrée dans le champ = créer, si tout est valide.
                     if resp.lost_focus()
@@ -168,7 +172,7 @@ impl AbcomApp {
                             } else {
                                 for (idx, peer) in peers.iter().enumerate() {
                                     let mut selected =
-                                        self.group_members_selected.contains(&peer.username);
+                                        self.modals.group_members_selected.contains(&peer.username);
                                     ui.horizontal(|ui| {
                                         presence_dot(ui, peer.online);
                                         let label = display_names
@@ -177,10 +181,13 @@ impl AbcomApp {
                                             .unwrap_or_else(|| peer.username.clone());
                                         if ui.checkbox(&mut selected, label).changed() {
                                             if selected {
-                                                self.group_members_selected
+                                                self.modals
+                                                    .group_members_selected
                                                     .insert(peer.username.clone());
                                             } else {
-                                                self.group_members_selected.remove(&peer.username);
+                                                self.modals
+                                                    .group_members_selected
+                                                    .remove(&peer.username);
                                             }
                                         }
                                     });
@@ -188,7 +195,7 @@ impl AbcomApp {
                             }
                         });
                 });
-                let count = self.group_members_selected.len();
+                let count = self.modals.group_members_selected.len();
                 ui.label(
                     egui::RichText::new(format!(
                         "{} {}",
@@ -218,13 +225,13 @@ impl AbcomApp {
             });
 
         if do_create {
-            let members: Vec<String> = self.group_members_selected.iter().cloned().collect();
+            let members: Vec<String> = self.modals.group_members_selected.iter().cloned().collect();
             // Un seul passage sous verrou : création + adresses des membres,
             // envoi réseau hors verrou. (L'ancien code re-verrouillait dans le
             // corps d'un `if let` dont le garde du scrutinee vivait encore :
             // deadlock — gel de l'application — à chaque création.)
             let created = {
-                let mut s = self.state.lock().unwrap();
+                let mut s = self.state.lock_safe();
                 s.create_group(trimmed.clone(), members)
                     .map(|g| (g.clone(), s.group_member_addrs(&g.name)))
             };
@@ -232,9 +239,9 @@ impl AbcomApp {
                 Some((group, addrs)) => {
                     let conv = format!("#{}", group.name);
                     self.send_group_event(&addrs, GroupAction::Create { group });
-                    self.show_group_modal = false;
-                    self.group_name_input.clear();
-                    self.group_members_selected.clear();
+                    self.modals.group_modal_open = false;
+                    self.modals.group_name_input.clear();
+                    self.modals.group_members_selected.clear();
                     // Ouvre directement le salon créé.
                     self.switch_conversation(Some(conv));
                 }
@@ -252,9 +259,9 @@ impl AbcomApp {
         }
 
         if do_cancel || !is_open {
-            self.show_group_modal = false;
-            self.group_name_input.clear();
-            self.group_members_selected.clear();
+            self.modals.group_modal_open = false;
+            self.modals.group_name_input.clear();
+            self.modals.group_members_selected.clear();
         }
     }
 
@@ -263,7 +270,7 @@ impl AbcomApp {
     /// suppression (propriétaire) — actions destructrices confirmées en
     /// deux temps.
     pub(crate) fn render_group_manage_modal(&mut self, ctx: &egui::Context) {
-        let Some(group_name) = self.group_manage_target.clone() else {
+        let Some(group_name) = self.modals.group_manage_target.clone() else {
             return;
         };
         // Groupe disparu entre-temps (suppression ou exclusion reçue du
@@ -275,8 +282,8 @@ impl AbcomApp {
             .find(|g| g.name == group_name)
             .cloned()
         else {
-            self.group_manage_target = None;
-            self.group_manage_confirm = None;
+            self.modals.group_manage_target = None;
+            self.modals.group_manage_confirm = None;
             return;
         };
 
@@ -315,7 +322,7 @@ impl AbcomApp {
             "Delete this group for every member?",
         );
 
-        let confirm_state = self.group_manage_confirm;
+        let confirm_state = self.modals.group_manage_confirm;
         let mut is_open = true;
         let mut kick: Option<String> = None;
         let mut add: Option<String> = None;
@@ -451,15 +458,15 @@ impl AbcomApp {
             });
 
         if let Some(action) = set_confirm {
-            self.group_manage_confirm = Some(action);
+            self.modals.group_manage_confirm = Some(action);
         }
         if clear_confirm {
-            self.group_manage_confirm = None;
+            self.modals.group_manage_confirm = None;
         }
 
         if let Some(user) = add {
             let outcome = {
-                let mut s = self.state.lock().unwrap();
+                let mut s = self.state.lock_safe();
                 // Adresses AVANT l'ajout : les membres existants reçoivent
                 // l'AddMember, le nouveau reçoit l'état complet du groupe
                 // (il ne connaît pas encore le salon).
@@ -492,7 +499,7 @@ impl AbcomApp {
 
         if let Some(user) = kick {
             let addrs = {
-                let mut s = self.state.lock().unwrap();
+                let mut s = self.state.lock_safe();
                 // Adresses AVANT le retrait : l'exclu est prévenu lui aussi.
                 let addrs = s.group_member_addrs(&group_name);
                 s.remove_member_from_group(&group_name, &user)
@@ -510,11 +517,11 @@ impl AbcomApp {
         }
 
         if let Some(action) = confirmed {
-            self.group_manage_confirm = None;
+            self.modals.group_manage_confirm = None;
             match action {
                 GroupConfirmAction::Leave => {
                     let outcome = {
-                        let mut s = self.state.lock().unwrap();
+                        let mut s = self.state.lock_safe();
                         let addrs = s.group_member_addrs(&group_name);
                         let me = s.my_username.clone();
                         s.leave_group(&group_name).then_some((addrs, me))
@@ -527,12 +534,12 @@ impl AbcomApp {
                                 username: me,
                             },
                         );
-                        self.group_manage_target = None;
+                        self.modals.group_manage_target = None;
                     }
                 }
                 GroupConfirmAction::Delete => {
                     let addrs = {
-                        let mut s = self.state.lock().unwrap();
+                        let mut s = self.state.lock_safe();
                         let addrs = s.group_member_addrs(&group_name);
                         s.delete_group(&group_name).then_some(addrs)
                     };
@@ -543,15 +550,15 @@ impl AbcomApp {
                                 group_name: group_name.clone(),
                             },
                         );
-                        self.group_manage_target = None;
+                        self.modals.group_manage_target = None;
                     }
                 }
             }
         }
 
         if !is_open {
-            self.group_manage_target = None;
-            self.group_manage_confirm = None;
+            self.modals.group_manage_target = None;
+            self.modals.group_manage_confirm = None;
         }
     }
 }

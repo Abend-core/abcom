@@ -24,6 +24,7 @@ use tokio::net::TcpStream;
 
 use crate::app::StorageCmd;
 use crate::identity::{Identity, NOISE_PATTERN};
+use crate::util::MutexExt;
 
 /// Motif Noise avec passphrase de salon (PSK au message 3) : en plus de
 /// l'authentification par clés, seuls les pairs connaissant la passphrase
@@ -278,7 +279,7 @@ impl TrustStore {
 
     /// Vérifie la clé d'un pair, l'épingle à la première rencontre.
     pub fn verify_and_pin(&self, username: &str, key: &[u8]) -> Trust {
-        let mut keys = self.keys.lock().unwrap();
+        let mut keys = self.keys.lock_safe();
         match keys.get(username) {
             Some(pinned) if pinned == key => Trust::Match,
             Some(_) => Trust::Mismatch,

@@ -85,16 +85,6 @@ fn test_is_peer_online() {
 }
 
 #[test]
-fn test_get_online_peers() {
-    let mut s = state("alice");
-    s.peers.push(peer("bob", "192.168.1.5", true));
-    s.peers.push(peer("charlie", "192.168.1.6", false));
-    let online = s.get_online_peers();
-    assert_eq!(online.len(), 1);
-    assert_eq!(online[0].ip().to_string(), "192.168.1.5");
-}
-
-#[test]
 fn test_selected_peer_addr_none_when_no_selection() {
     let s = state("alice");
     assert!(s.selected_peer_addr().is_none());

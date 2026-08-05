@@ -11,6 +11,7 @@ use crate::message::{
     MessageAckRequest, ReactionRequest, ReadReceipt, ReadReceiptRequest, SendGroupRequest,
     SendRequest, TypingRequest,
 };
+use crate::util::MutexExt;
 
 mod avatar;
 mod chat_panel;
@@ -27,6 +28,7 @@ mod settings;
 mod sidebar;
 mod snapshot;
 mod sound;
+mod theme;
 pub(crate) mod tray;
 
 /// Nombre de messages affichés au départ et pas de chargement du fenêtrage
@@ -78,6 +80,112 @@ pub(crate) enum GifPickerTab {
     Sticker,
 }
 
+/// Canaux mpsc indépendants vers les tâches réseau/transfert : un récepteur
+/// d'événements entrants et un émetteur par type de requête sortante.
+pub(crate) struct NetworkChannels {
+    pub(crate) event_rx: mpsc::Receiver<AppEvent>,
+    pub(crate) send_tx: mpsc::Sender<SendRequest>,
+    pub(crate) send_group_tx: mpsc::Sender<SendGroupRequest>,
+    pub(crate) send_typing_tx: mpsc::Sender<TypingRequest>,
+    pub(crate) send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
+    pub(crate) send_ack_tx: mpsc::Sender<MessageAckRequest>,
+    pub(crate) send_avatar_tx: mpsc::Sender<AvatarRequest>,
+    pub(crate) send_reaction_tx: mpsc::Sender<ReactionRequest>,
+    pub(crate) send_media_tx: mpsc::Sender<MediaSendJob>,
+}
+
+/// Données du picker emoji : textures décodées, index de recherche par
+/// shortcode, et état de navigation du picker/des suggestions. Consommées à
+/// la fois par le picker lui-même et par le rendu inline (fil, composeur,
+/// barre de réactions).
+pub(crate) struct EmojiPickerState {
+    /// Résultat du décodage des PNG emoji, effectué dans un thread au
+    /// démarrage : le premier frame n'attend plus les 323 décodages.
+    pub(crate) decode_rx: Option<std::sync::mpsc::Receiver<Vec<(String, egui::ColorImage)>>>,
+    pub(crate) textures: Vec<(String, egui::TextureHandle)>,
+    pub(crate) textures_loaded: bool,
+    pub(crate) category: usize,
+    pub(crate) map: std::collections::HashMap<String, usize>,
+    pub(crate) alias_to_char: std::collections::HashMap<String, String>,
+    pub(crate) aliases: Vec<String>,
+    /// Suggestion sélectionnée dans le menu de complétion `:shortcode`.
+    pub(crate) shortcode_selected: usize,
+}
+
+/// État du sélecteur de contenu Klipy (GIF / Mèmes / Stickers) : trois feeds
+/// indépendants, l'onglet actif et la recherche partagée.
+pub(crate) struct GifPickerState {
+    pub(crate) show: bool,
+    pub(crate) tab: GifPickerTab,
+    /// Texte courant de la barre de recherche du sélecteur.
+    pub(crate) query: String,
+    /// Feed GIF — tendances et recherche Klipy /gifs/*.
+    pub(crate) feed: crate::klipy::GifFeed,
+    /// Feed Mèmes — tendances et recherche Klipy /static-memes/*.
+    pub(crate) meme_feed: crate::klipy::GifFeed,
+    /// Feed Stickers — tendances et recherche Klipy /stickers/*.
+    pub(crate) sticker_feed: crate::klipy::GifFeed,
+    /// Dernière frappe dans la recherche (anti-rebond avant requête).
+    pub(crate) last_input: std::time::Instant,
+    /// Le picker était ouvert à la frame précédente (détection de la
+    /// fermeture pour libérer les aperçus du cache d'images egui).
+    pub(crate) was_open: bool,
+}
+
+/// État de la zone de saisie : texte courant, position du curseur/sélection,
+/// brouillons par conversation et pièces jointes en attente d'envoi.
+pub(crate) struct ComposerState {
+    pub(crate) text: String,
+    pub(crate) cursor_char: usize,
+    pub(crate) selection_anchor: Option<usize>,
+    pub(crate) has_focus: bool,
+    pub(crate) scroll_lines: f32,
+    /// Texte non envoyé par conversation, restauré au changement d'onglet.
+    pub(crate) drafts: std::collections::HashMap<Option<String>, String>,
+    pub(crate) pending_attachments: Vec<PathBuf>,
+}
+
+/// État des modales et panneaux superposés : création/gestion de salon,
+/// renommage de contact, paramètres, liste des participants.
+pub(crate) struct ModalsState {
+    pub(crate) participants_open: bool,
+    pub(crate) group_modal_open: bool,
+    pub(crate) group_name_input: String,
+    pub(crate) group_members_selected: std::collections::HashSet<String>,
+    /// Salon ciblé par le modal de gestion (membres, départ…) ; None = fermé.
+    pub(crate) group_manage_target: Option<String>,
+    /// Action destructrice du modal de gestion en attente de confirmation.
+    pub(crate) group_manage_confirm: Option<group_modal::GroupConfirmAction>,
+    /// Renommage de contact : pair ciblé par la modale (None = fermée).
+    pub(crate) rename_target: Option<String>,
+    pub(crate) rename_input: String,
+    pub(crate) settings_open: bool,
+    pub(crate) settings_tab: SettingsTab,
+}
+
+/// État des médias du fil : caches de textures (éviction LRU), visionneuse
+/// plein écran, et réception/décision des offres de transfert volumineux.
+pub(crate) struct MediaState {
+    /// Textures des médias image, indexées par identifiant (None = échec/non-image).
+    pub(crate) textures: std::collections::HashMap<String, Option<egui::TextureHandle>>,
+    /// Identifiant du média affiché en grand dans la visionneuse (None = fermée).
+    pub(crate) viewer: Option<String>,
+    /// Réception des offres de médias volumineux (> 1 Go) à accepter/refuser.
+    pub(crate) offer_rx: mpsc::Receiver<MediaStreamOffer>,
+    /// Offres de médias volumineux en attente de décision (bandeau).
+    pub(crate) pending_offers: Vec<MediaStreamOffer>,
+    /// Progression des transferts média en cours, par identifiant.
+    pub(crate) progress: std::collections::HashMap<String, MediaProgress>,
+    /// URLs des GIFs actuellement dans le fil rendu : celles qui en sortent
+    /// (changement de conversation, drain) sont retirées du cache d'images.
+    pub(crate) known_gif_urls: std::collections::HashSet<String>,
+    /// Ordre d'accès des textures médias (éviction LRU, cf. `media_texture`).
+    pub(crate) texture_lru: Vec<String>,
+    /// Texture pleine résolution de la visionneuse, libérée à sa fermeture
+    /// (le fil n'affiche que des textures réduites).
+    pub(crate) viewer_texture: Option<(String, egui::TextureHandle)>,
+}
+
 /// État de l'application UI
 pub(crate) struct AbcomApp {
     pub(crate) state: Arc<Mutex<AppState>>,
@@ -101,90 +209,33 @@ pub(crate) struct AbcomApp {
     pub(crate) notif_preview: bool,
     /// Lancement au démarrage de session activé (persisté + état système).
     pub(crate) autostart_enabled: bool,
-    /// Résultat du décodage des PNG emoji, effectué dans un thread au
-    /// démarrage : le premier frame n'attend plus les 323 décodages.
-    pub(crate) emoji_decode_rx: Option<std::sync::mpsc::Receiver<Vec<(String, egui::ColorImage)>>>,
-    pub(crate) event_rx: mpsc::Receiver<AppEvent>,
-    pub(crate) send_tx: mpsc::Sender<SendRequest>,
-    pub(crate) send_group_tx: mpsc::Sender<SendGroupRequest>,
-    pub(crate) send_typing_tx: mpsc::Sender<TypingRequest>,
-    pub(crate) send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
-    pub(crate) send_ack_tx: mpsc::Sender<MessageAckRequest>,
-    pub(crate) send_avatar_tx: mpsc::Sender<AvatarRequest>,
-    pub(crate) send_reaction_tx: mpsc::Sender<ReactionRequest>,
-    pub(crate) send_media_tx: mpsc::Sender<MediaSendJob>,
-    pub(crate) input: String,
-    pub(crate) input_cursor_char: usize,
-    pub(crate) input_selection_anchor: Option<usize>,
-    pub(crate) input_has_focus: bool,
-    pub(crate) input_scroll_lines: f32,
+    pub(crate) net: NetworkChannels,
+    pub(crate) composer: ComposerState,
     pub(crate) show_attachment_menu: bool,
     pub(crate) show_emoji_picker: bool,
-    /// Sélecteur de contenu Klipy ouvert (GIF, Mèmes, Stickers).
-    pub(crate) show_gif_picker: bool,
-    /// Onglet actif du sélecteur Klipy.
-    pub(crate) gif_picker_tab: GifPickerTab,
-    /// Texte courant de la barre de recherche du sélecteur.
-    pub(crate) gif_query: String,
-    /// Feed GIF — tendances et recherche Klipy /gifs/*.
-    pub(crate) gif_feed: crate::klipy::GifFeed,
-    /// Feed Mèmes — tendances et recherche Klipy /static-memes/*.
-    pub(crate) meme_feed: crate::klipy::GifFeed,
-    /// Feed Stickers — tendances et recherche Klipy /stickers/*.
-    pub(crate) sticker_feed: crate::klipy::GifFeed,
-    /// Dernière frappe dans la recherche (anti-rebond avant requête).
-    pub(crate) gif_last_input: std::time::Instant,
-    pub(crate) show_participants: bool,
+    pub(crate) gif_picker: GifPickerState,
     pub(crate) enable_sound_notifications: bool,
     pub(crate) last_notification: Option<String>,
     pub(crate) notification_time: std::time::Instant,
     pub(crate) has_unread: bool,
     pub(crate) window_focused: bool,
-    pub(crate) emoji_textures: Vec<(String, egui::TextureHandle)>,
-    pub(crate) emoji_textures_loaded: bool,
-    pub(crate) emoji_category: usize,
-    pub(crate) emoji_map: std::collections::HashMap<String, usize>,
-    pub(crate) emoji_alias_to_char: std::collections::HashMap<String, String>,
-    pub(crate) emoji_aliases: Vec<String>,
-    pub(crate) shortcode_selected: usize,
-    pub(crate) show_group_modal: bool,
-    pub(crate) group_name_input: String,
-    pub(crate) group_members_selected: std::collections::HashSet<String>,
-    /// Salon ciblé par le modal de gestion (membres, départ…) ; None = fermé.
-    pub(crate) group_manage_target: Option<String>,
-    /// Action destructrice du modal de gestion en attente de confirmation.
-    pub(crate) group_manage_confirm: Option<group_modal::GroupConfirmAction>,
+    pub(crate) emoji: EmojiPickerState,
+    pub(crate) modals: ModalsState,
     pub(crate) last_typing_broadcast: std::time::Instant,
     pub(crate) last_retry_time: std::time::Instant,
     pub(crate) muted_conversations: std::collections::HashSet<Option<String>>,
-    /// Renommage de contact : pair ciblé par la modale (None = fermée).
-    pub(crate) rename_target: Option<String>,
-    pub(crate) rename_input: String,
-    pub(crate) drafts: std::collections::HashMap<Option<String>, String>,
-    pub(crate) pending_attachments: Vec<PathBuf>,
     /// 0 = none, 1 = pick files, 2 = pick folder (deferred to next frame to avoid AppKit conflict)
     pub(crate) pending_picker: u8,
     pub(crate) ui_language: UiLanguage,
     pub(crate) theme_preference: ThemePreference,
     pub(crate) system_dark_mode: Option<bool>,
-    pub(crate) show_settings: bool,
-    pub(crate) settings_tab: SettingsTab,
     /// Textures d'avatars, indexées par nom d'utilisateur (cache de rendu).
     pub(crate) avatar_textures: std::collections::HashMap<String, egui::TextureHandle>,
     /// Pairs auxquels notre avatar a déjà été envoyé (évite les répétitions).
     pub(crate) avatar_sent_to: std::collections::HashSet<String>,
     /// Sélection d'image de profil différée (sélecteur natif, voir `update`).
     pub(crate) pending_avatar_pick: bool,
-    /// Textures des médias image, indexées par identifiant (None = échec/non-image).
-    pub(crate) media_textures: std::collections::HashMap<String, Option<egui::TextureHandle>>,
-    /// Identifiant du média affiché en grand dans la visionneuse (None = fermée).
-    pub(crate) media_viewer: Option<String>,
-    /// Réception des offres de médias volumineux (> 1 Go) à accepter/refuser.
-    pub(crate) media_offer_rx: mpsc::Receiver<MediaStreamOffer>,
-    /// Offres de médias volumineux en attente de décision (bandeau).
-    pub(crate) pending_media_offers: Vec<MediaStreamOffer>,
-    /// Progression des transferts média en cours, par identifiant.
-    pub(crate) media_progress: std::collections::HashMap<String, MediaProgress>,
+    pub(crate) media: MediaState,
     /// Ligne dont la barre d'actions au survol est affichée : (index absolu
     /// dans le fil, hash du message). L'index désambiguïse les messages au
     /// hash identique (anciens messages sans nonce) : une seule barre à la fois.
@@ -223,17 +274,6 @@ pub(crate) struct AbcomApp {
     /// Une page d'historique plus ancienne est en cours de chargement
     /// (évite les demandes répétées pendant le vol de la requête).
     pub(crate) loading_older: bool,
-    /// Le picker GIF était ouvert à la frame précédente (détection de la
-    /// fermeture pour libérer les aperçus du cache d'images egui).
-    pub(crate) gif_picker_was_open: bool,
-    /// URLs des GIFs actuellement dans le fil rendu : celles qui en sortent
-    /// (changement de conversation, drain) sont retirées du cache d'images.
-    pub(crate) known_gif_urls: std::collections::HashSet<String>,
-    /// Ordre d'accès des textures médias (éviction LRU, cf. `media_texture`).
-    pub(crate) media_texture_lru: Vec<String>,
-    /// Texture pleine résolution de la visionneuse, libérée à sa fermeture
-    /// (le fil n'affiche que des textures réduites).
-    pub(crate) viewer_texture: Option<(String, egui::TextureHandle)>,
 }
 
 impl AbcomApp {
@@ -260,7 +300,7 @@ impl AbcomApp {
 
         // Préférences persistées (table kv).
         let (notif_preview, autostart_enabled) = {
-            let s = state.lock().unwrap();
+            let s = state.lock_safe();
             (
                 s.pref_bool("notif_preview", true),
                 s.pref_bool("autostart", false),
@@ -271,69 +311,85 @@ impl AbcomApp {
             state,
             identity_fingerprint,
             psk_active,
-            emoji_decode_rx,
-            event_rx,
-            send_tx,
-            send_group_tx,
-            send_typing_tx,
-            send_read_receipt_tx,
-            send_ack_tx,
-            send_avatar_tx,
-            send_reaction_tx,
-            send_media_tx,
-            media_offer_rx,
-            pending_media_offers: Vec::new(),
-            media_progress: std::collections::HashMap::new(),
-            input: String::new(),
-            input_cursor_char: 0,
-            input_selection_anchor: None,
-            input_has_focus: false,
-            input_scroll_lines: 0.0,
+            net: NetworkChannels {
+                event_rx,
+                send_tx,
+                send_group_tx,
+                send_typing_tx,
+                send_read_receipt_tx,
+                send_ack_tx,
+                send_avatar_tx,
+                send_reaction_tx,
+                send_media_tx,
+            },
+            media: MediaState {
+                textures: std::collections::HashMap::new(),
+                viewer: None,
+                offer_rx: media_offer_rx,
+                pending_offers: Vec::new(),
+                progress: std::collections::HashMap::new(),
+                known_gif_urls: std::collections::HashSet::new(),
+                texture_lru: Vec::new(),
+                viewer_texture: None,
+            },
+            composer: ComposerState {
+                text: String::new(),
+                cursor_char: 0,
+                selection_anchor: None,
+                has_focus: false,
+                scroll_lines: 0.0,
+                drafts: std::collections::HashMap::new(),
+                pending_attachments: Vec::new(),
+            },
             show_attachment_menu: false,
             show_emoji_picker: false,
-            show_gif_picker: false,
-            gif_picker_tab: GifPickerTab::Gif,
-            gif_query: String::new(),
-            gif_feed: crate::klipy::GifFeed::new(crate::klipy::ContentKind::Gif),
-            meme_feed: crate::klipy::GifFeed::new(crate::klipy::ContentKind::Meme),
-            sticker_feed: crate::klipy::GifFeed::new(crate::klipy::ContentKind::Sticker),
-            gif_last_input: std::time::Instant::now(),
-            show_participants: false,
+            gif_picker: GifPickerState {
+                show: false,
+                tab: GifPickerTab::Gif,
+                query: String::new(),
+                feed: crate::klipy::GifFeed::new(crate::klipy::ContentKind::Gif),
+                meme_feed: crate::klipy::GifFeed::new(crate::klipy::ContentKind::Meme),
+                sticker_feed: crate::klipy::GifFeed::new(crate::klipy::ContentKind::Sticker),
+                last_input: std::time::Instant::now(),
+                was_open: false,
+            },
             enable_sound_notifications: true,
             last_notification: None,
             notification_time: std::time::Instant::now(),
             has_unread: false,
             window_focused: true,
-            emoji_textures: Vec::new(),
-            emoji_textures_loaded: false,
-            emoji_category: 0,
-            emoji_map: std::collections::HashMap::new(),
-            emoji_alias_to_char: std::collections::HashMap::new(),
-            emoji_aliases: Vec::new(),
-            shortcode_selected: 0,
-            show_group_modal: false,
-            group_name_input: String::new(),
-            group_members_selected: std::collections::HashSet::new(),
-            group_manage_target: None,
-            group_manage_confirm: None,
+            emoji: EmojiPickerState {
+                decode_rx: emoji_decode_rx,
+                textures: Vec::new(),
+                textures_loaded: false,
+                category: 0,
+                map: std::collections::HashMap::new(),
+                alias_to_char: std::collections::HashMap::new(),
+                aliases: Vec::new(),
+                shortcode_selected: 0,
+            },
+            modals: ModalsState {
+                participants_open: false,
+                group_modal_open: false,
+                group_name_input: String::new(),
+                group_members_selected: std::collections::HashSet::new(),
+                group_manage_target: None,
+                group_manage_confirm: None,
+                rename_target: None,
+                rename_input: String::new(),
+                settings_open: false,
+                settings_tab: SettingsTab::General,
+            },
             last_typing_broadcast: std::time::Instant::now(),
             last_retry_time: std::time::Instant::now(),
             muted_conversations: std::collections::HashSet::new(),
-            rename_target: None,
-            rename_input: String::new(),
-            drafts: std::collections::HashMap::new(),
-            pending_attachments: Vec::new(),
             pending_picker: 0,
             ui_language: UiLanguage::French,
             theme_preference: ThemePreference::System,
             system_dark_mode: None,
-            show_settings: false,
-            settings_tab: SettingsTab::General,
             avatar_textures: std::collections::HashMap::new(),
             avatar_sent_to: std::collections::HashSet::new(),
             pending_avatar_pick: false,
-            media_textures: std::collections::HashMap::new(),
-            media_viewer: None,
             hover_toolbar_target: None,
             reaction_picker_open: None,
             recent_reaction_emojis: DEFAULT_RECENT_EMOJIS
@@ -357,10 +413,6 @@ impl AbcomApp {
             chat_visible_count: CHAT_WINDOW_STEP,
             chat_prepend_fix: None,
             loading_older: false,
-            gif_picker_was_open: false,
-            known_gif_urls: std::collections::HashSet::new(),
-            media_texture_lru: Vec::new(),
-            viewer_texture: None,
         }
     }
 
@@ -373,24 +425,31 @@ impl AbcomApp {
 
     /// Sauvegarde le texte courant dans les drafts pour la conversation active
     pub(crate) fn save_draft(&mut self) {
-        let selected_conv = self.state.lock().unwrap().selected_conversation.clone();
-        self.drafts.insert(selected_conv, self.input.clone());
+        let selected_conv = self.state.lock_safe().selected_conversation.clone();
+        self.composer
+            .drafts
+            .insert(selected_conv, self.composer.text.clone());
     }
 
     /// Charge le texte pour une conversation donnée et met à jour l'input
     pub(crate) fn load_draft(&mut self, conversation: Option<String>) {
-        let draft = self.drafts.get(&conversation).cloned().unwrap_or_default();
-        self.input = draft;
-        self.input_cursor_char = 0;
-        self.input_selection_anchor = None;
-        self.input_has_focus = false;
-        self.input_scroll_lines = 0.0;
+        let draft = self
+            .composer
+            .drafts
+            .get(&conversation)
+            .cloned()
+            .unwrap_or_default();
+        self.composer.text = draft;
+        self.composer.cursor_char = 0;
+        self.composer.selection_anchor = None;
+        self.composer.has_focus = false;
+        self.composer.scroll_lines = 0.0;
     }
 
     /// Change vers une nouvelle conversation, sauvegardant le draft actuel et chargeant celui de la nouvelle
     pub(crate) fn switch_conversation(&mut self, new_conversation: Option<String>) {
         self.save_draft();
-        self.state.lock().unwrap().selected_conversation = new_conversation.clone();
+        self.state.lock_safe().selected_conversation = new_conversation.clone();
         self.load_draft(new_conversation.clone());
 
         // ReadReceipts différés pour tous les messages reçus dans cette
@@ -403,7 +462,7 @@ impl AbcomApp {
     /// En salon/« Tous », l'accusé est diffusé à tous les membres en ligne
     /// pour que chacun voie le même détail « … » reçu/lu.
     pub(crate) fn send_read_receipts_for_conversation(&mut self, conv: Option<String>) {
-        let s = self.state.lock().unwrap();
+        let s = self.state.lock_safe();
         let my_name = s.my_username.clone();
         let now = chrono::Local::now().format("%H:%M").to_string();
 
@@ -434,7 +493,7 @@ impl AbcomApp {
         drop(s);
 
         for req in receipts {
-            let _ = self.send_read_receipt_tx.try_send(req);
+            let _ = self.net.send_read_receipt_tx.try_send(req);
         }
     }
 }
@@ -458,20 +517,20 @@ impl AbcomApp {
         self.window_focused = false;
 
         // Purge mémoire : textures GPU et caches d'images.
-        self.media_textures.clear();
-        self.media_texture_lru.clear();
+        self.media.textures.clear();
+        self.media.texture_lru.clear();
         self.avatar_textures.clear();
-        self.viewer_texture = None;
-        self.media_viewer = None;
-        for url in &self.known_gif_urls {
+        self.media.viewer_texture = None;
+        self.media.viewer = None;
+        for url in &self.media.known_gif_urls {
             ctx.forget_image(url);
         }
         self.forget_gif_previews(ctx);
         // Emojis : libérés aussi, re-décodés en arrière-plan au retour.
-        self.emoji_textures.clear();
-        self.emoji_map.clear();
-        self.emoji_textures_loaded = false;
-        self.emoji_decode_rx = None;
+        self.emoji.textures.clear();
+        self.emoji.map.clear();
+        self.emoji.textures_loaded = false;
+        self.emoji.decode_rx = None;
         self.chat_cache.invalidate();
     }
 
@@ -489,7 +548,7 @@ impl AbcomApp {
         #[cfg(not(windows))]
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-        self.emoji_decode_rx = Some(spawn_emoji_decoder());
+        self.emoji.decode_rx = Some(spawn_emoji_decoder());
         self.chat_cache.invalidate();
         ctx.request_repaint();
     }
@@ -538,7 +597,7 @@ impl eframe::App for AbcomApp {
             );
             if self.tray.is_none() {
                 self.tray_init_failed = true;
-                eprintln!("[tray] Icône résidente indisponible : la croix quittera l'application");
+                tracing::warn!("icône résidente indisponible : la croix quittera l'application");
             }
         }
 
@@ -592,11 +651,11 @@ impl eframe::App for AbcomApp {
         // Rafraîchit les caches dérivés si l'état a changé (génération) —
         // sinon la frame se rend sans reprendre le verrou ni rien re-dériver.
         {
-            let s = self.state.lock().unwrap();
+            let s = self.state.lock_safe();
             self.sidebar_cache.refresh(&s);
             let rebuilt = self
                 .chat_cache
-                .refresh(&s, self.ui_language, &self.emoji_map);
+                .refresh(&s, self.ui_language, &self.emoji.map);
             drop(s);
             if let Some(conv_changed) = rebuilt {
                 if conv_changed {
@@ -605,10 +664,14 @@ impl eframe::App for AbcomApp {
                 }
                 // Les GIFs sortis du fil (changement de conversation ou
                 // expiration du ring-buffer) libèrent leurs frames décodées.
-                for url in self.known_gif_urls.difference(&self.chat_cache.gif_urls) {
+                for url in self
+                    .media
+                    .known_gif_urls
+                    .difference(&self.chat_cache.gif_urls)
+                {
                     ctx.forget_image(url);
                 }
-                self.known_gif_urls = self.chat_cache.gif_urls.clone();
+                self.media.known_gif_urls = self.chat_cache.gif_urls.clone();
             }
         }
 
@@ -637,8 +700,8 @@ impl eframe::App for AbcomApp {
                     if let Some(paths) = rfd::FileDialog::new().set_title(files_title).pick_files()
                     {
                         for p in paths {
-                            if !self.pending_attachments.contains(&p) {
-                                self.pending_attachments.push(p);
+                            if !self.composer.pending_attachments.contains(&p) {
+                                self.composer.pending_attachments.push(p);
                             }
                         }
                         self.last_notification = Some(files_added.to_string());
@@ -648,8 +711,8 @@ impl eframe::App for AbcomApp {
                 2 => {
                     if let Some(path) = rfd::FileDialog::new().set_title(folder_title).pick_folder()
                     {
-                        if !self.pending_attachments.contains(&path) {
-                            self.pending_attachments.push(path);
+                        if !self.composer.pending_attachments.contains(&path) {
+                            self.composer.pending_attachments.push(path);
                         }
                         self.last_notification = Some(folder_added.to_string());
                         self.notification_time = std::time::Instant::now();
@@ -674,13 +737,13 @@ impl eframe::App for AbcomApp {
             {
                 match avatar::load_normalized_avatar(&path) {
                     Ok(png) => {
-                        let my_name = self.state.lock().unwrap().my_username.clone();
-                        self.state.lock().unwrap().set_my_avatar(png);
+                        let my_name = self.state.lock_safe().my_username.clone();
+                        self.state.lock_safe().set_my_avatar(png);
                         self.avatar_textures.remove(&my_name);
                         self.broadcast_my_avatar();
                     }
                     Err(e) => {
-                        eprintln!("[ui] Avatar non chargé : {}", e);
+                        tracing::warn!("avatar non chargé : {}", e);
                         self.last_notification = Some(error_msg.to_string());
                         self.notification_time = std::time::Instant::now();
                     }
@@ -719,7 +782,7 @@ impl eframe::App for AbcomApp {
     /// Flush final du stockage : attend que toutes les écritures en file
     /// soient appliquées avant la fermeture.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.state.lock().unwrap().flush_storage();
+        self.state.lock_safe().flush_storage();
     }
 }
 
@@ -746,12 +809,12 @@ fn build_fonts() -> egui::FontDefinitions {
 
 fn app_icon_data() -> Option<egui::IconData> {
     let data = include_bytes!("../../assets/app_icon.png");
-    eprintln!("[ui] Chargement icône PNG ({} bytes)", data.len());
+    tracing::debug!("chargement icône PNG ({} bytes)", data.len());
     match image::load_from_memory(data) {
         Ok(img) => {
             let rgba = img.to_rgba8();
             let (w, h) = rgba.dimensions();
-            eprintln!("[ui] Icône chargée : {}x{}", w, h);
+            tracing::debug!("icône chargée : {}x{}", w, h);
             Some(egui::IconData {
                 rgba: rgba.to_vec(),
                 width: w,
@@ -759,7 +822,7 @@ fn app_icon_data() -> Option<egui::IconData> {
             })
         }
         Err(err) => {
-            eprintln!("[ui] Erreur icône PNG : {}", err);
+            tracing::warn!("erreur icône PNG : {}", err);
             let mut rgba = vec![0u8; 32 * 32 * 4];
             for i in 0..(32 * 32) {
                 rgba[i * 4] = 200;
@@ -842,8 +905,8 @@ pub fn run(
         }),
     )
     .map_err(|e| {
-        eprintln!("Erreur GUI : {}", e);
-        eprintln!("Sur WSL sans GPU, utilisez make run-windows.");
+        tracing::error!("erreur GUI : {}", e);
+        tracing::error!("sur WSL sans GPU, utilisez make run-windows.");
         anyhow::anyhow!("Échec GUI : {}", e)
     })?;
 

@@ -19,8 +19,6 @@ pub enum AppEvent {
         username: String,
     },
     UserTyping(String),
-    #[allow(dead_code)]
-    UserStoppedTyping(String),
     GroupEventReceived(GroupEvent),
     ReadReceiptReceived(ReadReceipt),
     MessageAckReceived(MessageAck),

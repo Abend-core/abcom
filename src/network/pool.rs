@@ -54,7 +54,7 @@ impl ConnectionPool {
                 self.conns.lock().await.insert(addr, tx);
             }
             None => {
-                eprintln!("[network] Connexion sécurisée impossible vers {addr}");
+                tracing::warn!("connexion sécurisée impossible vers {addr}");
             }
         }
     }
@@ -65,7 +65,7 @@ impl ConnectionPool {
         let mut stream = match TcpStream::connect(addr).await {
             Ok(s) => s,
             Err(e) => {
-                eprintln!("[network] Connexion échouée vers {addr}: {e}");
+                tracing::warn!("connexion échouée vers {addr}: {e}");
                 return None;
             }
         };
@@ -78,7 +78,7 @@ impl ConnectionPool {
         {
             Ok(v) => v,
             Err(e) => {
-                eprintln!("[secure] Handshake échoué vers {addr}: {e}");
+                tracing::warn!("handshake échoué vers {addr}: {e}");
                 return None;
             }
         };
@@ -86,7 +86,7 @@ impl ConnectionPool {
         let peer = match exchange_hello(&mut secure, &self.ctx.username, true).await {
             Ok(p) => p,
             Err(e) => {
-                eprintln!("[secure] Échange Hello échoué vers {addr}: {e}");
+                tracing::warn!("échange Hello échoué vers {addr}: {e}");
                 return None;
             }
         };

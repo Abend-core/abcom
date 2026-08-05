@@ -1,5 +1,7 @@
 use eframe::egui;
 
+use crate::util::MutexExt;
+
 use super::avatar::show_avatar;
 use super::{AbcomApp, SettingsTab, ThemePreference, UiLanguage};
 
@@ -38,7 +40,7 @@ impl AbcomApp {
     /// remplace l'ancien bandeau supérieur. Un bandeau d'onglets permet de
     /// naviguer entre Général, Crédits et Licence.
     pub(crate) fn render_settings(&mut self, ctx: &egui::Context) {
-        if !self.show_settings {
+        if !self.modals.settings_open {
             return;
         }
 
@@ -63,9 +65,9 @@ impl AbcomApp {
 
         // Avatar courant (texture chargée paresseusement) calculé avant la
         // fenêtre pour éviter un double emprunt de `self` dans la closure.
-        let my_name = self.state.lock().unwrap().my_username.clone();
+        let my_name = self.state.lock_safe().my_username.clone();
         let avatar_texture = self.avatar_texture(ctx, &my_name);
-        let has_avatar = self.state.lock().unwrap().my_avatar.is_some();
+        let has_avatar = self.state.lock_safe().my_avatar.is_some();
         let mut pick_avatar = false;
         let mut clear_avatar = false;
 
@@ -102,7 +104,7 @@ impl AbcomApp {
         // ne change pas de dimensions quand on bascule d'un onglet à l'autre.
         const SETTINGS_SIZE: egui::Vec2 = egui::vec2(640.0, 480.0);
 
-        let mut open = self.show_settings;
+        let mut open = self.modals.settings_open;
         egui::Window::new(title)
             .open(&mut open)
             .resizable(false)
@@ -125,17 +127,17 @@ impl AbcomApp {
                         (SettingsTab::License, license_label),
                     ] {
                         if ui
-                            .selectable_label(self.settings_tab == tab, label)
+                            .selectable_label(self.modals.settings_tab == tab, label)
                             .clicked()
                         {
-                            self.settings_tab = tab;
+                            self.modals.settings_tab = tab;
                         }
                     }
                 });
                 ui.separator();
                 ui.add_space(8.0);
 
-                match self.settings_tab {
+                match self.modals.settings_tab {
                     SettingsTab::Profile => {
                         ui.label(egui::RichText::new(profile_heading).strong());
                         ui.add_space(8.0);
@@ -236,7 +238,7 @@ impl AbcomApp {
                                     );
                                     if ui.checkbox(&mut self.notif_preview, label).changed() {
                                         let v = if self.notif_preview { "1" } else { "0" };
-                                        self.state.lock().unwrap().set_pref("notif_preview", v);
+                                        self.state.lock_safe().set_pref("notif_preview", v);
                                     }
                                 }
                                 ui.end_row();
@@ -255,10 +257,10 @@ impl AbcomApp {
                                             Ok(()) => {
                                                 let v =
                                                     if self.autostart_enabled { "1" } else { "0" };
-                                                self.state.lock().unwrap().set_pref("autostart", v);
+                                                self.state.lock_safe().set_pref("autostart", v);
                                             }
                                             Err(e) => {
-                                                eprintln!("[autostart] échec : {e}");
+                                                tracing::warn!("échec autostart : {e}");
                                                 self.autostart_enabled = !self.autostart_enabled;
                                             }
                                         }
@@ -419,7 +421,7 @@ impl AbcomApp {
                     }
                 }
             });
-        self.show_settings = open;
+        self.modals.settings_open = open;
 
         // Application différée des actions de l'onglet Profil (hors closure pour
         // éviter tout emprunt concurrent de `self`).
@@ -428,7 +430,7 @@ impl AbcomApp {
             self.pending_avatar_pick = true;
         }
         if clear_avatar {
-            self.state.lock().unwrap().clear_my_avatar();
+            self.state.lock_safe().clear_my_avatar();
             self.avatar_textures.remove(&my_name);
             self.broadcast_my_avatar();
         }
