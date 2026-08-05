@@ -357,8 +357,8 @@ fn send_current_message(
     selected_addr: Option<std::net::SocketAddr>,
     all_peers: &[crate::app::Peer],
 ) -> bool {
-    let has_message = !app.input.trim().is_empty();
-    let has_attachments = !app.pending_attachments.is_empty();
+    let has_message = !app.composer.text.trim().is_empty();
+    let has_attachments = !app.composer.pending_attachments.is_empty();
     if !has_message && !has_attachments {
         return false;
     }
@@ -381,11 +381,11 @@ fn send_current_message(
     };
 
     if has_message {
-        if app.input.ends_with('\n') {
-            app.input.pop();
+        if app.composer.text.ends_with('\n') {
+            app.composer.text.pop();
         }
 
-        let content = app.input.trim().to_string();
+        let content = app.composer.text.trim().to_string();
         let now = chrono::Local::now();
         let msg = ChatMessage {
             from: my_name.clone(),
@@ -476,17 +476,17 @@ fn send_current_message(
             );
             app.notification_time = std::time::Instant::now();
         } else {
-            for path in app.pending_attachments.clone() {
+            for path in app.composer.pending_attachments.clone() {
                 send_one_media(app, &path, &my_name, &selected_peer_name, &targets);
             }
         }
     }
 
-    app.input.clear();
-    app.input_cursor_char = 0;
-    app.input_has_focus = true;
-    app.input_scroll_lines = 0.0;
-    app.pending_attachments.clear();
+    app.composer.text.clear();
+    app.composer.cursor_char = 0;
+    app.composer.has_focus = true;
+    app.composer.scroll_lines = 0.0;
+    app.composer.pending_attachments.clear();
     app.replying_to = None;
 
     true
@@ -504,7 +504,7 @@ impl AbcomApp {
         let path = std::env::temp_dir().join(filename);
         match std::fs::write(&path, text) {
             Ok(()) => {
-                self.pending_attachments.push(path);
+                self.composer.pending_attachments.push(path);
                 self.last_notification = Some(
                     self.tr(
                         "Texte collé trop long : joint en fichier .txt",
@@ -664,12 +664,12 @@ impl AbcomApp {
                                 ui.add_space(6.0);
                             }
 
-                            if !self.pending_attachments.is_empty() {
+                            if !self.composer.pending_attachments.is_empty() {
                                 // Bandeau uniforme avec l'aperçu de réponse :
                                 // même fond, même liseré d'accent, croix par
                                 // pièce, boutons d'ajout, liste qui s'étend
                                 // (défilement au-delà de quelques lignes).
-                                let count = self.pending_attachments.len();
+                                let count = self.composer.pending_attachments.len();
                                 let attachments_label =
                                     self.tr("Pièces jointes", "Attachments");
                                 let add_files_btn_label = self.tr("+ Fichiers", "+ Files");
@@ -744,6 +744,7 @@ impl AbcomApp {
                                                 ui.spacing_mut().item_spacing =
                                                     egui::vec2(CHIP_GAP, CHIP_GAP);
                                                 let paths: Vec<_> = self
+                                                    .composer
                                                     .pending_attachments
                                                     .iter()
                                                     .cloned()
@@ -764,7 +765,7 @@ impl AbcomApp {
                                                 }
                                             });
                                         if let Some(index) = remove_index {
-                                            self.pending_attachments.remove(index);
+                                            self.composer.pending_attachments.remove(index);
                                         }
                                     });
                                 ui.add_space(6.0);
@@ -775,7 +776,7 @@ impl AbcomApp {
                             let all_peers = self.sidebar_cache.peers.clone();
 
                             let menu_open_now =
-                                emoji_shortcode_trigger(&self.input, self.input_cursor_char)
+                                emoji_shortcode_trigger(&self.composer.text, self.composer.cursor_char)
                                     .map(|(_, q)| !q.is_empty())
                                     .unwrap_or(false);
 
@@ -784,10 +785,10 @@ impl AbcomApp {
                             let (resp, mut pressed_enter, changed, overflow_paste) =
                                 composer::custom_composer_input(
                                     ui,
-                                    &mut self.input,
-                                    &mut self.input_cursor_char,
-                                    &mut self.input_has_focus,
-                                    &mut self.input_scroll_lines,
+                                    &mut self.composer.text,
+                                    &mut self.composer.cursor_char,
+                                    &mut self.composer.has_focus,
+                                    &mut self.composer.scroll_lines,
                                     &self.emoji.map,
                                     &self.emoji.textures,
                                     &self.emoji.alias_to_char,
@@ -795,7 +796,7 @@ impl AbcomApp {
                                     menu_open_now,
                                     self.emoji.shortcode_selected,
                                     available_w,
-                                    &mut self.input_selection_anchor,
+                                    &mut self.composer.selection_anchor,
                                 );
 
                             // Collage au-delà du plafond : le texte devient une
@@ -931,7 +932,7 @@ impl AbcomApp {
                                         // Compteur de caractères, affiché à
                                         // l'approche du plafond (80 %), rouge
                                         // une fois la limite atteinte.
-                                        let input_chars = self.input.chars().count();
+                                        let input_chars = self.composer.text.chars().count();
                                         if input_chars >= composer::MAX_INPUT_CHARS * 8 / 10 {
                                             let color =
                                                 if input_chars >= composer::MAX_INPUT_CHARS {
@@ -1009,15 +1010,15 @@ impl AbcomApp {
 
                             // Popup de suggestions shortcode
                             let shortcode_limit = match emoji_shortcode_trigger(
-                                &self.input,
-                                self.input_cursor_char,
+                                &self.composer.text,
+                                self.composer.cursor_char,
                             ) {
                                 Some((_, q)) if q.is_empty() => 5,
                                 _ => 12,
                             };
                             let shortcode_list = super::emoji_picker::shortcode_suggestions(
-                                &self.input,
-                                self.input_cursor_char,
+                                &self.composer.text,
+                                self.composer.cursor_char,
                                 &self.emoji.alias_to_char,
                                 &self.emoji.aliases,
                                 shortcode_limit,
@@ -1031,7 +1032,7 @@ impl AbcomApp {
                             }
 
                             // Consumir las flechas solo si el menú de shortcodes está abierto
-                            if self.input_has_focus && menu_open_now {
+                            if self.composer.has_focus && menu_open_now {
                                 if ctx.input_mut(|i| {
                                     i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
                                 }) && !shortcode_list.is_empty()
@@ -1048,7 +1049,7 @@ impl AbcomApp {
                                 }
                             }
 
-                            if self.input_has_focus && !shortcode_list.is_empty() {
+                            if self.composer.has_focus && !shortcode_list.is_empty() {
                                 super::emoji_picker::show_shortcode_popup(
                                     ctx,
                                     ui,
@@ -1063,19 +1064,19 @@ impl AbcomApp {
 
                             if let Some(alias) = clicked_shortcode {
                                 if let Some((start, _)) =
-                                    emoji_shortcode_trigger(&self.input, self.input_cursor_char)
+                                    emoji_shortcode_trigger(&self.composer.text, self.composer.cursor_char)
                                 {
                                     if let Some(ch) = self.emoji.alias_to_char.get(&alias) {
-                                        let end = self.input_cursor_char;
+                                        let end = self.composer.cursor_char;
                                         composer::replace_char_range(
-                                            &mut self.input,
-                                            &mut self.input_cursor_char,
+                                            &mut self.composer.text,
+                                            &mut self.composer.cursor_char,
                                             start,
                                             end,
                                             ch,
                                         );
-                                        composer::sync_cursor(ctx, self.input_cursor_char);
-                                        self.input_has_focus = true;
+                                        composer::sync_cursor(ctx, self.composer.cursor_char);
+                                        self.composer.has_focus = true;
                                         self.show_emoji_picker = false;
                                     }
                                 }
@@ -1131,10 +1132,10 @@ impl AbcomApp {
                                 pressed_enter,
                                 pressed_enter_fallback,
                                 menu_open_now,
-                                &self.input,
+                                &self.composer.text,
                             ) && send_current_message(self, selected_addr, &all_peers)
                             {
-                                self.input_selection_anchor = None;
+                                self.composer.selection_anchor = None;
                                 resp.request_focus();
                                 self.show_emoji_picker = false;
                             }

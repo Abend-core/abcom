@@ -95,9 +95,13 @@ impl AbcomApp {
         }
 
         if let Some(ch) = picked {
-            composer::insert_emoji_at_cursor(&mut self.input, &mut self.input_cursor_char, &ch);
-            composer::sync_cursor(ctx, self.input_cursor_char);
-            self.input_has_focus = true;
+            composer::insert_emoji_at_cursor(
+                &mut self.composer.text,
+                &mut self.composer.cursor_char,
+                &ch,
+            );
+            composer::sync_cursor(ctx, self.composer.cursor_char);
+            self.composer.has_focus = true;
             self.show_emoji_picker = false;
         }
 
