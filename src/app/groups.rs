@@ -3,7 +3,6 @@ use std::net::SocketAddr;
 use super::AppState;
 use crate::message::Group;
 
-#[allow(dead_code)]
 impl AppState {
     /// Persiste la liste des groupes (remplacement complet, table petite)
     /// et invalide les caches dérivés de l'UI (barre latérale, fil).
@@ -150,6 +149,13 @@ impl AppState {
         self.bump_content();
     }
 
+    /// Entrée locale (avec vérification de propriétaire) pour renommer un
+    /// salon dont on est propriétaire, puis diffuser l'événement.
+    /// Non branchée : il n'existe pas encore de déclencheur UI pour un
+    /// renommage local (seul `apply_group_rename` est utilisé, côté
+    /// réception réseau). Gap fonctionnel identifié, pas du code mort à
+    /// supprimer — câblage d'une UI de renommage hors périmètre ici.
+    #[allow(dead_code)]
     pub fn rename_group(&mut self, group_name: &str, new_name: String) -> bool {
         if !self.is_group_owner(group_name) {
             return false;

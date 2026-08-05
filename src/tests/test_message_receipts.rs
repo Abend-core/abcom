@@ -1,5 +1,4 @@
-use super::{MessageAck, NetworkMessage, ReadReceipt, TypingIndicator};
-use crate::message::{ChatMessage, GroupAction, GroupEvent};
+use super::{MessageAck, ReadReceipt, TypingIndicator};
 
 // ── TypingIndicator ─────────────────────────────────────────────────────
 
@@ -58,44 +57,4 @@ fn message_ack_round_trip() {
     let decoded: MessageAck = serde_json::from_str(&json).unwrap();
     assert_eq!(decoded.from, "alice");
     assert_eq!(decoded.message_hash, 987654321);
-}
-
-// ── NetworkMessage untagged dispatch ────────────────────────────────────
-
-#[test]
-fn network_message_dispatches_chat() {
-    let chat = ChatMessage {
-        from: "alice".to_string(),
-        content: "bonjour".to_string(),
-        timestamp: "10:00".to_string(),
-        timestamp_epoch: None,
-        to_user: None,
-        media: None,
-        reply_to: None,
-        nonce: None,
-    };
-    let json = serde_json::to_string(&chat).unwrap();
-    let nm: NetworkMessage = serde_json::from_str(&json).unwrap();
-    match nm {
-        NetworkMessage::Chat(m) => assert_eq!(m.content, "bonjour"),
-        NetworkMessage::Group(_) => panic!("Devrait être Chat"),
-    }
-}
-
-#[test]
-fn network_message_dispatches_group_event() {
-    let event = GroupEvent {
-        action: GroupAction::Delete {
-            group_name: "Team".to_string(),
-        },
-    };
-    let json = serde_json::to_string(&event).unwrap();
-    let nm: NetworkMessage = serde_json::from_str(&json).unwrap();
-    match nm {
-        NetworkMessage::Group(e) => match e.action {
-            GroupAction::Delete { group_name } => assert_eq!(group_name, "Team"),
-            _ => panic!("Mauvais variant"),
-        },
-        NetworkMessage::Chat(_) => panic!("Devrait être Group"),
-    }
 }

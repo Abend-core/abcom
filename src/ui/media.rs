@@ -7,6 +7,7 @@ use std::path::Path;
 use eframe::egui;
 
 use crate::message::{extension_lower, ChatMessage, MediaAttachment, MediaKind, MediaProgress};
+use crate::util::MutexExt;
 
 use super::chat_panel::format_bytes;
 use super::AbcomApp;
@@ -144,7 +145,7 @@ pub(crate) fn render_media_progress(
                 ui.label(
                     egui::RichText::new(format_bytes(progress.total))
                         .small()
-                        .color(egui::Color32::from_gray(150)),
+                        .color(super::theme::TEXT_MUTED),
                 );
                 return;
             }
@@ -163,7 +164,7 @@ pub(crate) fn render_media_progress(
                     format_bytes(progress.total)
                 ))
                 .small()
-                .color(egui::Color32::from_gray(150)),
+                .color(super::theme::TEXT_MUTED),
             );
         });
 }
@@ -247,7 +248,7 @@ fn file_card(ui: &mut egui::Ui, media: &MediaAttachment) -> Option<MediaAction> 
                     ui.label(
                         egui::RichText::new(format_bytes(media.size_bytes))
                             .small()
-                            .color(egui::Color32::from_gray(150)),
+                            .color(super::theme::TEXT_MUTED),
                     );
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -401,13 +402,13 @@ impl AbcomApp {
         ctx: &egui::Context,
         id: &str,
     ) -> Option<egui::TextureHandle> {
-        if let Some(cached) = self.media_textures.get(id) {
+        if let Some(cached) = self.media.textures.get(id) {
             let cached = cached.clone();
             self.touch_media_texture(id);
             return cached;
         }
         let texture = self.load_media_texture(ctx, id, Some(FEED_TEXTURE_MAX_PX));
-        self.media_textures.insert(id.to_string(), texture.clone());
+        self.media.textures.insert(id.to_string(), texture.clone());
         self.touch_media_texture(id);
         self.evict_media_textures();
         texture
@@ -415,31 +416,31 @@ impl AbcomApp {
 
     /// Place `id` en tête de l'ordre d'accès LRU.
     fn touch_media_texture(&mut self, id: &str) {
-        if let Some(pos) = self.media_texture_lru.iter().position(|x| x == id) {
-            self.media_texture_lru.remove(pos);
+        if let Some(pos) = self.media.texture_lru.iter().position(|x| x == id) {
+            self.media.texture_lru.remove(pos);
         }
-        self.media_texture_lru.push(id.to_string());
+        self.media.texture_lru.push(id.to_string());
     }
 
     /// Évince les textures les moins récemment affichées au-delà du plafond
     /// (les handles droppés libèrent la mémoire GPU côté egui).
     fn evict_media_textures(&mut self) {
-        while self.media_texture_lru.len() > MEDIA_TEXTURE_CACHE_MAX {
-            let oldest = self.media_texture_lru.remove(0);
-            self.media_textures.remove(&oldest);
+        while self.media.texture_lru.len() > MEDIA_TEXTURE_CACHE_MAX {
+            let oldest = self.media.texture_lru.remove(0);
+            self.media.textures.remove(&oldest);
         }
     }
 
     /// Texture pleine résolution pour la visionneuse, conservée uniquement
     /// tant qu'elle est ouverte.
     fn viewer_texture_for(&mut self, ctx: &egui::Context, id: &str) -> Option<egui::TextureHandle> {
-        if let Some((cached_id, texture)) = &self.viewer_texture {
+        if let Some((cached_id, texture)) = &self.media.viewer_texture {
             if cached_id == id {
                 return Some(texture.clone());
             }
         }
         let texture = self.load_media_texture(ctx, id, None)?;
-        self.viewer_texture = Some((id.to_string(), texture.clone()));
+        self.media.viewer_texture = Some((id.to_string(), texture.clone()));
         Some(texture)
     }
 
@@ -449,7 +450,7 @@ impl AbcomApp {
         id: &str,
         max_px: Option<u32>,
     ) -> Option<egui::TextureHandle> {
-        let bytes = self.state.lock().unwrap().media_bytes(id)?;
+        let bytes = self.state.lock_safe().media_bytes(id)?;
         let mut image = image::load_from_memory(&bytes).ok()?;
         let name = match max_px {
             Some(max) => {
@@ -471,7 +472,7 @@ impl AbcomApp {
 
     /// Nom d'origine d'un média retrouvé dans l'historique (sinon son `id`).
     fn media_filename(&self, id: &str) -> String {
-        let s = self.state.lock().unwrap();
+        let s = self.state.lock_safe();
         s.messages
             .iter()
             .filter_map(|m| m.media.as_ref())
@@ -490,7 +491,7 @@ impl AbcomApp {
             ));
             return;
         };
-        let src = self.state.lock().unwrap().media_path(id);
+        let src = self.state.lock_safe().media_path(id);
         let dest = unique_destination(&dir, filename);
         match std::fs::copy(&src, &dest) {
             Ok(_) => {
@@ -503,7 +504,7 @@ impl AbcomApp {
                 self.notify_owned(msg);
             }
             Err(e) => {
-                eprintln!("[ui] Téléchargement échoué ({}): {}", filename, e);
+                tracing::warn!("téléchargement échoué ({}): {}", filename, e);
                 self.notify(self.tr("Téléchargement impossible", "Download failed"));
             }
         }
@@ -511,9 +512,9 @@ impl AbcomApp {
 
     /// Visionneuse plein écran : image agrandie + bouton de téléchargement.
     pub(crate) fn show_media_viewer(&mut self, ctx: &egui::Context) {
-        let Some(id) = self.media_viewer.clone() else {
+        let Some(id) = self.media.viewer.clone() else {
             // Visionneuse fermée : libère la texture pleine résolution.
-            self.viewer_texture = None;
+            self.media.viewer_texture = None;
             return;
         };
         let texture = self.viewer_texture_for(ctx, &id);
@@ -557,8 +558,8 @@ impl AbcomApp {
             self.download_media(&id, &filename);
         }
         if !open {
-            self.media_viewer = None;
-            self.viewer_texture = None;
+            self.media.viewer = None;
+            self.media.viewer_texture = None;
         }
     }
 

@@ -2,6 +2,7 @@ use chrono::{Datelike, Local, NaiveDate, TimeZone};
 use eframe::egui;
 
 use crate::message::{ChatMessage, ReactionEntry};
+use crate::util::MutexExt;
 
 use super::{AbcomApp, ReplyTarget, UiLanguage};
 
@@ -147,7 +148,7 @@ pub(crate) fn day_divider_label(date: NaiveDate, today: NaiveDate, language: UiL
 fn render_day_divider(ui: &mut egui::Ui, label: &str) {
     ui.add_space(14.0);
     let line_color = egui::Color32::from_gray(80);
-    let text_color = egui::Color32::from_gray(150);
+    let text_color = super::theme::TEXT_MUTED;
     let font = egui::TextStyle::Small.resolve(ui.style());
 
     let full_width = ui.available_width();
@@ -602,9 +603,10 @@ impl AbcomApp {
             .recent_reaction_emojis
             .iter()
             .filter_map(|e| {
-                self.emoji_map
+                self.emoji
+                    .map
                     .get(e)
-                    .and_then(|&idx| self.emoji_textures.get(idx))
+                    .and_then(|&idx| self.emoji.textures.get(idx))
                     .cloned()
             })
             .collect();
@@ -650,8 +652,8 @@ impl AbcomApp {
                                 ui,
                                 emoji_rect,
                                 ch,
-                                &self.emoji_map,
-                                &self.emoji_textures,
+                                &self.emoji.map,
+                                &self.emoji.textures,
                             );
                             if resp.clicked() {
                                 quick_emoji = Some(ch.clone());
@@ -807,7 +809,7 @@ impl AbcomApp {
                             .button(self.tr("👥 Voir les participants", "👥 View participants"))
                             .clicked()
                         {
-                            self.show_participants = true;
+                            self.modals.participants_open = true;
                             ui.close_menu();
                         }
                         if let Some(gname) = &selected_group_name {
@@ -815,8 +817,8 @@ impl AbcomApp {
                                 .button(self.tr("⚙ Gérer le groupe", "⚙ Manage group"))
                                 .clicked()
                             {
-                                self.group_manage_target = Some(gname.clone());
-                                self.group_manage_confirm = None;
+                                self.modals.group_manage_target = Some(gname.clone());
+                                self.modals.group_manage_confirm = None;
                                 ui.close_menu();
                             }
                         }
@@ -825,7 +827,7 @@ impl AbcomApp {
                                 .button(self.tr("Renommer ce contact", "Rename contact"))
                                 .clicked()
                             {
-                                self.rename_input = self
+                                self.modals.rename_input = self
                                     .state
                                     .lock()
                                     .unwrap()
@@ -834,7 +836,7 @@ impl AbcomApp {
                                     .find(|r| &r.username == user)
                                     .and_then(|r| r.alias.clone())
                                     .unwrap_or_default();
-                                self.rename_target = Some(user.clone());
+                                self.modals.rename_target = Some(user.clone());
                                 ui.close_menu();
                             }
                         }
@@ -843,7 +845,7 @@ impl AbcomApp {
                                 .button(self.tr("🗑 Effacer l'historique", "🗑 Clear history"))
                                 .clicked()
                         {
-                            self.state.lock().unwrap().clear_conversation_history();
+                            self.state.lock_safe().clear_conversation_history();
                             ui.close_menu();
                         }
                     });
@@ -852,7 +854,7 @@ impl AbcomApp {
             ui.separator();
 
             // Popup participants (instantané depuis le cache latéral).
-            if self.show_participants {
+            if self.modals.participants_open {
                 let conv_name = self
                     .sidebar_cache
                     .selected_conversation
@@ -872,7 +874,7 @@ impl AbcomApp {
                             .find(|g| g.name == name)
                             .cloned()
                     });
-                let mut open = self.show_participants;
+                let mut open = self.modals.participants_open;
                 egui::Window::new(self.tr("Participants", "Participants"))
                     .open(&mut open)
                     .resizable(false)
@@ -924,13 +926,13 @@ impl AbcomApp {
                             }
                         }
                     });
-                self.show_participants = open;
+                self.modals.participants_open = open;
             }
 
             // Modale de renommage de contact
-            if let Some(target) = self.rename_target.clone() {
+            if let Some(target) = self.modals.rename_target.clone() {
                 // Libellés calculés avant la closure (évite d'emprunter `self`
-                // pendant qu'on édite `self.rename_input`).
+                // pendant qu'on édite `self.modals.rename_input`).
                 let title = self.tr("Renommer le contact", "Rename contact");
                 let lbl_original = self.tr("Nom d'origine", "Original name");
                 let hint = self.tr("Alias (vide = retirer)", "Alias (empty = remove)");
@@ -949,7 +951,7 @@ impl AbcomApp {
                         ui.label(format!("{}: {}", lbl_original, target));
                         ui.add_space(6.0);
                         ui.add(
-                            egui::TextEdit::singleline(&mut self.rename_input)
+                            egui::TextEdit::singleline(&mut self.modals.rename_input)
                                 .hint_text(hint)
                                 .desired_width(240.0),
                         );
@@ -961,15 +963,15 @@ impl AbcomApp {
                     });
 
                 if do_save {
-                    let trimmed = self.rename_input.trim();
+                    let trimmed = self.modals.rename_input.trim();
                     let alias = (!trimmed.is_empty()).then(|| trimmed.to_string());
-                    self.state.lock().unwrap().set_peer_alias(&target, alias);
-                    self.rename_target = None;
+                    self.state.lock_safe().set_peer_alias(&target, alias);
+                    self.modals.rename_target = None;
                 } else if do_clear {
-                    self.state.lock().unwrap().set_peer_alias(&target, None);
-                    self.rename_target = None;
+                    self.state.lock_safe().set_peer_alias(&target, None);
+                    self.modals.rename_target = None;
                 } else if !open {
-                    self.rename_target = None;
+                    self.modals.rename_target = None;
                 }
             }
 
@@ -1148,10 +1150,10 @@ impl AbcomApp {
                                             row.collapse.as_ref(),
                                             expanded,
                                             language,
-                                            &self.emoji_map,
-                                            &self.emoji_textures,
+                                            &self.emoji.map,
+                                            &self.emoji.textures,
                                             &media_textures,
-                                            &self.media_progress,
+                                            &self.media.progress,
                                         );
                                         collapse_toggled |= toggled;
                                         if let Some(action) = media_action {
@@ -1166,8 +1168,8 @@ impl AbcomApp {
                                             ui,
                                             &row.reactions,
                                             &my_name,
-                                            &self.emoji_map,
-                                            &self.emoji_textures,
+                                            &self.emoji.map,
+                                            &self.emoji.textures,
                                         ) {
                                             reaction_clicked = Some(emoji);
                                         }
@@ -1192,10 +1194,10 @@ impl AbcomApp {
                                         row.collapse.as_ref(),
                                         expanded,
                                         language,
-                                        &self.emoji_map,
-                                        &self.emoji_textures,
+                                        &self.emoji.map,
+                                        &self.emoji.textures,
                                         &media_textures,
-                                        &self.media_progress,
+                                        &self.media.progress,
                                     );
                                     collapse_toggled |= toggled;
                                     if let Some(action) = media_action {
@@ -1210,8 +1212,8 @@ impl AbcomApp {
                                         ui,
                                         &row.reactions,
                                         &my_name,
-                                        &self.emoji_map,
-                                        &self.emoji_textures,
+                                        &self.emoji.map,
+                                        &self.emoji.textures,
                                     ) {
                                         reaction_clicked = Some(emoji);
                                     }
@@ -1364,8 +1366,7 @@ impl AbcomApp {
                         (self.chat_visible_count + super::CHAT_WINDOW_STEP).min(total);
                     self.chat_prepend_fix = Some(scroll_out.content_size.y);
                     ctx.request_repaint();
-                } else if !self.loading_older && self.state.lock().unwrap().request_older_messages()
-                {
+                } else if !self.loading_older && self.state.lock_safe().request_older_messages() {
                     self.loading_older = true;
                     self.chat_prepend_fix = Some(scroll_out.content_size.y);
                 }
@@ -1373,7 +1374,7 @@ impl AbcomApp {
 
             // Application des actions médias collectées pendant le rendu.
             if let Some(id) = media_view_open {
-                self.media_viewer = Some(id);
+                self.media.viewer = Some(id);
             }
             if let Some((id, filename)) = media_download {
                 self.download_media(&id, &filename);
@@ -1384,12 +1385,12 @@ impl AbcomApp {
     /// Bandeaux d'acceptation des médias volumineux (> 1 Go) reçus. Accepter →
     /// le pair streame alors le média ; Refuser → l'envoi est abandonné.
     fn render_media_offers(&mut self, ui: &mut egui::Ui) {
-        if self.pending_media_offers.is_empty() {
+        if self.media.pending_offers.is_empty() {
             return;
         }
         let mut decided: Option<(usize, bool)> = None;
 
-        for (index, offer) in self.pending_media_offers.iter().enumerate() {
+        for (index, offer) in self.media.pending_offers.iter().enumerate() {
             ui.add_space(6.0);
             egui::Frame::group(ui.style())
                 .fill(egui::Color32::from_rgb(48, 52, 60))
@@ -1427,10 +1428,10 @@ impl AbcomApp {
         }
 
         if let Some((index, accept)) = decided {
-            let offer = self.pending_media_offers.remove(index);
+            let offer = self.media.pending_offers.remove(index);
             if !accept {
                 // Refus : annoter le fil (message attribué à l'expéditeur).
-                let mut s = self.state.lock().unwrap();
+                let mut s = self.state.lock_safe();
                 let me = s.my_username.clone();
                 s.add_message(super::media::refused_media_message(
                     &offer.from,

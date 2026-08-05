@@ -2,6 +2,7 @@ use eframe::egui;
 
 use crate::app::AppState;
 use crate::message::{ReadReceipt, ReadReceiptRequest};
+use crate::util::MutexExt;
 
 use super::AbcomApp;
 
@@ -41,8 +42,8 @@ impl AbcomApp {
                         );
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             if gear_button(ui).on_hover_text(settings_tip).clicked() {
-                                self.settings_tab = super::SettingsTab::General;
-                                self.show_settings = true;
+                                self.modals.settings_tab = super::SettingsTab::General;
+                                self.modals.settings_open = true;
                             }
                         });
                     });
@@ -152,10 +153,10 @@ impl AbcomApp {
                 };
                 let pin_resp = paint_pin_button(ui, rect, pin_id, is_pinned, pin_tip);
                 if pin_resp.clicked() {
-                    self.state.lock().unwrap().toggle_pinned(&peer.username);
+                    self.state.lock_safe().toggle_pinned(&peer.username);
                 } else if resp.clicked() {
                     let (is_selected_now, peer_name, peer_addr_for_receipt) = {
-                        let s = self.state.lock().unwrap();
+                        let s = self.state.lock_safe();
                         let is_sel = s
                             .selected_conversation
                             .as_ref()
@@ -170,7 +171,7 @@ impl AbcomApp {
                         self.switch_conversation(None);
                     } else {
                         self.switch_conversation(Some(peer_name.clone()));
-                        let mut s = self.state.lock().unwrap();
+                        let mut s = self.state.lock_safe();
                         s.mark_conversation_read(&peer_name);
                         let my_name = s.my_username.clone();
                         let msgs_to_read: Vec<_> = s
@@ -194,7 +195,7 @@ impl AbcomApp {
                                 to_addr: peer_addr_for_receipt,
                                 receipt,
                             };
-                            let _ = self.send_read_receipt_tx.try_send(req);
+                            let _ = self.net.send_read_receipt_tx.try_send(req);
                         }
                     }
                 }
@@ -214,9 +215,9 @@ impl AbcomApp {
                     .on_hover_text(self.tr("Créer un groupe", "Create a group"))
                     .clicked()
                 {
-                    self.show_group_modal = true;
-                    self.group_name_input.clear();
-                    self.group_members_selected.clear();
+                    self.modals.group_modal_open = true;
+                    self.modals.group_name_input.clear();
+                    self.modals.group_members_selected.clear();
                 }
             });
         });
@@ -309,13 +310,13 @@ impl AbcomApp {
                 };
                 let pin_resp = paint_pin_button(ui, rect, pin_id, is_pinned, pin_tip);
                 if pin_resp.clicked() {
-                    self.state.lock().unwrap().toggle_pinned(&conv_key);
+                    self.state.lock_safe().toggle_pinned(&conv_key);
                 } else if resp.clicked() {
                     if is_selected {
                         self.switch_conversation(None);
                     } else {
                         self.switch_conversation(Some(conv_key.clone()));
-                        self.state.lock().unwrap().mark_conversation_read(&conv_key);
+                        self.state.lock_safe().mark_conversation_read(&conv_key);
                     }
                 }
                 ui.add_space(4.0);

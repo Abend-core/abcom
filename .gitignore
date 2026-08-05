@@ -3,3 +3,5 @@
 /dist
 *.zip
 nohup.out
+.DS_Store
+*.log

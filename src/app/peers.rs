@@ -82,16 +82,6 @@ impl AppState {
             .any(|p| p.username == username && p.online)
     }
 
-    /// Adresses de tous les pairs en ligne
-    #[allow(dead_code)]
-    pub fn get_online_peers(&self) -> Vec<SocketAddr> {
-        self.peers
-            .iter()
-            .filter(|p| p.online)
-            .map(|p| p.addr)
-            .collect()
-    }
-
     /// Alias d'un pair s'il en a un, sinon son username
     pub fn peer_display_name(&self, username: &str) -> String {
         self.peer_records

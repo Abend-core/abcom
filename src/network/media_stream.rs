@@ -121,7 +121,7 @@ pub async fn run_media_sender(mut rx: Receiver<MediaSendJob>, ctx: Arc<NetContex
             let id = job.header.media.id.clone();
             let total = job.header.media.size_bytes;
             if let Err(e) = stream_out(&job, &ctx).await {
-                eprintln!("[media] envoi échoué ({}): {}", id, e);
+                tracing::warn!("envoi échoué ({}): {}", id, e);
                 let _ = ctx.event_tx.send(failed(&id, total)).await;
             }
         });
@@ -200,7 +200,7 @@ pub async fn run_media_server(
     let listener = match TcpListener::bind(format!("0.0.0.0:{}", config::media_port())).await {
         Ok(listener) => listener,
         Err(e) => {
-            eprintln!("[media] erreur de bind: {}", e);
+            tracing::error!("erreur de bind : {}", e);
             return;
         }
     };
@@ -212,7 +212,7 @@ pub async fn run_media_server(
             let media_dir = media_dir.clone();
             tokio::spawn(async move {
                 if let Err(e) = stream_in(stream, ctx, offer_tx, media_dir).await {
-                    eprintln!("[media] réception échouée: {}", e);
+                    tracing::warn!("réception échouée : {}", e);
                 }
             });
         }

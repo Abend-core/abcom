@@ -1,6 +1,8 @@
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
+use util::MutexExt;
+
 mod app;
 mod archive;
 mod autostart;
@@ -13,8 +15,16 @@ mod message;
 mod network;
 mod notify;
 mod ui;
+mod util;
 
 fn main() -> anyhow::Result<()> {
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| "abcom=info".into()),
+        )
+        .init();
+
     if let Ok(content) = std::fs::read_to_string(".env") {
         for line in content.lines() {
             let line = line.trim();
@@ -87,7 +97,7 @@ fn main() -> anyhow::Result<()> {
         .map(|p| network::secure::derive_psk(p.trim()));
     let psk_active = psk.is_some();
     if psk_active {
-        eprintln!("[secure] Passphrase de salon active (handshake XXpsk3)");
+        tracing::info!("passphrase de salon active (handshake XXpsk3)");
     }
 
     let net_ctx = Arc::new(network::NetContext {
@@ -108,7 +118,7 @@ fn main() -> anyhow::Result<()> {
     // Autostart : activé par défaut au premier lancement d'un build release
     // (préférence persistée, interrupteur dans Paramètres).
     {
-        let mut s = state.lock().unwrap();
+        let mut s = state.lock_safe();
         let existing = s.kv.get("autostart").map(|v| v == "1");
         let effective = autostart::init_default(existing);
         if existing.is_none() {

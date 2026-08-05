@@ -10,6 +10,7 @@ use crate::message::{
     ChatMessage, MediaAttachment, MediaKind, MediaSendJob, MediaStreamHeader, SendRequest,
     TypingIndicator, TypingRequest,
 };
+use crate::util::MutexExt;
 
 use super::composer;
 use super::emoji_picker::emoji_shortcode_trigger;
@@ -253,7 +254,7 @@ fn send_one_media(
     targets: &[(String, std::net::SocketAddr)],
 ) {
     let state = app.state.clone();
-    let send_media_tx = app.send_media_tx.clone();
+    let send_media_tx = app.net.send_media_tx.clone();
     let path = path.to_path_buf();
     let my_name = my_name.to_string();
     let to_user = to_user.clone();
@@ -263,7 +264,7 @@ fn send_one_media(
         if let Err(e) =
             prepare_and_stream(&state, &send_media_tx, &path, &my_name, &to_user, &targets)
         {
-            eprintln!("[ui] préparation média échouée ({}): {}", path.display(), e);
+            tracing::warn!("préparation média échouée ({}): {}", path.display(), e);
         }
     });
 }
@@ -282,7 +283,7 @@ fn prepare_and_stream(
     let filename = super::media::media_display_name(path);
     let id = super::media::media_id(&filename);
 
-    let dest = state.lock().unwrap().media_path(&id);
+    let dest = state.lock_safe().media_path(&id);
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -320,7 +321,7 @@ fn prepare_and_stream(
     };
 
     // Notre propre copie du message (la carte apparaît, avec progression).
-    state.lock().unwrap().add_message(ChatMessage {
+    state.lock_safe().add_message(ChatMessage {
         from: my_name.to_string(),
         content: String::new(),
         timestamp: header.timestamp.clone(),
@@ -356,14 +357,14 @@ fn send_current_message(
     selected_addr: Option<std::net::SocketAddr>,
     all_peers: &[crate::app::Peer],
 ) -> bool {
-    let has_message = !app.input.trim().is_empty();
-    let has_attachments = !app.pending_attachments.is_empty();
+    let has_message = !app.composer.text.trim().is_empty();
+    let has_attachments = !app.composer.pending_attachments.is_empty();
     if !has_message && !has_attachments {
         return false;
     }
 
     let (my_name, selected_peer_name, transfer_targets, group_addrs) = {
-        let s = app.state.lock().unwrap();
+        let s = app.state.lock_safe();
         // Salon de groupe sélectionné : les destinataires sont les membres
         // en ligne du groupe, pas l'ensemble des pairs.
         let group_addrs = s
@@ -380,11 +381,11 @@ fn send_current_message(
     };
 
     if has_message {
-        if app.input.ends_with('\n') {
-            app.input.pop();
+        if app.composer.text.ends_with('\n') {
+            app.composer.text.pop();
         }
 
-        let content = app.input.trim().to_string();
+        let content = app.composer.text.trim().to_string();
         let now = chrono::Local::now();
         let msg = ChatMessage {
             from: my_name.clone(),
@@ -414,7 +415,7 @@ fn send_current_message(
 
         {
             let msg_hash = AppState::message_hash(&msg);
-            let mut s = app.state.lock().unwrap();
+            let mut s = app.state.lock_safe();
             s.add_message(msg.clone());
             if let Some(peer_name) = &selected_peer_name {
                 if !peer_name.starts_with('#') {
@@ -433,13 +434,13 @@ fn send_current_message(
         if let Some(addrs) = &group_addrs {
             // Salon : uniquement les membres en ligne du groupe.
             for addr in addrs {
-                let _ = app.send_tx.try_send(SendRequest {
+                let _ = app.net.send_tx.try_send(SendRequest {
                     to_addr: *addr,
                     message: msg.clone(),
                 });
             }
         } else if let Some(addr) = selected_addr {
-            let _ = app.send_tx.try_send(SendRequest {
+            let _ = app.net.send_tx.try_send(SendRequest {
                 to_addr: addr,
                 message: msg,
             });
@@ -450,7 +451,7 @@ fn send_current_message(
                 .iter()
                 .filter(|p| p.online && !p.addr.ip().is_unspecified())
             {
-                let _ = app.send_tx.try_send(SendRequest {
+                let _ = app.net.send_tx.try_send(SendRequest {
                     to_addr: peer.addr,
                     message: msg.clone(),
                 });
@@ -475,17 +476,17 @@ fn send_current_message(
             );
             app.notification_time = std::time::Instant::now();
         } else {
-            for path in app.pending_attachments.clone() {
+            for path in app.composer.pending_attachments.clone() {
                 send_one_media(app, &path, &my_name, &selected_peer_name, &targets);
             }
         }
     }
 
-    app.input.clear();
-    app.input_cursor_char = 0;
-    app.input_has_focus = true;
-    app.input_scroll_lines = 0.0;
-    app.pending_attachments.clear();
+    app.composer.text.clear();
+    app.composer.cursor_char = 0;
+    app.composer.has_focus = true;
+    app.composer.scroll_lines = 0.0;
+    app.composer.pending_attachments.clear();
     app.replying_to = None;
 
     true
@@ -503,7 +504,7 @@ impl AbcomApp {
         let path = std::env::temp_dir().join(filename);
         match std::fs::write(&path, text) {
             Ok(()) => {
-                self.pending_attachments.push(path);
+                self.composer.pending_attachments.push(path);
                 self.last_notification = Some(
                     self.tr(
                         "Texte collé trop long : joint en fichier .txt",
@@ -568,7 +569,7 @@ impl AbcomApp {
                 let gif_label = self.tr("GIF", "GIF");
                 egui::Frame::default()
                     .fill(egui::Color32::from_rgb(66, 66, 69))
-                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(96, 96, 100)))
+                    .stroke(egui::Stroke::new(1.0, super::theme::SEPARATOR))
                     .corner_radius(egui::CornerRadius::same(14))
                     .inner_margin(egui::Margin::symmetric(8, 4))
                     .show(ui, |ui| {
@@ -663,12 +664,12 @@ impl AbcomApp {
                                 ui.add_space(6.0);
                             }
 
-                            if !self.pending_attachments.is_empty() {
+                            if !self.composer.pending_attachments.is_empty() {
                                 // Bandeau uniforme avec l'aperçu de réponse :
                                 // même fond, même liseré d'accent, croix par
                                 // pièce, boutons d'ajout, liste qui s'étend
                                 // (défilement au-delà de quelques lignes).
-                                let count = self.pending_attachments.len();
+                                let count = self.composer.pending_attachments.len();
                                 let attachments_label =
                                     self.tr("Pièces jointes", "Attachments");
                                 let add_files_btn_label = self.tr("+ Fichiers", "+ Files");
@@ -743,6 +744,7 @@ impl AbcomApp {
                                                 ui.spacing_mut().item_spacing =
                                                     egui::vec2(CHIP_GAP, CHIP_GAP);
                                                 let paths: Vec<_> = self
+                                                    .composer
                                                     .pending_attachments
                                                     .iter()
                                                     .cloned()
@@ -763,7 +765,7 @@ impl AbcomApp {
                                                 }
                                             });
                                         if let Some(index) = remove_index {
-                                            self.pending_attachments.remove(index);
+                                            self.composer.pending_attachments.remove(index);
                                         }
                                     });
                                 ui.add_space(6.0);
@@ -774,7 +776,7 @@ impl AbcomApp {
                             let all_peers = self.sidebar_cache.peers.clone();
 
                             let menu_open_now =
-                                emoji_shortcode_trigger(&self.input, self.input_cursor_char)
+                                emoji_shortcode_trigger(&self.composer.text, self.composer.cursor_char)
                                     .map(|(_, q)| !q.is_empty())
                                     .unwrap_or(false);
 
@@ -783,18 +785,18 @@ impl AbcomApp {
                             let (resp, mut pressed_enter, changed, overflow_paste) =
                                 composer::custom_composer_input(
                                     ui,
-                                    &mut self.input,
-                                    &mut self.input_cursor_char,
-                                    &mut self.input_has_focus,
-                                    &mut self.input_scroll_lines,
-                                    &self.emoji_map,
-                                    &self.emoji_textures,
-                                    &self.emoji_alias_to_char,
-                                    &self.emoji_aliases,
+                                    &mut self.composer.text,
+                                    &mut self.composer.cursor_char,
+                                    &mut self.composer.has_focus,
+                                    &mut self.composer.scroll_lines,
+                                    &self.emoji.map,
+                                    &self.emoji.textures,
+                                    &self.emoji.alias_to_char,
+                                    &self.emoji.aliases,
                                     menu_open_now,
-                                    self.shortcode_selected,
+                                    self.emoji.shortcode_selected,
                                     available_w,
-                                    &mut self.input_selection_anchor,
+                                    &mut self.composer.selection_anchor,
                                 );
 
                             // Collage au-delà du plafond : le texte devient une
@@ -814,7 +816,7 @@ impl AbcomApp {
                             ui.painter().hline(
                                 sep_rect.x_range(),
                                 sep_rect.center().y,
-                                egui::Stroke::new(1.0, egui::Color32::from_rgb(96, 96, 100)),
+                                egui::Stroke::new(1.0, super::theme::SEPARATOR),
                             );
                             ui.add_space(3.0);
 
@@ -840,7 +842,7 @@ impl AbcomApp {
                                         }
 
                                         let emoji_btn =
-                                            if let Some((_, tex)) = self.emoji_textures.first() {
+                                            if let Some((_, tex)) = self.emoji.textures.first() {
                                                 icon_button(
                                                     ui,
                                                     self.tr("Emojis", "Emoji"),
@@ -871,7 +873,7 @@ impl AbcomApp {
                                             };
                                         if emoji_btn.clicked() {
                                             self.show_emoji_picker = !self.show_emoji_picker;
-                                            self.show_gif_picker = false;
+                                            self.gif_picker.show = false;
                                             emoji_button_clicked = true;
                                         }
 
@@ -881,11 +883,11 @@ impl AbcomApp {
                                                 .size(10.5)
                                                 .color(egui::Color32::from_rgb(244, 245, 247)),
                                             gif_label,
-                                            self.show_gif_picker,
+                                            self.gif_picker.show,
                                         );
                                         if gif_btn.clicked() {
                                             if crate::config::klipy_api_key().is_some() {
-                                                self.show_gif_picker = !self.show_gif_picker;
+                                                self.gif_picker.show = !self.gif_picker.show;
                                                 self.show_emoji_picker = false;
                                                 gif_button_clicked = true;
                                             } else {
@@ -930,13 +932,13 @@ impl AbcomApp {
                                         // Compteur de caractères, affiché à
                                         // l'approche du plafond (80 %), rouge
                                         // une fois la limite atteinte.
-                                        let input_chars = self.input.chars().count();
+                                        let input_chars = self.composer.text.chars().count();
                                         if input_chars >= composer::MAX_INPUT_CHARS * 8 / 10 {
                                             let color =
                                                 if input_chars >= composer::MAX_INPUT_CHARS {
                                                     egui::Color32::from_rgb(230, 80, 80)
                                                 } else {
-                                                    egui::Color32::from_gray(150)
+                                                    super::theme::TEXT_MUTED
                                                 };
                                             ui.label(
                                                 egui::RichText::new(format!(
@@ -1008,73 +1010,73 @@ impl AbcomApp {
 
                             // Popup de suggestions shortcode
                             let shortcode_limit = match emoji_shortcode_trigger(
-                                &self.input,
-                                self.input_cursor_char,
+                                &self.composer.text,
+                                self.composer.cursor_char,
                             ) {
                                 Some((_, q)) if q.is_empty() => 5,
                                 _ => 12,
                             };
                             let shortcode_list = super::emoji_picker::shortcode_suggestions(
-                                &self.input,
-                                self.input_cursor_char,
-                                &self.emoji_alias_to_char,
-                                &self.emoji_aliases,
+                                &self.composer.text,
+                                self.composer.cursor_char,
+                                &self.emoji.alias_to_char,
+                                &self.emoji.aliases,
                                 shortcode_limit,
                             );
 
                             let mut clicked_shortcode: Option<String> = None;
                             if shortcode_list.is_empty() {
-                                self.shortcode_selected = 0;
-                            } else if self.shortcode_selected >= shortcode_list.len() {
-                                self.shortcode_selected = shortcode_list.len() - 1;
+                                self.emoji.shortcode_selected = 0;
+                            } else if self.emoji.shortcode_selected >= shortcode_list.len() {
+                                self.emoji.shortcode_selected = shortcode_list.len() - 1;
                             }
 
                             // Consumir las flechas solo si el menú de shortcodes está abierto
-                            if self.input_has_focus && menu_open_now {
+                            if self.composer.has_focus && menu_open_now {
                                 if ctx.input_mut(|i| {
                                     i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
                                 }) && !shortcode_list.is_empty()
                                 {
-                                    self.shortcode_selected = (self.shortcode_selected + 1)
+                                    self.emoji.shortcode_selected = (self.emoji.shortcode_selected + 1)
                                         .min(shortcode_list.len() - 1);
                                 }
                                 if ctx.input_mut(|i| {
                                     i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)
                                 }) && !shortcode_list.is_empty()
                                 {
-                                    self.shortcode_selected =
-                                        self.shortcode_selected.saturating_sub(1);
+                                    self.emoji.shortcode_selected =
+                                        self.emoji.shortcode_selected.saturating_sub(1);
                                 }
                             }
 
-                            if self.input_has_focus && !shortcode_list.is_empty() {
+                            if self.composer.has_focus && !shortcode_list.is_empty() {
                                 super::emoji_picker::show_shortcode_popup(
                                     ctx,
                                     ui,
                                     &resp,
                                     &shortcode_list,
-                                    &self.emoji_map,
-                                    &self.emoji_textures,
-                                    self.shortcode_selected,
+                                    &self.emoji.map,
+                                    &self.emoji.textures,
+                                    self.emoji.shortcode_selected,
                                     &mut clicked_shortcode,
                                 );
                             }
 
                             if let Some(alias) = clicked_shortcode {
                                 if let Some((start, _)) =
-                                    emoji_shortcode_trigger(&self.input, self.input_cursor_char)
+                                    emoji_shortcode_trigger(&self.composer.text, self.composer.cursor_char)
                                 {
-                                    if let Some(ch) = self.emoji_alias_to_char.get(&alias) {
-                                        let end = self.input_cursor_char;
+                                    if let Some(ch) = self.emoji.alias_to_char.get(&alias) {
+                                        let end = self.composer.cursor_char;
                                         composer::replace_char_range(
-                                            &mut self.input,
-                                            &mut self.input_cursor_char,
+                                            &mut self.composer.text,
+                                            &mut self.composer.cursor_char,
                                             start,
                                             end,
                                             ch,
                                         );
-                                        composer::sync_cursor(ctx, self.input_cursor_char);
-                                        self.input_has_focus = true;
+                                        composer::sync_cursor(ctx, self.composer.cursor_char);
+                                        self.composer.has_focus = true;
                                         self.show_emoji_picker = false;
                                     }
                                 }
@@ -1085,7 +1087,7 @@ impl AbcomApp {
                             {
                                 self.last_typing_broadcast = std::time::Instant::now();
                                 let (my_name, target_addrs) = {
-                                    let s = self.state.lock().unwrap();
+                                    let s = self.state.lock_safe();
                                     let name = s.my_username.clone();
                                     let addrs = match &s.selected_conversation {
                                         None => s
@@ -1109,7 +1111,7 @@ impl AbcomApp {
                                     (name, addrs)
                                 };
                                 for addr in target_addrs {
-                                    let _ = self.send_typing_tx.try_send(TypingRequest {
+                                    let _ = self.net.send_typing_tx.try_send(TypingRequest {
                                         to_addr: addr,
                                         indicator: TypingIndicator {
                                             from: my_name.clone(),
@@ -1130,10 +1132,10 @@ impl AbcomApp {
                                 pressed_enter,
                                 pressed_enter_fallback,
                                 menu_open_now,
-                                &self.input,
+                                &self.composer.text,
                             ) && send_current_message(self, selected_addr, &all_peers)
                             {
-                                self.input_selection_anchor = None;
+                                self.composer.selection_anchor = None;
                                 resp.request_focus();
                                 self.show_emoji_picker = false;
                             }

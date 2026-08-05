@@ -6,6 +6,7 @@ use crate::message::{
     AppEvent, AvatarRequest, ChatMessage, GroupAction, GroupEvent, MessageAck, MessageAckRequest,
     ReadReceipt, ReadReceiptRequest, SendGroupRequest,
 };
+use crate::util::MutexExt;
 
 impl AbcomApp {
     /// Textures emoji : les PNG sont décodés dans un thread au démarrage
@@ -13,10 +14,10 @@ impl AbcomApp {
     /// et créer les textures (rapide). Tant qu'il n'est pas prêt, l'UI
     /// s'affiche sans emojis et repeint brièvement en attendant.
     pub(crate) fn lazy_load_emoji(&mut self, ctx: &egui::Context) {
-        if self.emoji_textures_loaded {
+        if self.emoji.textures_loaded {
             return;
         }
-        let Some(rx) = &self.emoji_decode_rx else {
+        let Some(rx) = &self.emoji.decode_rx else {
             return;
         };
         let images = match rx.try_recv() {
@@ -27,13 +28,13 @@ impl AbcomApp {
                 return;
             }
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.emoji_decode_rx = None;
+                self.emoji.decode_rx = None;
                 return;
             }
         };
-        self.emoji_decode_rx = None;
+        self.emoji.decode_rx = None;
 
-        self.emoji_textures = images
+        self.emoji.textures = images
             .into_iter()
             .map(|(ch, color_image)| {
                 let texture = ctx.load_texture(
@@ -45,22 +46,24 @@ impl AbcomApp {
             })
             .collect();
 
-        self.emoji_map = self
-            .emoji_textures
+        self.emoji.map = self
+            .emoji
+            .textures
             .iter()
             .enumerate()
             .map(|(i, (ch, _))| (ch.clone(), i))
             .collect();
         let available: Vec<String> = self
-            .emoji_textures
+            .emoji
+            .textures
             .iter()
             .map(|(ch, _)| ch.clone())
             .collect();
 
         let (alias_to_char, aliases) = super::emoji_picker::build_emoji_shortcode_index(&available);
-        self.emoji_alias_to_char = alias_to_char;
-        self.emoji_aliases = aliases;
-        self.emoji_textures_loaded = true;
+        self.emoji.alias_to_char = alias_to_char;
+        self.emoji.aliases = aliases;
+        self.emoji.textures_loaded = true;
 
         // Les messages parsés avant l'arrivée du registre ont une détection
         // « emoji seul » erronée : on reconstruit le cache du fil.
@@ -69,8 +72,8 @@ impl AbcomApp {
 
     /// Dépile les événements réseau reçus depuis les tâches tokio
     pub(crate) fn process_events(&mut self) {
-        let mut s = self.state.lock().unwrap();
-        while let Ok(evt) = self.event_rx.try_recv() {
+        let mut s = self.state.lock_safe();
+        while let Ok(evt) = self.net.event_rx.try_recv() {
             match evt {
                 AppEvent::MessageReceived(msg) => {
                     // Message de salon : `to_user` porte la clé `#nom`. Un salon
@@ -141,12 +144,12 @@ impl AbcomApp {
 
                             drop(s);
                             for req in ack_reqs {
-                                let _ = self.send_ack_tx.try_send(req);
+                                let _ = self.net.send_ack_tx.try_send(req);
                             }
                             for req in receipt_reqs {
-                                let _ = self.send_read_receipt_tx.try_send(req);
+                                let _ = self.net.send_read_receipt_tx.try_send(req);
                             }
-                            s = self.state.lock().unwrap();
+                            s = self.state.lock_safe();
                         }
                     }
 
@@ -198,7 +201,7 @@ impl AbcomApp {
                         })
                         .collect();
                     for event in sync_events {
-                        let _ = self.send_group_tx.try_send(SendGroupRequest {
+                        let _ = self.net.send_group_tx.try_send(SendGroupRequest {
                             to_addr: addr,
                             event,
                         });
@@ -211,7 +214,7 @@ impl AbcomApp {
                                 to_addr: addr,
                                 announce,
                             };
-                            if self.send_avatar_tx.try_send(request).is_ok() {
+                            if self.net.send_avatar_tx.try_send(request).is_ok() {
                                 self.avatar_sent_to.insert(username);
                             }
                         }
@@ -225,7 +228,6 @@ impl AbcomApp {
                     self.avatar_sent_to.remove(&username);
                 }
                 AppEvent::UserTyping(username) => s.set_user_typing(username),
-                AppEvent::UserStoppedTyping(_) => s.clear_typing_if_old(),
                 AppEvent::GroupEventReceived(evt) => match evt.action {
                     GroupAction::Create { group } => {
                         // Création ou re-synchronisation par le propriétaire :
@@ -355,8 +357,8 @@ impl AbcomApp {
                     if progress.failed {
                         // Refus ou erreur : on retire la carte, le message et le
                         // fichier (côté émetteur comme destinataire).
-                        self.media_progress.remove(&id);
-                        self.media_textures.remove(&id);
+                        self.media.progress.remove(&id);
+                        self.media.textures.remove(&id);
                         s.remove_media_message(&id);
                         self.last_notification = Some(
                             self.tr("Transfert média interrompu", "Media transfer interrupted")
@@ -364,18 +366,18 @@ impl AbcomApp {
                         );
                         self.notification_time = std::time::Instant::now();
                     } else if progress.finished {
-                        self.media_progress.remove(&id);
+                        self.media.progress.remove(&id);
                         // Le fichier est complet : recharger une éventuelle vignette.
-                        self.media_textures.remove(&id);
+                        self.media.textures.remove(&id);
                     } else {
-                        self.media_progress.insert(id, progress);
+                        self.media.progress.insert(id, progress);
                     }
                 }
                 AppEvent::MediaDeclined(header) => {
                     // Côté émetteur : on retire la carte « en attente » et on
                     // annote le fil que le fichier a été refusé.
-                    self.media_progress.remove(&header.media.id);
-                    self.media_textures.remove(&header.media.id);
+                    self.media.progress.remove(&header.media.id);
+                    self.media.textures.remove(&header.media.id);
                     s.remove_media_message(&header.media.id);
                     s.add_message(super::media::refused_media_message(
                         &header.from,
@@ -392,7 +394,7 @@ impl AbcomApp {
     /// Récupère les offres de médias volumineux (> 1 Go) en attente d'accord et
     /// les ajoute au bandeau d'acceptation.
     pub(crate) fn process_media_offers(&mut self) {
-        while let Ok(offer) = self.media_offer_rx.try_recv() {
+        while let Ok(offer) = self.media.offer_rx.try_recv() {
             let label = self.tr("vous envoie un fichier", "is sending you a file");
             self.last_notification = Some(format!("{} {}", offer.from, label));
             self.notification_time = std::time::Instant::now();
@@ -402,7 +404,7 @@ impl AbcomApp {
             } else if self.enable_sound_notifications {
                 play_notification_sound();
             }
-            self.pending_media_offers.push(offer);
+            self.media.pending_offers.push(offer);
         }
     }
 
@@ -413,9 +415,9 @@ impl AbcomApp {
     pub(crate) fn periodic_tasks(&mut self) {
         if self.last_retry_time.elapsed().as_secs_f32() >= 2.0 {
             self.last_retry_time = std::time::Instant::now();
-            let retry_messages = self.state.lock().unwrap().get_retry_messages();
+            let retry_messages = self.state.lock_safe().get_retry_messages();
             for (_hash, addr) in retry_messages {
-                eprintln!("[ui] Retry message delivery vers {}", addr);
+                tracing::debug!("retry message delivery vers {}", addr);
             }
         }
     }

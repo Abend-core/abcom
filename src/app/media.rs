@@ -57,7 +57,7 @@ pub fn gc_media_dir(dir: PathBuf, referenced: HashSet<String>) {
     }
 
     if removed > 0 {
-        eprintln!("[media] GC cache : {removed} fichier(s) supprimé(s)");
+        tracing::info!("GC cache : {removed} fichier(s) supprimé(s)");
     }
 }
 

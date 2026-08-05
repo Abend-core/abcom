@@ -11,6 +11,8 @@ use std::sync::{Arc, Mutex};
 
 use serde::Deserialize;
 
+use crate::util::MutexExt;
+
 const BASE: &str = "https://api.klipy.com/api/v1";
 /// Nombre d'items demandés par page (min 8, max 50 côté Klipy).
 const PER_PAGE: u32 = 24;
@@ -216,12 +218,12 @@ impl GifFeed {
     }
 
     pub fn lock(&self) -> std::sync::MutexGuard<'_, GifFeedState> {
-        self.inner.lock().unwrap()
+        self.inner.lock_safe()
     }
 
     pub fn load_trending(&self, ctx: &egui::Context, key: &str, locale: &str) {
         {
-            let mut s = self.inner.lock().unwrap();
+            let mut s = self.inner.lock_safe();
             s.query.clear();
             s.page = 1;
         }
@@ -234,7 +236,7 @@ impl GifFeed {
             return;
         }
         {
-            let mut s = self.inner.lock().unwrap();
+            let mut s = self.inner.lock_safe();
             s.query = query.to_string();
             s.page = 1;
         }
@@ -243,7 +245,7 @@ impl GifFeed {
 
     pub fn load_more(&self, ctx: &egui::Context, key: &str, locale: &str) {
         let (query, next_page) = {
-            let mut s = self.inner.lock().unwrap();
+            let mut s = self.inner.lock_safe();
             if s.status == GifStatus::Loading || !s.has_next {
                 return;
             }
@@ -260,7 +262,7 @@ impl GifFeed {
 
     fn fire(&self, ctx: &egui::Context, url: String, replace: bool) {
         let generation = {
-            let mut s = self.inner.lock().unwrap();
+            let mut s = self.inner.lock_safe();
             s.generation += 1;
             s.status = GifStatus::Loading;
             if replace {
@@ -277,7 +279,7 @@ impl GifFeed {
         let inner = self.inner.clone();
         let ctx = ctx.clone();
         ehttp::fetch(ehttp::Request::get(url), move |result| {
-            let mut s = inner.lock().unwrap();
+            let mut s = inner.lock_safe();
             if generation != s.generation {
                 return;
             }
@@ -291,16 +293,16 @@ impl GifFeed {
                         s.status = GifStatus::Loaded;
                     }
                     Err(e) => {
-                        eprintln!("[klipy] parsing réponse échoué : {e}");
+                        tracing::warn!("parsing réponse échoué : {e}");
                         s.status = GifStatus::Error(e);
                     }
                 },
                 Ok(resp) => {
-                    eprintln!("[klipy] HTTP {} : {}", resp.status, resp.status_text);
+                    tracing::warn!("HTTP {} : {}", resp.status, resp.status_text);
                     s.status = GifStatus::Error(format!("HTTP {}", resp.status));
                 }
                 Err(e) => {
-                    eprintln!("[klipy] requête échouée : {e}");
+                    tracing::warn!("requête échouée : {e}");
                     s.status = GifStatus::Error(e);
                 }
             }

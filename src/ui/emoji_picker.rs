@@ -87,7 +87,7 @@ impl AbcomApp {
 
         let mut picked: Option<String> = None;
         if let Some(resp) = picker_window.show(ctx, |ui| {
-            show_emoji_grid(ui, &mut self.emoji_category, &self.emoji_textures, |ch| {
+            show_emoji_grid(ui, &mut self.emoji.category, &self.emoji.textures, |ch| {
                 picked = Some(ch.to_string());
             });
         }) {
@@ -95,9 +95,13 @@ impl AbcomApp {
         }
 
         if let Some(ch) = picked {
-            composer::insert_emoji_at_cursor(&mut self.input, &mut self.input_cursor_char, &ch);
-            composer::sync_cursor(ctx, self.input_cursor_char);
-            self.input_has_focus = true;
+            composer::insert_emoji_at_cursor(
+                &mut self.composer.text,
+                &mut self.composer.cursor_char,
+                &ch,
+            );
+            composer::sync_cursor(ctx, self.composer.cursor_char);
+            self.composer.has_focus = true;
             self.show_emoji_picker = false;
         }
 
@@ -261,6 +265,27 @@ pub(crate) fn show_shortcode_popup(
         });
 }
 
+/// Fait correspondre un emoji connu à la position `i` dans `chars` : essaie
+/// d'abord 2 caractères (paires avec variation/genre), puis 1. Retourne la
+/// longueur consommée et l'index dans `emoji_map`/`textures` si trouvé.
+/// Point d'entrée unique du scan « séquence de 2 puis 1 caractères » partagé
+/// par le rendu du fil, le composeur et le picker.
+pub(crate) fn match_emoji_at(
+    chars: &[char],
+    i: usize,
+    emoji_map: &std::collections::HashMap<String, usize>,
+) -> Option<(usize, usize)> {
+    for len in [2usize, 1] {
+        if i + len <= chars.len() {
+            let s: String = chars[i..i + len].iter().collect();
+            if let Some(&idx) = emoji_map.get(&s) {
+                return Some((len, idx));
+            }
+        }
+    }
+    None
+}
+
 /// Rendu inline d'un texte avec emojis PNG
 pub(crate) fn render_inline(
     ui: &mut egui::Ui,
@@ -275,22 +300,16 @@ pub(crate) fn render_inline(
     let size = egui::vec2(emoji_size, emoji_size);
     while i < chars.len() {
         let mut matched = false;
-        for len in [2usize, 1] {
-            if i + len <= chars.len() {
-                let s: String = chars[i..i + len].iter().collect();
-                if let Some(&idx) = emoji_map.get(&s) {
-                    if !acc.is_empty() {
-                        ui.label(&acc);
-                        acc.clear();
-                    }
-                    if let Some((_, tex)) = textures.get(idx) {
-                        ui.add(egui::Image::new(tex).fit_to_exact_size(size));
-                    }
-                    i += len;
-                    matched = true;
-                    break;
-                }
+        if let Some((len, idx)) = match_emoji_at(&chars, i, emoji_map) {
+            if !acc.is_empty() {
+                ui.label(&acc);
+                acc.clear();
             }
+            if let Some((_, tex)) = textures.get(idx) {
+                ui.add(egui::Image::new(tex).fit_to_exact_size(size));
+            }
+            i += len;
+            matched = true;
         }
         if !matched {
             let ch = chars[i];

@@ -29,7 +29,7 @@ impl Identity {
                     public: bytes[32..].to_vec(),
                 });
             }
-            eprintln!("[identity] identity.key invalide, régénération");
+            tracing::warn!("identity.key invalide, régénération");
         }
 
         let builder = snow::Builder::new(
@@ -47,8 +47,8 @@ impl Identity {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
         }
-        eprintln!(
-            "[identity] Nouvelle identité générée ({})",
+        tracing::info!(
+            "nouvelle identité générée ({})",
             fingerprint(&keypair.public)
         );
         Ok(Self {
