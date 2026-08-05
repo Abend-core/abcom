@@ -402,13 +402,13 @@ impl AbcomApp {
         ctx: &egui::Context,
         id: &str,
     ) -> Option<egui::TextureHandle> {
-        if let Some(cached) = self.media_textures.get(id) {
+        if let Some(cached) = self.media.textures.get(id) {
             let cached = cached.clone();
             self.touch_media_texture(id);
             return cached;
         }
         let texture = self.load_media_texture(ctx, id, Some(FEED_TEXTURE_MAX_PX));
-        self.media_textures.insert(id.to_string(), texture.clone());
+        self.media.textures.insert(id.to_string(), texture.clone());
         self.touch_media_texture(id);
         self.evict_media_textures();
         texture
@@ -416,31 +416,31 @@ impl AbcomApp {
 
     /// Place `id` en tête de l'ordre d'accès LRU.
     fn touch_media_texture(&mut self, id: &str) {
-        if let Some(pos) = self.media_texture_lru.iter().position(|x| x == id) {
-            self.media_texture_lru.remove(pos);
+        if let Some(pos) = self.media.texture_lru.iter().position(|x| x == id) {
+            self.media.texture_lru.remove(pos);
         }
-        self.media_texture_lru.push(id.to_string());
+        self.media.texture_lru.push(id.to_string());
     }
 
     /// Évince les textures les moins récemment affichées au-delà du plafond
     /// (les handles droppés libèrent la mémoire GPU côté egui).
     fn evict_media_textures(&mut self) {
-        while self.media_texture_lru.len() > MEDIA_TEXTURE_CACHE_MAX {
-            let oldest = self.media_texture_lru.remove(0);
-            self.media_textures.remove(&oldest);
+        while self.media.texture_lru.len() > MEDIA_TEXTURE_CACHE_MAX {
+            let oldest = self.media.texture_lru.remove(0);
+            self.media.textures.remove(&oldest);
         }
     }
 
     /// Texture pleine résolution pour la visionneuse, conservée uniquement
     /// tant qu'elle est ouverte.
     fn viewer_texture_for(&mut self, ctx: &egui::Context, id: &str) -> Option<egui::TextureHandle> {
-        if let Some((cached_id, texture)) = &self.viewer_texture {
+        if let Some((cached_id, texture)) = &self.media.viewer_texture {
             if cached_id == id {
                 return Some(texture.clone());
             }
         }
         let texture = self.load_media_texture(ctx, id, None)?;
-        self.viewer_texture = Some((id.to_string(), texture.clone()));
+        self.media.viewer_texture = Some((id.to_string(), texture.clone()));
         Some(texture)
     }
 
@@ -512,9 +512,9 @@ impl AbcomApp {
 
     /// Visionneuse plein écran : image agrandie + bouton de téléchargement.
     pub(crate) fn show_media_viewer(&mut self, ctx: &egui::Context) {
-        let Some(id) = self.media_viewer.clone() else {
+        let Some(id) = self.media.viewer.clone() else {
             // Visionneuse fermée : libère la texture pleine résolution.
-            self.viewer_texture = None;
+            self.media.viewer_texture = None;
             return;
         };
         let texture = self.viewer_texture_for(ctx, &id);
@@ -558,8 +558,8 @@ impl AbcomApp {
             self.download_media(&id, &filename);
         }
         if !open {
-            self.media_viewer = None;
-            self.viewer_texture = None;
+            self.media.viewer = None;
+            self.media.viewer_texture = None;
         }
     }
 
