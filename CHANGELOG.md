@@ -27,7 +27,7 @@ Format basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/), versi
 - Support pièces jointes (fichiers et dossiers)
 - Modale de paramètres (thème, langue, notifications)
 - Support multilingue FR/EN
-- 111 tests unitaires couvrant tous les modules
+- 264 tests unitaires couvrant tous les modules
 - Groupes (Phase 10) : messagerie de salon réservée aux membres, gestion des membres (ajout, exclusion, départ avec succession du propriétaire, suppression), compteurs non-lus et sourdine par salon, modal de gestion — voir `docs/05-fonctionnalites.md`
 
 ### Corrigé
@@ -50,13 +50,13 @@ Format basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/), versi
 
 ---
 
-## [0.1.0] — 2025-XX-XX
+## Prototype initial — avril 2026 (non publié)
 
-> Première version fonctionnelle — chat P2P local en réseau LAN.
+> Première version fonctionnelle mais rudimentaire — chat P2P local sur LAN.
+> Jamais taguée : aucune release n'a encore été publiée (voir le README).
 
 ### Ajouté
-- Chat 1-à-1 et groupes en réseau local (UDP broadcast + TCP)
+- Chat en réseau local : découverte UDP broadcast, une connexion TCP par paquet
 - Découverte automatique des pairs par subnet
-- Persistance des messages (JSON local)
-- Interface TUI avec ratatui/egui
-- Détection réseau par SSID (hotspot iPhone inclus)
+- Persistance des messages en JSON local (réécriture complète du fichier)
+- Interface graphique native egui

@@ -47,7 +47,7 @@ La communication entre ces mondes passe par des canaux `mpsc` tokio. L'état app
 | [archive.rs](../src/archive.rs) | Compression ZIP d'un dossier pour l'envoyer comme un fichier |
 | [autostart.rs](../src/autostart.rs) | Lancement à l'ouverture de session (Launch Agent, clé Run, `.desktop`) |
 | [emoji_registry.rs](../src/emoji_registry.rs) | 323 emojis PNG embarqués dans le binaire, décodés dans un thread au démarrage |
-| [tests/](../src/tests/) | 226 tests : un fichier par module testé, réseau testé sur de vraies sockets |
+| [tests/](../src/tests/) | 264 tests : un fichier par module testé, réseau testé sur de vraies sockets |
 
 ## Flux d'un message reçu
 

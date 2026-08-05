@@ -574,6 +574,12 @@ impl AbcomApp {
 
 /// Destination non conflictuelle dans `dir` : `nom.ext`, puis `nom (1).ext`, …
 fn unique_destination(dir: &std::path::Path, filename: &str) -> std::path::PathBuf {
+    // `filename` provient du réseau : on ne garde que le dernier composant pour
+    // rester dans `dir` (défense contre le path traversal, p. ex. « ../../… »).
+    let filename = std::path::Path::new(filename)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("fichier");
     let candidate = dir.join(filename);
     if !candidate.exists() {
         return candidate;
