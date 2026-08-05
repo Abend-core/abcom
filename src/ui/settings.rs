@@ -1,5 +1,7 @@
 use eframe::egui;
 
+use crate::util::MutexExt;
+
 use super::avatar::show_avatar;
 use super::{AbcomApp, SettingsTab, ThemePreference, UiLanguage};
 
@@ -63,9 +65,9 @@ impl AbcomApp {
 
         // Avatar courant (texture chargée paresseusement) calculé avant la
         // fenêtre pour éviter un double emprunt de `self` dans la closure.
-        let my_name = self.state.lock().unwrap().my_username.clone();
+        let my_name = self.state.lock_safe().my_username.clone();
         let avatar_texture = self.avatar_texture(ctx, &my_name);
-        let has_avatar = self.state.lock().unwrap().my_avatar.is_some();
+        let has_avatar = self.state.lock_safe().my_avatar.is_some();
         let mut pick_avatar = false;
         let mut clear_avatar = false;
 
@@ -236,7 +238,7 @@ impl AbcomApp {
                                     );
                                     if ui.checkbox(&mut self.notif_preview, label).changed() {
                                         let v = if self.notif_preview { "1" } else { "0" };
-                                        self.state.lock().unwrap().set_pref("notif_preview", v);
+                                        self.state.lock_safe().set_pref("notif_preview", v);
                                     }
                                 }
                                 ui.end_row();
@@ -255,7 +257,7 @@ impl AbcomApp {
                                             Ok(()) => {
                                                 let v =
                                                     if self.autostart_enabled { "1" } else { "0" };
-                                                self.state.lock().unwrap().set_pref("autostart", v);
+                                                self.state.lock_safe().set_pref("autostart", v);
                                             }
                                             Err(e) => {
                                                 eprintln!("[autostart] échec : {e}");
@@ -428,7 +430,7 @@ impl AbcomApp {
             self.pending_avatar_pick = true;
         }
         if clear_avatar {
-            self.state.lock().unwrap().clear_my_avatar();
+            self.state.lock_safe().clear_my_avatar();
             self.avatar_textures.remove(&my_name);
             self.broadcast_my_avatar();
         }

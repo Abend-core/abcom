@@ -1,6 +1,8 @@
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
+use util::MutexExt;
+
 mod app;
 mod archive;
 mod autostart;
@@ -13,6 +15,7 @@ mod message;
 mod network;
 mod notify;
 mod ui;
+mod util;
 
 fn main() -> anyhow::Result<()> {
     if let Ok(content) = std::fs::read_to_string(".env") {
@@ -108,7 +111,7 @@ fn main() -> anyhow::Result<()> {
     // Autostart : activé par défaut au premier lancement d'un build release
     // (préférence persistée, interrupteur dans Paramètres).
     {
-        let mut s = state.lock().unwrap();
+        let mut s = state.lock_safe();
         let existing = s.kv.get("autostart").map(|v| v == "1");
         let effective = autostart::init_default(existing);
         if existing.is_none() {

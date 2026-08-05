@@ -11,6 +11,7 @@ use eframe::egui;
 use crate::app::AppState;
 use crate::klipy::{GifFeed, GifItem, GifStatus};
 use crate::message::{ChatMessage, MediaAttachment, MediaKind, SendRequest};
+use crate::util::MutexExt;
 
 use super::{AbcomApp, GifPickerTab};
 
@@ -19,7 +20,7 @@ const ATTR_LIGHT: &[u8] = include_bytes!("../../assets/klipy/attribution_light_b
 
 fn send_gif(app: &mut AbcomApp, gif: &GifItem) {
     let (my_name, selected_peer_name, selected_addr, all_peers) = {
-        let s = app.state.lock().unwrap();
+        let s = app.state.lock_safe();
         (
             s.my_username.clone(),
             s.selected_conversation.clone(),
@@ -49,7 +50,7 @@ fn send_gif(app: &mut AbcomApp, gif: &GifItem) {
     };
     {
         let msg_hash = AppState::message_hash(&msg);
-        let mut s = app.state.lock().unwrap();
+        let mut s = app.state.lock_safe();
         s.add_message(msg.clone());
         if let Some(peer_name) = &selected_peer_name {
             if !peer_name.starts_with('#') {

@@ -7,6 +7,7 @@ use std::path::Path;
 use eframe::egui;
 
 use crate::message::{extension_lower, ChatMessage, MediaAttachment, MediaKind, MediaProgress};
+use crate::util::MutexExt;
 
 use super::chat_panel::format_bytes;
 use super::AbcomApp;
@@ -449,7 +450,7 @@ impl AbcomApp {
         id: &str,
         max_px: Option<u32>,
     ) -> Option<egui::TextureHandle> {
-        let bytes = self.state.lock().unwrap().media_bytes(id)?;
+        let bytes = self.state.lock_safe().media_bytes(id)?;
         let mut image = image::load_from_memory(&bytes).ok()?;
         let name = match max_px {
             Some(max) => {
@@ -471,7 +472,7 @@ impl AbcomApp {
 
     /// Nom d'origine d'un média retrouvé dans l'historique (sinon son `id`).
     fn media_filename(&self, id: &str) -> String {
-        let s = self.state.lock().unwrap();
+        let s = self.state.lock_safe();
         s.messages
             .iter()
             .filter_map(|m| m.media.as_ref())
@@ -490,7 +491,7 @@ impl AbcomApp {
             ));
             return;
         };
-        let src = self.state.lock().unwrap().media_path(id);
+        let src = self.state.lock_safe().media_path(id);
         let dest = unique_destination(&dir, filename);
         match std::fs::copy(&src, &dest) {
             Ok(_) => {

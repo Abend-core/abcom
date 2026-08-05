@@ -1,6 +1,7 @@
 use eframe::egui;
 
 use crate::message::ReactionRequest;
+use crate::util::MutexExt;
 
 use super::AbcomApp;
 
@@ -21,7 +22,7 @@ impl AbcomApp {
     /// l'événement net aux pairs concernés, et met à jour les emojis récents.
     pub(crate) fn send_reaction(&mut self, message_hash: u64, emoji: &str) {
         let (my_name, action, targets) = {
-            let mut s = self.state.lock().unwrap();
+            let mut s = self.state.lock_safe();
             let my_name = s.my_username.clone();
             let action = s.toggle_reaction(message_hash, emoji, &my_name);
             (my_name, action, s.selected_transfer_targets())
