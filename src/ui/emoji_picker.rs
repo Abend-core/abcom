@@ -87,7 +87,7 @@ impl AbcomApp {
 
         let mut picked: Option<String> = None;
         if let Some(resp) = picker_window.show(ctx, |ui| {
-            show_emoji_grid(ui, &mut self.emoji_category, &self.emoji_textures, |ch| {
+            show_emoji_grid(ui, &mut self.emoji.category, &self.emoji.textures, |ch| {
                 picked = Some(ch.to_string());
             });
         }) {

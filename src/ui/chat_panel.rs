@@ -603,9 +603,10 @@ impl AbcomApp {
             .recent_reaction_emojis
             .iter()
             .filter_map(|e| {
-                self.emoji_map
+                self.emoji
+                    .map
                     .get(e)
-                    .and_then(|&idx| self.emoji_textures.get(idx))
+                    .and_then(|&idx| self.emoji.textures.get(idx))
                     .cloned()
             })
             .collect();
@@ -651,8 +652,8 @@ impl AbcomApp {
                                 ui,
                                 emoji_rect,
                                 ch,
-                                &self.emoji_map,
-                                &self.emoji_textures,
+                                &self.emoji.map,
+                                &self.emoji.textures,
                             );
                             if resp.clicked() {
                                 quick_emoji = Some(ch.clone());
@@ -1149,8 +1150,8 @@ impl AbcomApp {
                                             row.collapse.as_ref(),
                                             expanded,
                                             language,
-                                            &self.emoji_map,
-                                            &self.emoji_textures,
+                                            &self.emoji.map,
+                                            &self.emoji.textures,
                                             &media_textures,
                                             &self.media_progress,
                                         );
@@ -1167,8 +1168,8 @@ impl AbcomApp {
                                             ui,
                                             &row.reactions,
                                             &my_name,
-                                            &self.emoji_map,
-                                            &self.emoji_textures,
+                                            &self.emoji.map,
+                                            &self.emoji.textures,
                                         ) {
                                             reaction_clicked = Some(emoji);
                                         }
@@ -1193,8 +1194,8 @@ impl AbcomApp {
                                         row.collapse.as_ref(),
                                         expanded,
                                         language,
-                                        &self.emoji_map,
-                                        &self.emoji_textures,
+                                        &self.emoji.map,
+                                        &self.emoji.textures,
                                         &media_textures,
                                         &self.media_progress,
                                     );
@@ -1211,8 +1212,8 @@ impl AbcomApp {
                                         ui,
                                         &row.reactions,
                                         &my_name,
-                                        &self.emoji_map,
-                                        &self.emoji_textures,
+                                        &self.emoji.map,
+                                        &self.emoji.textures,
                                     ) {
                                         reaction_clicked = Some(emoji);
                                     }
