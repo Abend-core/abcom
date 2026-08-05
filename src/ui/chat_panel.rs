@@ -2,6 +2,7 @@ use chrono::{Datelike, Local, NaiveDate, TimeZone};
 use eframe::egui;
 
 use crate::message::{ChatMessage, ReactionEntry};
+use crate::util::MutexExt;
 
 use super::{AbcomApp, ReplyTarget, UiLanguage};
 
@@ -843,7 +844,7 @@ impl AbcomApp {
                                 .button(self.tr("🗑 Effacer l'historique", "🗑 Clear history"))
                                 .clicked()
                         {
-                            self.state.lock().unwrap().clear_conversation_history();
+                            self.state.lock_safe().clear_conversation_history();
                             ui.close_menu();
                         }
                     });
@@ -963,10 +964,10 @@ impl AbcomApp {
                 if do_save {
                     let trimmed = self.rename_input.trim();
                     let alias = (!trimmed.is_empty()).then(|| trimmed.to_string());
-                    self.state.lock().unwrap().set_peer_alias(&target, alias);
+                    self.state.lock_safe().set_peer_alias(&target, alias);
                     self.rename_target = None;
                 } else if do_clear {
-                    self.state.lock().unwrap().set_peer_alias(&target, None);
+                    self.state.lock_safe().set_peer_alias(&target, None);
                     self.rename_target = None;
                 } else if !open {
                     self.rename_target = None;
@@ -1364,8 +1365,7 @@ impl AbcomApp {
                         (self.chat_visible_count + super::CHAT_WINDOW_STEP).min(total);
                     self.chat_prepend_fix = Some(scroll_out.content_size.y);
                     ctx.request_repaint();
-                } else if !self.loading_older && self.state.lock().unwrap().request_older_messages()
-                {
+                } else if !self.loading_older && self.state.lock_safe().request_older_messages() {
                     self.loading_older = true;
                     self.chat_prepend_fix = Some(scroll_out.content_size.y);
                 }
@@ -1430,7 +1430,7 @@ impl AbcomApp {
             let offer = self.pending_media_offers.remove(index);
             if !accept {
                 // Refus : annoter le fil (message attribué à l'expéditeur).
-                let mut s = self.state.lock().unwrap();
+                let mut s = self.state.lock_safe();
                 let me = s.my_username.clone();
                 s.add_message(super::media::refused_media_message(
                     &offer.from,

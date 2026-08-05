@@ -10,6 +10,7 @@ use crate::message::{
     ChatMessage, MediaAttachment, MediaKind, MediaSendJob, MediaStreamHeader, SendRequest,
     TypingIndicator, TypingRequest,
 };
+use crate::util::MutexExt;
 
 use super::composer;
 use super::emoji_picker::emoji_shortcode_trigger;
@@ -282,7 +283,7 @@ fn prepare_and_stream(
     let filename = super::media::media_display_name(path);
     let id = super::media::media_id(&filename);
 
-    let dest = state.lock().unwrap().media_path(&id);
+    let dest = state.lock_safe().media_path(&id);
     if let Some(parent) = dest.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -320,7 +321,7 @@ fn prepare_and_stream(
     };
 
     // Notre propre copie du message (la carte apparaît, avec progression).
-    state.lock().unwrap().add_message(ChatMessage {
+    state.lock_safe().add_message(ChatMessage {
         from: my_name.to_string(),
         content: String::new(),
         timestamp: header.timestamp.clone(),
@@ -363,7 +364,7 @@ fn send_current_message(
     }
 
     let (my_name, selected_peer_name, transfer_targets, group_addrs) = {
-        let s = app.state.lock().unwrap();
+        let s = app.state.lock_safe();
         // Salon de groupe sélectionné : les destinataires sont les membres
         // en ligne du groupe, pas l'ensemble des pairs.
         let group_addrs = s
@@ -414,7 +415,7 @@ fn send_current_message(
 
         {
             let msg_hash = AppState::message_hash(&msg);
-            let mut s = app.state.lock().unwrap();
+            let mut s = app.state.lock_safe();
             s.add_message(msg.clone());
             if let Some(peer_name) = &selected_peer_name {
                 if !peer_name.starts_with('#') {
@@ -1085,7 +1086,7 @@ impl AbcomApp {
                             {
                                 self.last_typing_broadcast = std::time::Instant::now();
                                 let (my_name, target_addrs) = {
-                                    let s = self.state.lock().unwrap();
+                                    let s = self.state.lock_safe();
                                     let name = s.my_username.clone();
                                     let addrs = match &s.selected_conversation {
                                         None => s

@@ -1,6 +1,7 @@
 use eframe::egui;
 
 use crate::message::{GroupAction, GroupEvent, SendGroupRequest};
+use crate::util::MutexExt;
 
 use super::AbcomApp;
 
@@ -224,7 +225,7 @@ impl AbcomApp {
             // corps d'un `if let` dont le garde du scrutinee vivait encore :
             // deadlock — gel de l'application — à chaque création.)
             let created = {
-                let mut s = self.state.lock().unwrap();
+                let mut s = self.state.lock_safe();
                 s.create_group(trimmed.clone(), members)
                     .map(|g| (g.clone(), s.group_member_addrs(&g.name)))
             };
@@ -459,7 +460,7 @@ impl AbcomApp {
 
         if let Some(user) = add {
             let outcome = {
-                let mut s = self.state.lock().unwrap();
+                let mut s = self.state.lock_safe();
                 // Adresses AVANT l'ajout : les membres existants reçoivent
                 // l'AddMember, le nouveau reçoit l'état complet du groupe
                 // (il ne connaît pas encore le salon).
@@ -492,7 +493,7 @@ impl AbcomApp {
 
         if let Some(user) = kick {
             let addrs = {
-                let mut s = self.state.lock().unwrap();
+                let mut s = self.state.lock_safe();
                 // Adresses AVANT le retrait : l'exclu est prévenu lui aussi.
                 let addrs = s.group_member_addrs(&group_name);
                 s.remove_member_from_group(&group_name, &user)
@@ -514,7 +515,7 @@ impl AbcomApp {
             match action {
                 GroupConfirmAction::Leave => {
                     let outcome = {
-                        let mut s = self.state.lock().unwrap();
+                        let mut s = self.state.lock_safe();
                         let addrs = s.group_member_addrs(&group_name);
                         let me = s.my_username.clone();
                         s.leave_group(&group_name).then_some((addrs, me))
@@ -532,7 +533,7 @@ impl AbcomApp {
                 }
                 GroupConfirmAction::Delete => {
                     let addrs = {
-                        let mut s = self.state.lock().unwrap();
+                        let mut s = self.state.lock_safe();
                         let addrs = s.group_member_addrs(&group_name);
                         s.delete_group(&group_name).then_some(addrs)
                     };

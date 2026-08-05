@@ -11,6 +11,7 @@ use crate::message::{
     MessageAckRequest, ReactionRequest, ReadReceipt, ReadReceiptRequest, SendGroupRequest,
     SendRequest, TypingRequest,
 };
+use crate::util::MutexExt;
 
 mod avatar;
 mod chat_panel;
@@ -260,7 +261,7 @@ impl AbcomApp {
 
         // Préférences persistées (table kv).
         let (notif_preview, autostart_enabled) = {
-            let s = state.lock().unwrap();
+            let s = state.lock_safe();
             (
                 s.pref_bool("notif_preview", true),
                 s.pref_bool("autostart", false),
@@ -373,7 +374,7 @@ impl AbcomApp {
 
     /// Sauvegarde le texte courant dans les drafts pour la conversation active
     pub(crate) fn save_draft(&mut self) {
-        let selected_conv = self.state.lock().unwrap().selected_conversation.clone();
+        let selected_conv = self.state.lock_safe().selected_conversation.clone();
         self.drafts.insert(selected_conv, self.input.clone());
     }
 
@@ -390,7 +391,7 @@ impl AbcomApp {
     /// Change vers une nouvelle conversation, sauvegardant le draft actuel et chargeant celui de la nouvelle
     pub(crate) fn switch_conversation(&mut self, new_conversation: Option<String>) {
         self.save_draft();
-        self.state.lock().unwrap().selected_conversation = new_conversation.clone();
+        self.state.lock_safe().selected_conversation = new_conversation.clone();
         self.load_draft(new_conversation.clone());
 
         // ReadReceipts différés pour tous les messages reçus dans cette
@@ -403,7 +404,7 @@ impl AbcomApp {
     /// En salon/« Tous », l'accusé est diffusé à tous les membres en ligne
     /// pour que chacun voie le même détail « … » reçu/lu.
     pub(crate) fn send_read_receipts_for_conversation(&mut self, conv: Option<String>) {
-        let s = self.state.lock().unwrap();
+        let s = self.state.lock_safe();
         let my_name = s.my_username.clone();
         let now = chrono::Local::now().format("%H:%M").to_string();
 
@@ -592,7 +593,7 @@ impl eframe::App for AbcomApp {
         // Rafraîchit les caches dérivés si l'état a changé (génération) —
         // sinon la frame se rend sans reprendre le verrou ni rien re-dériver.
         {
-            let s = self.state.lock().unwrap();
+            let s = self.state.lock_safe();
             self.sidebar_cache.refresh(&s);
             let rebuilt = self
                 .chat_cache
@@ -674,8 +675,8 @@ impl eframe::App for AbcomApp {
             {
                 match avatar::load_normalized_avatar(&path) {
                     Ok(png) => {
-                        let my_name = self.state.lock().unwrap().my_username.clone();
-                        self.state.lock().unwrap().set_my_avatar(png);
+                        let my_name = self.state.lock_safe().my_username.clone();
+                        self.state.lock_safe().set_my_avatar(png);
                         self.avatar_textures.remove(&my_name);
                         self.broadcast_my_avatar();
                     }
@@ -719,7 +720,7 @@ impl eframe::App for AbcomApp {
     /// Flush final du stockage : attend que toutes les écritures en file
     /// soient appliquées avant la fermeture.
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
-        self.state.lock().unwrap().flush_storage();
+        self.state.lock_safe().flush_storage();
     }
 }
 

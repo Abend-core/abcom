@@ -6,6 +6,7 @@ use crate::message::{
     AppEvent, AvatarRequest, ChatMessage, GroupAction, GroupEvent, MessageAck, MessageAckRequest,
     ReadReceipt, ReadReceiptRequest, SendGroupRequest,
 };
+use crate::util::MutexExt;
 
 impl AbcomApp {
     /// Textures emoji : les PNG sont décodés dans un thread au démarrage
@@ -69,7 +70,7 @@ impl AbcomApp {
 
     /// Dépile les événements réseau reçus depuis les tâches tokio
     pub(crate) fn process_events(&mut self) {
-        let mut s = self.state.lock().unwrap();
+        let mut s = self.state.lock_safe();
         while let Ok(evt) = self.event_rx.try_recv() {
             match evt {
                 AppEvent::MessageReceived(msg) => {
@@ -146,7 +147,7 @@ impl AbcomApp {
                             for req in receipt_reqs {
                                 let _ = self.send_read_receipt_tx.try_send(req);
                             }
-                            s = self.state.lock().unwrap();
+                            s = self.state.lock_safe();
                         }
                     }
 
@@ -413,7 +414,7 @@ impl AbcomApp {
     pub(crate) fn periodic_tasks(&mut self) {
         if self.last_retry_time.elapsed().as_secs_f32() >= 2.0 {
             self.last_retry_time = std::time::Instant::now();
-            let retry_messages = self.state.lock().unwrap().get_retry_messages();
+            let retry_messages = self.state.lock_safe().get_retry_messages();
             for (_hash, addr) in retry_messages {
                 eprintln!("[ui] Retry message delivery vers {}", addr);
             }

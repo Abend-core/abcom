@@ -11,6 +11,8 @@ use std::sync::Mutex;
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
+use crate::util::MutexExt;
+
 /// Action utilisateur issue du tray, consommée par `AbcomApp::update`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum TrayAction {
@@ -33,7 +35,7 @@ static PENDING: Mutex<Vec<RawEvent>> = Mutex::new(Vec::new());
 pub(crate) fn install_event_handlers(ui_ctx: crate::notify::UiContext) {
     let wake = ui_ctx.clone();
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-        PENDING.lock().unwrap().push(RawEvent::Menu(event.id));
+        PENDING.lock_safe().push(RawEvent::Menu(event.id));
         if let Some(ctx) = wake.get() {
             ctx.request_repaint();
         }
@@ -45,7 +47,7 @@ pub(crate) fn install_event_handlers(ui_ctx: crate::notify::UiContext) {
             ..
         } = event
         {
-            PENDING.lock().unwrap().push(RawEvent::Click);
+            PENDING.lock_safe().push(RawEvent::Click);
         }
         if let Some(ctx) = ui_ctx.get() {
             ctx.request_repaint();
