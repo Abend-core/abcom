@@ -145,6 +145,24 @@ pub(crate) struct ComposerState {
     pub(crate) pending_attachments: Vec<PathBuf>,
 }
 
+/// État des modales et panneaux superposés : création/gestion de salon,
+/// renommage de contact, paramètres, liste des participants.
+pub(crate) struct ModalsState {
+    pub(crate) participants_open: bool,
+    pub(crate) group_modal_open: bool,
+    pub(crate) group_name_input: String,
+    pub(crate) group_members_selected: std::collections::HashSet<String>,
+    /// Salon ciblé par le modal de gestion (membres, départ…) ; None = fermé.
+    pub(crate) group_manage_target: Option<String>,
+    /// Action destructrice du modal de gestion en attente de confirmation.
+    pub(crate) group_manage_confirm: Option<group_modal::GroupConfirmAction>,
+    /// Renommage de contact : pair ciblé par la modale (None = fermée).
+    pub(crate) rename_target: Option<String>,
+    pub(crate) rename_input: String,
+    pub(crate) settings_open: bool,
+    pub(crate) settings_tab: SettingsTab,
+}
+
 /// État de l'application UI
 pub(crate) struct AbcomApp {
     pub(crate) state: Arc<Mutex<AppState>>,
@@ -173,33 +191,21 @@ pub(crate) struct AbcomApp {
     pub(crate) show_attachment_menu: bool,
     pub(crate) show_emoji_picker: bool,
     pub(crate) gif_picker: GifPickerState,
-    pub(crate) show_participants: bool,
     pub(crate) enable_sound_notifications: bool,
     pub(crate) last_notification: Option<String>,
     pub(crate) notification_time: std::time::Instant,
     pub(crate) has_unread: bool,
     pub(crate) window_focused: bool,
     pub(crate) emoji: EmojiPickerState,
-    pub(crate) show_group_modal: bool,
-    pub(crate) group_name_input: String,
-    pub(crate) group_members_selected: std::collections::HashSet<String>,
-    /// Salon ciblé par le modal de gestion (membres, départ…) ; None = fermé.
-    pub(crate) group_manage_target: Option<String>,
-    /// Action destructrice du modal de gestion en attente de confirmation.
-    pub(crate) group_manage_confirm: Option<group_modal::GroupConfirmAction>,
+    pub(crate) modals: ModalsState,
     pub(crate) last_typing_broadcast: std::time::Instant,
     pub(crate) last_retry_time: std::time::Instant,
     pub(crate) muted_conversations: std::collections::HashSet<Option<String>>,
-    /// Renommage de contact : pair ciblé par la modale (None = fermée).
-    pub(crate) rename_target: Option<String>,
-    pub(crate) rename_input: String,
     /// 0 = none, 1 = pick files, 2 = pick folder (deferred to next frame to avoid AppKit conflict)
     pub(crate) pending_picker: u8,
     pub(crate) ui_language: UiLanguage,
     pub(crate) theme_preference: ThemePreference,
     pub(crate) system_dark_mode: Option<bool>,
-    pub(crate) show_settings: bool,
-    pub(crate) settings_tab: SettingsTab,
     /// Textures d'avatars, indexées par nom d'utilisateur (cache de rendu).
     pub(crate) avatar_textures: std::collections::HashMap<String, egui::TextureHandle>,
     /// Pairs auxquels notre avatar a déjà été envoyé (évite les répétitions).
@@ -334,7 +340,6 @@ impl AbcomApp {
                 last_input: std::time::Instant::now(),
                 was_open: false,
             },
-            show_participants: false,
             enable_sound_notifications: true,
             last_notification: None,
             notification_time: std::time::Instant::now(),
@@ -350,22 +355,25 @@ impl AbcomApp {
                 aliases: Vec::new(),
                 shortcode_selected: 0,
             },
-            show_group_modal: false,
-            group_name_input: String::new(),
-            group_members_selected: std::collections::HashSet::new(),
-            group_manage_target: None,
-            group_manage_confirm: None,
+            modals: ModalsState {
+                participants_open: false,
+                group_modal_open: false,
+                group_name_input: String::new(),
+                group_members_selected: std::collections::HashSet::new(),
+                group_manage_target: None,
+                group_manage_confirm: None,
+                rename_target: None,
+                rename_input: String::new(),
+                settings_open: false,
+                settings_tab: SettingsTab::General,
+            },
             last_typing_broadcast: std::time::Instant::now(),
             last_retry_time: std::time::Instant::now(),
             muted_conversations: std::collections::HashSet::new(),
-            rename_target: None,
-            rename_input: String::new(),
             pending_picker: 0,
             ui_language: UiLanguage::French,
             theme_preference: ThemePreference::System,
             system_dark_mode: None,
-            show_settings: false,
-            settings_tab: SettingsTab::General,
             avatar_textures: std::collections::HashMap::new(),
             avatar_sent_to: std::collections::HashSet::new(),
             pending_avatar_pick: false,
