@@ -34,22 +34,22 @@
 **Objectif :** supprimer les résidus et fiabiliser `.gitignore` / `Cargo.toml`.
 
 **Étapes :**
-1. Supprimer le dossier legacy `old/` (24 fichiers suivis par git) :
-   `git rm -r old/`. Vérifier au préalable qu'aucun fichier de `docs/` ne
-   référence `old/` (`grep -rn "old/" docs/ README.md`). S'il reste un lien,
-   le rediriger vers l'équivalent dans `docs/`.
-2. Supprimer le dossier vide `font 2/` à la racine (non suivi) : `rm -rf "font 2"`.
+1. ~~Supprimer `old/`~~ — **annulé après vérification** : `old/` est référencé et
+   décrit explicitement comme archive historique volontaire par
+   `README.md`, `docs/07-developpement.md` et `docs/08-historique-et-audits.md`
+   (« conservé tel quel », renvois précis type `old/docs/06-audit-performance.md
+   §6 »). Le supprimer casserait ces liens documentés et retirerait une
+   référence assumée — ce n'est pas un résidu. **Ne pas toucher `old/`.**
+2. Supprimer le dossier vide `font 2/` à la racine (non suivi) : `rm -rf "font 2"`. ✅
 3. Compléter `.gitignore` — ajouter `.DS_Store` et `*.log` (le reste est déjà là :
-   `/target`, `.env`, `/dist`, `*.zip`, `nohup.out`).
-4. `Cargo.toml` : corriger le champ `repository` (`github.com/rxdy/abcom` →
-   l'URL réelle de l'org `Abend-core`) après confirmation de l'URL exacte. Ne
-   **pas** toucher au numéro de version dans cette phase (décision de versionnage
-   à part).
+   `/target`, `.env`, `/dist`, `*.zip`, `nohup.out`). ✅
+4. `Cargo.toml` : corriger le champ `repository` — remote réel confirmé
+   `https://github.com/Abend-core/abcom` (`git remote -v`). ✅ Ne **pas** toucher
+   au numéro de version dans cette phase (décision de versionnage à part).
 
 **Acceptation :**
-- `git status` propre, `old/` et `font 2/` absents.
-- `cargo build` OK (aucun de ces fichiers n'était référencé par le code).
-- `git grep -n "old/" -- docs README.md` ne renvoie plus de lien mort.
+- `git status` propre, `font 2/` absent, `old/` conservé intentionnellement.
+- `cargo build` OK.
 
 ---
 

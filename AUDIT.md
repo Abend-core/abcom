@@ -34,17 +34,17 @@ réel, encore un `eprintln!` stub à `events.rs:418`), R2/R3/R4 et toute la dett
 
 ## 1. Hygiène du dépôt
 
-- [ ] 🔴 Supprimer `old/` (24 fichiers de documentation legacy suivis par git) après avoir
-  vérifié que tout le contenu utile a bien été migré vers `docs/` — le doublon crée de la
-  confusion sur la doc de référence.
-- [ ] 🟠 Supprimer le dossier vide `font 2/` à la racine (non suivi, nom avec espace —
-  résidu de manipulation macOS).
-- [ ] 🟠 Compléter `.gitignore` : `.DS_Store`, `nohup.out` y est déjà, ajouter `*.log`
-  éventuels des scripts de test.
+- [x] ~~🔴 Supprimer `old/`~~ — **invalidé (05/08)** : `old/` est référencé
+  explicitement comme archive historique volontaire par `README.md`,
+  `docs/07-developpement.md` et `docs/08-historique-et-audits.md` (« conservé tel
+  quel », renvois précis §-par-§). Ce n'est pas un doublon oublié mais une
+  décision documentée — à conserver.
+- [x] 🟠 Supprimer le dossier vide `font 2/` à la racine — **fait (05/08)**.
+- [x] 🟠 Compléter `.gitignore` (`.DS_Store`, `*.log`) — **fait (05/08)**.
 - [ ] 🟠 `Cargo.toml` : la version est figée à `0.0.1` alors que le projet a un CHANGELOG —
   adopter un versionnage réel (bump à chaque merge sur `main`, tags git).
-- [ ] 🟢 Vérifier que l'URL `repository` de `Cargo.toml` (`github.com/rxdy/abcom`)
-  correspond bien au remote effectif (org `Abend-core` vue dans les PR).
+- [x] 🟢 Vérifier l'URL `repository` de `Cargo.toml` — **fait (05/08)** : corrigée en
+  `https://github.com/Abend-core/abcom` (remote réel confirmé via `git remote -v`).
 - [ ] 🟢 `scripts/` : préfixer chaque script d'un en-tête d'usage homogène et lister les
   scripts dans `docs/07-developpement.md` (`integration_test.sh` tourne en CI main,
   `QUICK_START_TEST.sh` est un pense-bête interactif — clarifier le rôle de chacun).
