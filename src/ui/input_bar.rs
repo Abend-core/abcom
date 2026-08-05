@@ -569,7 +569,7 @@ impl AbcomApp {
                 let gif_label = self.tr("GIF", "GIF");
                 egui::Frame::default()
                     .fill(egui::Color32::from_rgb(66, 66, 69))
-                    .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(96, 96, 100)))
+                    .stroke(egui::Stroke::new(1.0, super::theme::SEPARATOR))
                     .corner_radius(egui::CornerRadius::same(14))
                     .inner_margin(egui::Margin::symmetric(8, 4))
                     .show(ui, |ui| {
@@ -815,7 +815,7 @@ impl AbcomApp {
                             ui.painter().hline(
                                 sep_rect.x_range(),
                                 sep_rect.center().y,
-                                egui::Stroke::new(1.0, egui::Color32::from_rgb(96, 96, 100)),
+                                egui::Stroke::new(1.0, super::theme::SEPARATOR),
                             );
                             ui.add_space(3.0);
 
@@ -937,7 +937,7 @@ impl AbcomApp {
                                                 if input_chars >= composer::MAX_INPUT_CHARS {
                                                     egui::Color32::from_rgb(230, 80, 80)
                                                 } else {
-                                                    egui::Color32::from_gray(150)
+                                                    super::theme::TEXT_MUTED
                                                 };
                                             ui.label(
                                                 egui::RichText::new(format!(

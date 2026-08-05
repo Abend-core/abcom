@@ -148,7 +148,7 @@ pub(crate) fn day_divider_label(date: NaiveDate, today: NaiveDate, language: UiL
 fn render_day_divider(ui: &mut egui::Ui, label: &str) {
     ui.add_space(14.0);
     let line_color = egui::Color32::from_gray(80);
-    let text_color = egui::Color32::from_gray(150);
+    let text_color = super::theme::TEXT_MUTED;
     let font = egui::TextStyle::Small.resolve(ui.style());
 
     let full_width = ui.available_width();

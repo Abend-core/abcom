@@ -633,24 +633,15 @@ fn is_text_emoji_only(text: &str, emoji_map: &std::collections::HashMap<String, 
     let chars: Vec<char> = text.chars().collect();
     let mut i = 0;
     while i < chars.len() {
-        let mut matched = false;
-        for len in [2usize, 1] {
-            if i + len <= chars.len() {
-                let s: String = chars[i..i + len].iter().collect();
-                if emoji_map.contains_key(&s) {
-                    i += len;
-                    matched = true;
-                    break;
-                }
-            }
+        if let Some((len, _)) = super::emoji_picker::match_emoji_at(&chars, i, emoji_map) {
+            i += len;
+            continue;
         }
-        if !matched {
-            let ch = chars[i];
-            if ch != '\u{fe0f}' && ch != '\u{200d}' && !ch.is_whitespace() {
-                return false;
-            }
-            i += 1;
+        let ch = chars[i];
+        if ch != '\u{fe0f}' && ch != '\u{200d}' && !ch.is_whitespace() {
+            return false;
         }
+        i += 1;
     }
     true
 }
