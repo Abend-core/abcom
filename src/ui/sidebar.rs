@@ -195,7 +195,7 @@ impl AbcomApp {
                                 to_addr: peer_addr_for_receipt,
                                 receipt,
                             };
-                            let _ = self.send_read_receipt_tx.try_send(req);
+                            let _ = self.net.send_read_receipt_tx.try_send(req);
                         }
                     }
                 }

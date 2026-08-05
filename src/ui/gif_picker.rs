@@ -66,7 +66,7 @@ fn send_gif(app: &mut AbcomApp, gif: &GifItem) {
         }
     }
     if let Some(addr) = selected_addr {
-        let _ = app.send_tx.try_send(SendRequest {
+        let _ = app.net.send_tx.try_send(SendRequest {
             to_addr: addr,
             message: msg,
         });
@@ -75,7 +75,7 @@ fn send_gif(app: &mut AbcomApp, gif: &GifItem) {
             .iter()
             .filter(|p| p.online && !p.addr.ip().is_unspecified())
         {
-            let _ = app.send_tx.try_send(SendRequest {
+            let _ = app.net.send_tx.try_send(SendRequest {
                 to_addr: peer.addr,
                 message: msg.clone(),
             });

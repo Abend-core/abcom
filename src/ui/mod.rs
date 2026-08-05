@@ -80,6 +80,20 @@ pub(crate) enum GifPickerTab {
     Sticker,
 }
 
+/// Canaux mpsc indépendants vers les tâches réseau/transfert : un récepteur
+/// d'événements entrants et un émetteur par type de requête sortante.
+pub(crate) struct NetworkChannels {
+    pub(crate) event_rx: mpsc::Receiver<AppEvent>,
+    pub(crate) send_tx: mpsc::Sender<SendRequest>,
+    pub(crate) send_group_tx: mpsc::Sender<SendGroupRequest>,
+    pub(crate) send_typing_tx: mpsc::Sender<TypingRequest>,
+    pub(crate) send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
+    pub(crate) send_ack_tx: mpsc::Sender<MessageAckRequest>,
+    pub(crate) send_avatar_tx: mpsc::Sender<AvatarRequest>,
+    pub(crate) send_reaction_tx: mpsc::Sender<ReactionRequest>,
+    pub(crate) send_media_tx: mpsc::Sender<MediaSendJob>,
+}
+
 /// État de l'application UI
 pub(crate) struct AbcomApp {
     pub(crate) state: Arc<Mutex<AppState>>,
@@ -106,15 +120,7 @@ pub(crate) struct AbcomApp {
     /// Résultat du décodage des PNG emoji, effectué dans un thread au
     /// démarrage : le premier frame n'attend plus les 323 décodages.
     pub(crate) emoji_decode_rx: Option<std::sync::mpsc::Receiver<Vec<(String, egui::ColorImage)>>>,
-    pub(crate) event_rx: mpsc::Receiver<AppEvent>,
-    pub(crate) send_tx: mpsc::Sender<SendRequest>,
-    pub(crate) send_group_tx: mpsc::Sender<SendGroupRequest>,
-    pub(crate) send_typing_tx: mpsc::Sender<TypingRequest>,
-    pub(crate) send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
-    pub(crate) send_ack_tx: mpsc::Sender<MessageAckRequest>,
-    pub(crate) send_avatar_tx: mpsc::Sender<AvatarRequest>,
-    pub(crate) send_reaction_tx: mpsc::Sender<ReactionRequest>,
-    pub(crate) send_media_tx: mpsc::Sender<MediaSendJob>,
+    pub(crate) net: NetworkChannels,
     pub(crate) input: String,
     pub(crate) input_cursor_char: usize,
     pub(crate) input_selection_anchor: Option<usize>,
@@ -274,15 +280,17 @@ impl AbcomApp {
             identity_fingerprint,
             psk_active,
             emoji_decode_rx,
-            event_rx,
-            send_tx,
-            send_group_tx,
-            send_typing_tx,
-            send_read_receipt_tx,
-            send_ack_tx,
-            send_avatar_tx,
-            send_reaction_tx,
-            send_media_tx,
+            net: NetworkChannels {
+                event_rx,
+                send_tx,
+                send_group_tx,
+                send_typing_tx,
+                send_read_receipt_tx,
+                send_ack_tx,
+                send_avatar_tx,
+                send_reaction_tx,
+                send_media_tx,
+            },
             media_offer_rx,
             pending_media_offers: Vec::new(),
             media_progress: std::collections::HashMap::new(),
@@ -436,7 +444,7 @@ impl AbcomApp {
         drop(s);
 
         for req in receipts {
-            let _ = self.send_read_receipt_tx.try_send(req);
+            let _ = self.net.send_read_receipt_tx.try_send(req);
         }
     }
 }

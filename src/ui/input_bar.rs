@@ -254,7 +254,7 @@ fn send_one_media(
     targets: &[(String, std::net::SocketAddr)],
 ) {
     let state = app.state.clone();
-    let send_media_tx = app.send_media_tx.clone();
+    let send_media_tx = app.net.send_media_tx.clone();
     let path = path.to_path_buf();
     let my_name = my_name.to_string();
     let to_user = to_user.clone();
@@ -434,13 +434,13 @@ fn send_current_message(
         if let Some(addrs) = &group_addrs {
             // Salon : uniquement les membres en ligne du groupe.
             for addr in addrs {
-                let _ = app.send_tx.try_send(SendRequest {
+                let _ = app.net.send_tx.try_send(SendRequest {
                     to_addr: *addr,
                     message: msg.clone(),
                 });
             }
         } else if let Some(addr) = selected_addr {
-            let _ = app.send_tx.try_send(SendRequest {
+            let _ = app.net.send_tx.try_send(SendRequest {
                 to_addr: addr,
                 message: msg,
             });
@@ -451,7 +451,7 @@ fn send_current_message(
                 .iter()
                 .filter(|p| p.online && !p.addr.ip().is_unspecified())
             {
-                let _ = app.send_tx.try_send(SendRequest {
+                let _ = app.net.send_tx.try_send(SendRequest {
                     to_addr: peer.addr,
                     message: msg.clone(),
                 });
@@ -1110,7 +1110,7 @@ impl AbcomApp {
                                     (name, addrs)
                                 };
                                 for addr in target_addrs {
-                                    let _ = self.send_typing_tx.try_send(TypingRequest {
+                                    let _ = self.net.send_typing_tx.try_send(TypingRequest {
                                         to_addr: addr,
                                         indicator: TypingIndicator {
                                             from: my_name.clone(),

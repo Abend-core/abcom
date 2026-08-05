@@ -193,7 +193,7 @@ impl AbcomApp {
                 to_addr: addr,
                 announce: announce.clone(),
             };
-            if self.send_avatar_tx.try_send(request).is_ok() {
+            if self.net.send_avatar_tx.try_send(request).is_ok() {
                 self.avatar_sent_to.insert(username);
             }
         }
