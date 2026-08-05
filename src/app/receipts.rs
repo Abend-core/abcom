@@ -117,14 +117,6 @@ impl AppState {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn is_message_read_by(&self, message_hash: u64, username: &str) -> bool {
-        self.read_receipts
-            .get(&message_hash)
-            .map(|r| r.contains(username))
-            .unwrap_or(false)
-    }
-
     pub fn get_read_count(&self, message_hash: u64) -> usize {
         self.read_receipts
             .get(&message_hash)
@@ -172,7 +164,6 @@ impl AppState {
         to_retry
     }
 
-    #[allow(dead_code)]
     pub fn is_message_pending(&self, message_hash: u64) -> bool {
         self.pending_messages.contains_key(&message_hash)
     }

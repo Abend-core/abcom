@@ -46,15 +46,6 @@ pub struct MessageAckRequest {
     pub ack: MessageAck,
 }
 
-/// Message réseau unifié (ChatMessage ou GroupEvent)
-#[allow(dead_code)]
-#[derive(Serialize, Deserialize, Clone, Debug)]
-#[serde(untagged)]
-pub enum NetworkMessage {
-    Chat(super::chat::ChatMessage),
-    Group(super::group::GroupEvent),
-}
-
 #[cfg(test)]
 #[path = "../tests/test_message_receipts.rs"]
 mod tests;

@@ -94,15 +94,6 @@ impl AppState {
         }
     }
 
-    #[allow(dead_code)]
-    pub fn get_conversations(&self) -> Vec<String> {
-        let mut convos = vec!["📢 Global".to_string()];
-        for peer in &self.peers {
-            convos.push(format!("🙋 {}", peer.username));
-        }
-        convos
-    }
-
     /// Nombre de messages non-lus d'une conversation : nom de pair (privé)
     /// ou clé de salon `#nom` (groupe).
     pub fn unread_count(&self, conv: &str) -> usize {

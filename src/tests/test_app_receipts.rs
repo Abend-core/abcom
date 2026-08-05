@@ -103,8 +103,7 @@ fn test_mark_and_check_read() {
     let m = make_msg("alice", "test");
     let hash = AppState::message_hash(&m);
     s.mark_message_read(hash, "bob".to_string());
-    assert!(s.is_message_read_by(hash, "bob"));
-    assert!(!s.is_message_read_by(hash, "charlie"));
+    assert_eq!(s.get_read_count(hash), 1);
 }
 
 #[test]
