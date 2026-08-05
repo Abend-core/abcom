@@ -112,6 +112,26 @@ pub(crate) struct EmojiPickerState {
     pub(crate) shortcode_selected: usize,
 }
 
+/// État du sélecteur de contenu Klipy (GIF / Mèmes / Stickers) : trois feeds
+/// indépendants, l'onglet actif et la recherche partagée.
+pub(crate) struct GifPickerState {
+    pub(crate) show: bool,
+    pub(crate) tab: GifPickerTab,
+    /// Texte courant de la barre de recherche du sélecteur.
+    pub(crate) query: String,
+    /// Feed GIF — tendances et recherche Klipy /gifs/*.
+    pub(crate) feed: crate::klipy::GifFeed,
+    /// Feed Mèmes — tendances et recherche Klipy /static-memes/*.
+    pub(crate) meme_feed: crate::klipy::GifFeed,
+    /// Feed Stickers — tendances et recherche Klipy /stickers/*.
+    pub(crate) sticker_feed: crate::klipy::GifFeed,
+    /// Dernière frappe dans la recherche (anti-rebond avant requête).
+    pub(crate) last_input: std::time::Instant,
+    /// Le picker était ouvert à la frame précédente (détection de la
+    /// fermeture pour libérer les aperçus du cache d'images egui).
+    pub(crate) was_open: bool,
+}
+
 /// État de l'application UI
 pub(crate) struct AbcomApp {
     pub(crate) state: Arc<Mutex<AppState>>,
@@ -143,20 +163,7 @@ pub(crate) struct AbcomApp {
     pub(crate) input_scroll_lines: f32,
     pub(crate) show_attachment_menu: bool,
     pub(crate) show_emoji_picker: bool,
-    /// Sélecteur de contenu Klipy ouvert (GIF, Mèmes, Stickers).
-    pub(crate) show_gif_picker: bool,
-    /// Onglet actif du sélecteur Klipy.
-    pub(crate) gif_picker_tab: GifPickerTab,
-    /// Texte courant de la barre de recherche du sélecteur.
-    pub(crate) gif_query: String,
-    /// Feed GIF — tendances et recherche Klipy /gifs/*.
-    pub(crate) gif_feed: crate::klipy::GifFeed,
-    /// Feed Mèmes — tendances et recherche Klipy /static-memes/*.
-    pub(crate) meme_feed: crate::klipy::GifFeed,
-    /// Feed Stickers — tendances et recherche Klipy /stickers/*.
-    pub(crate) sticker_feed: crate::klipy::GifFeed,
-    /// Dernière frappe dans la recherche (anti-rebond avant requête).
-    pub(crate) gif_last_input: std::time::Instant,
+    pub(crate) gif_picker: GifPickerState,
     pub(crate) show_participants: bool,
     pub(crate) enable_sound_notifications: bool,
     pub(crate) last_notification: Option<String>,
@@ -240,9 +247,6 @@ pub(crate) struct AbcomApp {
     /// Une page d'historique plus ancienne est en cours de chargement
     /// (évite les demandes répétées pendant le vol de la requête).
     pub(crate) loading_older: bool,
-    /// Le picker GIF était ouvert à la frame précédente (détection de la
-    /// fermeture pour libérer les aperçus du cache d'images egui).
-    pub(crate) gif_picker_was_open: bool,
     /// URLs des GIFs actuellement dans le fil rendu : celles qui en sortent
     /// (changement de conversation, drain) sont retirées du cache d'images.
     pub(crate) known_gif_urls: std::collections::HashSet<String>,
@@ -309,13 +313,16 @@ impl AbcomApp {
             input_scroll_lines: 0.0,
             show_attachment_menu: false,
             show_emoji_picker: false,
-            show_gif_picker: false,
-            gif_picker_tab: GifPickerTab::Gif,
-            gif_query: String::new(),
-            gif_feed: crate::klipy::GifFeed::new(crate::klipy::ContentKind::Gif),
-            meme_feed: crate::klipy::GifFeed::new(crate::klipy::ContentKind::Meme),
-            sticker_feed: crate::klipy::GifFeed::new(crate::klipy::ContentKind::Sticker),
-            gif_last_input: std::time::Instant::now(),
+            gif_picker: GifPickerState {
+                show: false,
+                tab: GifPickerTab::Gif,
+                query: String::new(),
+                feed: crate::klipy::GifFeed::new(crate::klipy::ContentKind::Gif),
+                meme_feed: crate::klipy::GifFeed::new(crate::klipy::ContentKind::Meme),
+                sticker_feed: crate::klipy::GifFeed::new(crate::klipy::ContentKind::Sticker),
+                last_input: std::time::Instant::now(),
+                was_open: false,
+            },
             show_participants: false,
             enable_sound_notifications: true,
             last_notification: None,
@@ -378,7 +385,6 @@ impl AbcomApp {
             chat_visible_count: CHAT_WINDOW_STEP,
             chat_prepend_fix: None,
             loading_older: false,
-            gif_picker_was_open: false,
             known_gif_urls: std::collections::HashSet::new(),
             media_texture_lru: Vec::new(),
             viewer_texture: None,
