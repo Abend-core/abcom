@@ -14,18 +14,24 @@
 
 Métriques recomptées sur le code actuel — **inchangées** depuis le 7 juillet sauf mention :
 
-| Signal | 07/07 | 05/08 | État |
-|--------|-------|-------|------|
-| `unwrap`/`expect`/`panic!` hors tests | 62 | **62** | inchangé |
-| dont `lock().unwrap()` | 55 | **55** | inchangé |
-| `eprintln!`/`println!` de prod | 34 | **34** | inchangé |
-| `#[allow(dead_code)]` | 16 | **16** | inchangé |
-| `let _ = …` (erreurs silencées) | — | **61** | mesuré |
-| Tests (`#[test]`/`#[tokio::test]`) | 259 | **272** | +13 |
-| `clippy -D warnings` / `fmt --check` | vert | **vert** | CI bloquante OK |
-| Plus gros fichier (`chat_panel.rs`) | 1 506 | **1 522** | +16 |
+| Signal | 07/07 | 05/08 (avant) | 05/08 (après P1-P6) | État |
+|--------|-------|----------------|----------------------|------|
+| `unwrap`/`expect`/`panic!` hors tests | 62 | 62 | **~7** (hors `lock_safe`) | ✅ P2 |
+| dont `lock().unwrap()` | 55 | 55 | **0** | ✅ P2 |
+| `eprintln!`/`println!` de prod | 34 | 34 | **0** (`tracing`) | ✅ P3 |
+| `#[allow(dead_code)]` | 16 | 16 | **4** (tous justifiés) | ✅ P4 |
+| Tests (`#[test]`/`#[tokio::test]`) | 259 | 272 | **257** (dead code purgé) | — |
+| `clippy -D warnings` / `fmt --check` | vert | vert | **vert** | CI bloquante OK |
+| Champs `AbcomApp` (god-struct) | 90 | 90 | **46** en 6 sous-structs | ✅ P6 |
+| Scan emoji dupliqué | 3 copies | 4 copies | **1** (`match_emoji_at`) | ✅ P5 |
 
-**Corrigé depuis (à cocher ci-dessous) :** ✅ la traversée de répertoire à la
+**Exécuté le 5 août 2026 : les 6 phases de [`PLAN-MAINTENABILITE.md`](PLAN-MAINTENABILITE.md)
+(P1 hygiène, P2 mutex, P3 logging, P4 dead code, P5 thème/dédup, P6 découpage
+AbcomApp) — 6 commits sur `dev`, barrière verte (`fmt`+`clippy -D warnings`+`test`)
+à chaque étape. Détail des sous-structs P6 : `NetworkChannels`, `EmojiPickerState`,
+`GifPickerState`, `ComposerState`, `ModalsState`, `MediaState`.**
+
+**Sécurité — corrigé depuis (à cocher ci-dessous) :** ✅ la traversée de répertoire à la
 réception de média est fermée par `is_safe_media_id` (`media_stream.rs`, PR #28) —
 **S1 résolu**. Toujours ouverts : S2 (vérif `from` == pair authentifié), R1 (retry
 réel, encore un `eprintln!` stub à `events.rs:418`), R2/R3/R4 et toute la dette §2.
@@ -51,30 +57,29 @@ réel, encore un `eprintln!` stub à `events.rs:418`), R2/R3/R4 et toute la dett
 
 ## 2. Qualité du code
 
-- [ ] 🔴 **62 `unwrap()`/`expect()`/`panic!` hors tests**, dont **55 `lock().unwrap()`**
-  sur le mutex `AppState` : un thread qui panique en tenant le verrou empoisonne le mutex
-  et fait tomber toute l'app en cascade. Introduire un helper
-  (`fn state(&self) -> MutexGuard<…>` avec `unwrap_or_else(|e| e.into_inner())`) ou
-  passer à `parking_lot::Mutex` (pas d'empoisonnement).
-- [ ] 🔴 Remplacer les **34 `eprintln!`/`println!`** de production par un vrai logging
-  (`log` + `env_logger`, ou `tracing`) : niveaux, horodatage, et possibilité d'écrire
-  dans un fichier pour diagnostiquer chez un utilisateur.
-- [ ] 🟠 Purger les **16 `#[allow(dead_code)]`** : soit le code sert (le brancher), soit
-  il meurt (`app/receipts.rs::is_message_pending`, `app/messages.rs::get_conversations`,
-  `composer/cursor.rs` entier, etc.).
+- [x] 🔴 **55 `lock().unwrap()`** sur le mutex `AppState` — **fait (05/08, P2)** : trait
+  `util::MutexExt::lock_safe()` (`unwrap_or_else(|e| e.into_inner())`), remplacement
+  mécanique des 55 sites de production.
+- [x] 🔴 **34 `eprintln!`/`println!`** de production — **fait (05/08, P3)** : migration vers
+  `tracing`/`tracing-subscriber` (niveaux, horodatage, filtre `RUST_LOG`).
+- [x] 🟠 Purger les **16 `#[allow(dead_code)]`** — **fait (05/08, P4)** : 12 supprimés
+  (dont les modules orphelins entiers `composer/cursor.rs`, `composer/render.rs`,
+  `composer/shortcode.rs`, superseded par `emoji_picker.rs`/`composer/mod.rs`), 4 restants
+  justifiés par un commentaire (drop `Tray::icon`, `Identity::ephemeral` utilisé par les
+  tests, `cleanup_inactive_peers` filet de sécurité, `rename_group` gap fonctionnel UI).
 - [ ] 🟠 Découper les gros fichiers UI : `chat_panel.rs` (1 522 lignes),
   `input_bar.rs` (1 164), `markdown.rs` (996), `composer/mod.rs` (927), `ui/mod.rs` (915).
   Extraire par exemple le rendu d'une ligne de fil, la barre de survol, et le popup
   notifications dans des sous-modules (le modèle `composer/` — cursor/text_ops/shortcode/
   render — est à répliquer).
-- [ ] 🟠 Dédupliquer le scan d'emojis : `markdown.rs::is_text_emoji_only`,
-  `emoji_picker.rs::render_inline` et `composer/mod.rs::composer_caret_positions`
-  réimplémentent tous trois la même itération « séquence de 2 puis 1 caractères dans
-  `emoji_map` » — extraire un itérateur commun.
-- [ ] 🟠 Centraliser les constantes visuelles dupliquées : `line_height = 22.0` apparaît
-  en dur dans plusieurs fonctions du composeur ; couleurs (gris 140/150/160, bleu
-  80-180-255…) dispersées dans `chat_panel.rs`, `input_bar.rs`, `sidebar.rs` → un module
-  `ui/theme.rs`.
+- [x] 🟠 Dédupliquer le scan d'emojis — **fait (05/08, P5)** : les 4 sites
+  (`markdown.rs`, `emoji_picker.rs`, `composer/mod.rs` ×2) consomment désormais
+  `emoji_picker::match_emoji_at`, point d'entrée unique.
+- [x] 🟠 Centraliser les constantes visuelles dupliquées — **fait (05/08, P5)** :
+  `ui/theme.rs` regroupe les 3 valeurs réellement dupliquées (`LINE_HEIGHT`,
+  `SEPARATOR`, `TEXT_MUTED`). Les teintes proches mais choisies indépendamment
+  (gris 140/160/165/190, bleu du récépissé lu) restent en dur à leur point d'usage
+  — les fusionner créerait un couplage visuel qui n'existe pas dans le code.
 - [ ] 🟠 i18n : `tr(fr, en)` retourne des `&'static str` éparpillés dans tout le code UI,
   et plusieurs rendus contournent `tr` avec des `match language` locaux
   (`chat_panel.rs::show_receipt_detail_button`, `render_message_body`). Centraliser les
@@ -99,10 +104,11 @@ réel, encore un `eprintln!` stub à `events.rs:418`), R2/R3/R4 et toute la dett
 - [ ] 🟢 `klipy.rs` (API externe) vit à la racine de `src/` à côté de `app/`, `network/`,
   `ui/` — le déplacer dans un module `services/` ou `net/klipy.rs` pour clarifier les
   couches.
-- [ ] 🟠 `AbcomApp` est un god-struct de **90 champs** (`ui/mod.rs`) : état du
-  composeur, pickers, médias, notifications, groupes, réglages… tout au même niveau.
-  Regrouper par sous-structs (`ComposerState`, `PickerState`, `MediaState`…) — c'est le
-  préalable au découpage des gros fichiers UI.
+- [x] 🟠 `AbcomApp` était un god-struct de **90 champs** — **fait (05/08, P6)** : éclaté
+  en 6 sous-structs (`NetworkChannels`, `EmojiPickerState`, `GifPickerState`,
+  `ComposerState`, `ModalsState`, `MediaState`), 46 champs restants à plat. Un commit
+  par sous-struct, migration mécanique des ~280 sites d'accès au total. Préalable posé
+  pour le découpage des gros fichiers UI (toujours ouvert ci-dessus).
 - [ ] 🟠 `network/sender.rs` : **sept boucles d'émission quasi identiques**
   (`run_sender`, `_group`, `_typing`, `_read_receipts`, `_ack`, `_avatar`, `_reaction`)
   + sept canaux et sept spawns dans `main.rs`. Une seule file générique
@@ -430,10 +436,10 @@ réel, encore un `eprintln!` stub à `events.rs:418`), R2/R3/R4 et toute la dett
 
 **Dette & hygiène :**
 
-| # | Chantier | Fichiers principaux |
-|---|----------|--------------------|
-| D1 | Logging structuré à la place des 34 `eprintln!` | transversal |
-| D2 | Nettoyage dépôt (`old/`, `font 2/`, versionnage Cargo) | racine |
+| # | Chantier | État |
+|---|----------|------|
+| ~~D1~~ | ~~Logging structuré à la place des 34 `eprintln!`~~ | ✅ **fait (05/08, P3)** |
+| D2 | Nettoyage dépôt (`font 2/`, gitignore, URL repo) | ✅ **fait (05/08, P1)** — `old/` conservé (archive volontaire) ; versionnage Cargo (`0.0.1`) toujours en suspens |
 
 ---
 
