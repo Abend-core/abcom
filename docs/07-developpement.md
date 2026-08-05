@@ -13,7 +13,7 @@ cargo build
 
 ```bash
 cargo run --release -- <pseudo>       # lancer
-cargo test                            # 226 tests
+cargo test                            # 264 tests
 cargo test app::groups                # un module
 cargo fmt && cargo clippy -- -D warnings   # ce que la CI exigera
 ```
@@ -22,7 +22,7 @@ Le profil release est optimisé pour un binaire compact (`lto = "thin"`, `codege
 
 ## Tests
 
-226 tests automatisés, regroupés dans [src/tests/](../src/tests/) (un fichier par module testé). Points notables :
+264 tests automatisés, regroupés dans [src/tests/](../src/tests/) (un fichier par module testé). Points notables :
 
 - les tests réseau utilisent de **vraies sockets** (`TcpListener::bind("127.0.0.1:0")`, UDP réel) — pas de mocks ;
 - le chiffrement est testé par des handshakes Noise complets en mémoire et entre endpoints réels (y compris le rejet d'un client en clair et le refus sur clé changée) ;
