@@ -41,6 +41,9 @@ blake2 = "0.10.6"
 tray-icon = "0.24.1"
 notify-rust = "4.18.0"
 auto-launch = "0.6.0"
+# HWND natif (via eframe::Frame) pour replier la fenêtre dans le tray sous
+# Windows sans la détruire (déplacement hors écran + style « outil »).
+raw-window-handle = "0.6"
 
 [features]
 default = []
@@ -50,6 +53,13 @@ avatar-svg = ["dep:resvg"]
 
 [target.'cfg(windows)'.dependencies]
 rodio = { version = "0.19", default-features = false, features = ["symphonia-wav"] }
+# Replier la fenêtre dans le tray sans la détruire : on la sort de l'écran et
+# de la barre des tâches (style « outil ») tout en la gardant « visible » pour
+# Windows, afin que la boucle egui continue de tourner (tray + notifications).
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [target.'cfg(not(windows))'.dependencies]
 rodio = { version = "0.19", default-features = false }

@@ -133,6 +133,123 @@ impl Tray {
     }
 }
 
+/// Capte une fois le HWND natif de la fenêtre depuis `eframe::Frame`, pour
+/// pouvoir la replier/restaurer au niveau OS (Windows uniquement).
+#[cfg(windows)]
+pub(crate) fn capture_window_handle(frame: &eframe::Frame) {
+    use raw_window_handle::{HasWindowHandle, RawWindowHandle};
+
+    if win::has_handle() {
+        return;
+    }
+    if let Ok(handle) = frame.window_handle() {
+        if let RawWindowHandle::Win32(win32) = handle.as_raw() {
+            win::set_handle(win32.hwnd.get());
+        }
+    }
+}
+
+/// Repli/restauration natifs de la fenêtre sous Windows. On ne la cache PAS
+/// (`SW_HIDE` couperait les `WM_PAINT` et donc la boucle egui) : on la sort de
+/// l'écran et de la barre des tâches (style « outil ») en la gardant visible,
+/// pour que le tray et les notifications continuent de fonctionner comme sur
+/// macOS.
+#[cfg(windows)]
+pub(crate) mod win {
+    use std::sync::atomic::{AtomicI32, AtomicIsize, Ordering};
+
+    use windows_sys::Win32::Foundation::{HWND, RECT};
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, GetWindowRect, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
+        ShowWindow, GWL_EXSTYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
+        SW_HIDE, SW_SHOW, SW_SHOWNA, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+    };
+
+    /// Position hors du bureau visible où l'on parque la fenêtre repliée.
+    const OFFSCREEN: i32 = -32000;
+
+    static HANDLE: AtomicIsize = AtomicIsize::new(0);
+    static SAVED_X: AtomicI32 = AtomicI32::new(0);
+    static SAVED_Y: AtomicI32 = AtomicI32::new(0);
+
+    pub(crate) fn set_handle(hwnd: isize) {
+        HANDLE.store(hwnd, Ordering::Relaxed);
+    }
+
+    pub(crate) fn has_handle() -> bool {
+        HANDLE.load(Ordering::Relaxed) != 0
+    }
+
+    fn handle() -> Option<HWND> {
+        let raw = HANDLE.load(Ordering::Relaxed);
+        (raw != 0).then_some(raw as HWND)
+    }
+
+    /// Replie la fenêtre : mémorise sa position, la passe en style « outil »
+    /// (hors barre des tâches / Alt+Tab) et la déplace hors écran. Elle reste
+    /// visible au sens de Windows, donc egui continue de tourner.
+    pub(crate) fn hide_offscreen() {
+        let Some(hwnd) = handle() else {
+            return;
+        };
+        unsafe {
+            let mut rect = RECT {
+                left: 0,
+                top: 0,
+                right: 0,
+                bottom: 0,
+            };
+            if GetWindowRect(hwnd, &mut rect) != 0 && rect.left > OFFSCREEN {
+                SAVED_X.store(rect.left, Ordering::Relaxed);
+                SAVED_Y.store(rect.top, Ordering::Relaxed);
+            }
+
+            // Le passage en « outil » ne met à jour la barre des tâches
+            // qu'après un cycle hide/show ; on le fait pendant que la fenêtre
+            // part hors écran, puis on la ré-affiche SANS l'activer (SW_SHOWNA).
+            let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+            let ex = (ex & !(WS_EX_APPWINDOW as isize)) | WS_EX_TOOLWINDOW as isize;
+            ShowWindow(hwnd, SW_HIDE);
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex);
+            SetWindowPos(
+                hwnd,
+                std::ptr::null_mut(),
+                OFFSCREEN,
+                OFFSCREEN,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            );
+            ShowWindow(hwnd, SW_SHOWNA);
+        }
+    }
+
+    /// Restaure la fenêtre : retire le style « outil », la ramène à sa position
+    /// mémorisée, l'affiche et lui donne le premier plan.
+    pub(crate) fn restore_onscreen() {
+        let Some(hwnd) = handle() else {
+            return;
+        };
+        unsafe {
+            let ex = GetWindowLongPtrW(hwnd, GWL_EXSTYLE);
+            let ex = (ex & !(WS_EX_TOOLWINDOW as isize)) | WS_EX_APPWINDOW as isize;
+            ShowWindow(hwnd, SW_HIDE);
+            SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex);
+            SetWindowPos(
+                hwnd,
+                std::ptr::null_mut(),
+                SAVED_X.load(Ordering::Relaxed),
+                SAVED_Y.load(Ordering::Relaxed),
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
+            );
+            ShowWindow(hwnd, SW_SHOW);
+            SetForegroundWindow(hwnd);
+        }
+    }
+}
+
 /// Taille de l'icône tray (points logiques ; les OS remettent à l'échelle).
 const TRAY_PX: u32 = 32;
 

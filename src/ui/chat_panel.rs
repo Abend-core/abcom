@@ -11,6 +11,10 @@ const AVATAR_SIZE: f32 = 40.0;
 const AVATAR_GUTTER: f32 = 12.0;
 /// Espace vertical séparant deux groupes de messages.
 const GROUP_SPACING: f32 = 10.0;
+/// Petite marge à droite du fil : évite que les messages (texte, fond de
+/// survol, tableaux) ne collent au bord, pour la même respiration que sous le
+/// dernier message avant la barre de saisie.
+const MESSAGE_RIGHT_MARGIN: f32 = 8.0;
 /// Écart de temps au-delà duquel un nouvel en-tête est ouvert pour un même
 /// auteur (façon Discord/Cinny). Évite que des messages espacés de plusieurs
 /// heures ou jours paraissent envoyés d'un coup. Ajustable.
@@ -1012,6 +1016,14 @@ impl AbcomApp {
             let add_reaction_label = self.tr("Ajouter une réaction", "Add reaction");
             let language = self.ui_language;
 
+            // Largeur du fil figée AVANT la zone défilante, depuis la largeur
+            // du panneau (stable, ne bouge qu'au redimensionnement) et arrondie
+            // au pixel : évite le tremblement de la marge droite qu'on avait en
+            // recalculant `available_width` à l'intérieur du scroll chaque frame.
+            let thread_width = (ui.available_width() - MESSAGE_RIGHT_MARGIN)
+                .max(120.0)
+                .floor();
+
             // Aire de messages. Le collage au bas est suspendu quand un saut
             // vers un message est en attente : sinon il écrase le
             // `scroll_to_rect` du saut et le fil reste en bas.
@@ -1020,6 +1032,10 @@ impl AbcomApp {
                 .auto_shrink([false; 2])
                 .stick_to_bottom(self.scroll_to_message.is_none())
                 .show(ui, |ui| {
+                    // Marge à droite : largeur figée (cf. thread_width), rien ne
+                    // colle au bord et la marge ne tremble plus.
+                    ui.set_max_width(thread_width);
+
                     if rows.is_empty() {
                         ui.add_space(50.0);
                         ui.label(
