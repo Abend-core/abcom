@@ -132,6 +132,19 @@ pub(crate) struct GifPickerState {
     pub(crate) was_open: bool,
 }
 
+/// État de la zone de saisie : texte courant, position du curseur/sélection,
+/// brouillons par conversation et pièces jointes en attente d'envoi.
+pub(crate) struct ComposerState {
+    pub(crate) text: String,
+    pub(crate) cursor_char: usize,
+    pub(crate) selection_anchor: Option<usize>,
+    pub(crate) has_focus: bool,
+    pub(crate) scroll_lines: f32,
+    /// Texte non envoyé par conversation, restauré au changement d'onglet.
+    pub(crate) drafts: std::collections::HashMap<Option<String>, String>,
+    pub(crate) pending_attachments: Vec<PathBuf>,
+}
+
 /// État de l'application UI
 pub(crate) struct AbcomApp {
     pub(crate) state: Arc<Mutex<AppState>>,
@@ -156,11 +169,7 @@ pub(crate) struct AbcomApp {
     /// Lancement au démarrage de session activé (persisté + état système).
     pub(crate) autostart_enabled: bool,
     pub(crate) net: NetworkChannels,
-    pub(crate) input: String,
-    pub(crate) input_cursor_char: usize,
-    pub(crate) input_selection_anchor: Option<usize>,
-    pub(crate) input_has_focus: bool,
-    pub(crate) input_scroll_lines: f32,
+    pub(crate) composer: ComposerState,
     pub(crate) show_attachment_menu: bool,
     pub(crate) show_emoji_picker: bool,
     pub(crate) gif_picker: GifPickerState,
@@ -184,8 +193,6 @@ pub(crate) struct AbcomApp {
     /// Renommage de contact : pair ciblé par la modale (None = fermée).
     pub(crate) rename_target: Option<String>,
     pub(crate) rename_input: String,
-    pub(crate) drafts: std::collections::HashMap<Option<String>, String>,
-    pub(crate) pending_attachments: Vec<PathBuf>,
     /// 0 = none, 1 = pick files, 2 = pick folder (deferred to next frame to avoid AppKit conflict)
     pub(crate) pending_picker: u8,
     pub(crate) ui_language: UiLanguage,
@@ -306,11 +313,15 @@ impl AbcomApp {
             media_offer_rx,
             pending_media_offers: Vec::new(),
             media_progress: std::collections::HashMap::new(),
-            input: String::new(),
-            input_cursor_char: 0,
-            input_selection_anchor: None,
-            input_has_focus: false,
-            input_scroll_lines: 0.0,
+            composer: ComposerState {
+                text: String::new(),
+                cursor_char: 0,
+                selection_anchor: None,
+                has_focus: false,
+                scroll_lines: 0.0,
+                drafts: std::collections::HashMap::new(),
+                pending_attachments: Vec::new(),
+            },
             show_attachment_menu: false,
             show_emoji_picker: false,
             gif_picker: GifPickerState {
@@ -349,8 +360,6 @@ impl AbcomApp {
             muted_conversations: std::collections::HashSet::new(),
             rename_target: None,
             rename_input: String::new(),
-            drafts: std::collections::HashMap::new(),
-            pending_attachments: Vec::new(),
             pending_picker: 0,
             ui_language: UiLanguage::French,
             theme_preference: ThemePreference::System,
@@ -401,17 +410,24 @@ impl AbcomApp {
     /// Sauvegarde le texte courant dans les drafts pour la conversation active
     pub(crate) fn save_draft(&mut self) {
         let selected_conv = self.state.lock_safe().selected_conversation.clone();
-        self.drafts.insert(selected_conv, self.input.clone());
+        self.composer
+            .drafts
+            .insert(selected_conv, self.composer.text.clone());
     }
 
     /// Charge le texte pour une conversation donnée et met à jour l'input
     pub(crate) fn load_draft(&mut self, conversation: Option<String>) {
-        let draft = self.drafts.get(&conversation).cloned().unwrap_or_default();
-        self.input = draft;
-        self.input_cursor_char = 0;
-        self.input_selection_anchor = None;
-        self.input_has_focus = false;
-        self.input_scroll_lines = 0.0;
+        let draft = self
+            .composer
+            .drafts
+            .get(&conversation)
+            .cloned()
+            .unwrap_or_default();
+        self.composer.text = draft;
+        self.composer.cursor_char = 0;
+        self.composer.selection_anchor = None;
+        self.composer.has_focus = false;
+        self.composer.scroll_lines = 0.0;
     }
 
     /// Change vers une nouvelle conversation, sauvegardant le draft actuel et chargeant celui de la nouvelle
@@ -664,8 +680,8 @@ impl eframe::App for AbcomApp {
                     if let Some(paths) = rfd::FileDialog::new().set_title(files_title).pick_files()
                     {
                         for p in paths {
-                            if !self.pending_attachments.contains(&p) {
-                                self.pending_attachments.push(p);
+                            if !self.composer.pending_attachments.contains(&p) {
+                                self.composer.pending_attachments.push(p);
                             }
                         }
                         self.last_notification = Some(files_added.to_string());
@@ -675,8 +691,8 @@ impl eframe::App for AbcomApp {
                 2 => {
                     if let Some(path) = rfd::FileDialog::new().set_title(folder_title).pick_folder()
                     {
-                        if !self.pending_attachments.contains(&path) {
-                            self.pending_attachments.push(path);
+                        if !self.composer.pending_attachments.contains(&path) {
+                            self.composer.pending_attachments.push(path);
                         }
                         self.last_notification = Some(folder_added.to_string());
                         self.notification_time = std::time::Instant::now();
