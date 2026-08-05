@@ -62,8 +62,8 @@ impl AbcomApp {
                 ui.set_min_size(egui::vec2(310.0, 340.0));
                 super::emoji_picker::show_emoji_grid(
                     ui,
-                    &mut self.emoji_category,
-                    &self.emoji_textures,
+                    &mut self.emoji.category,
+                    &self.emoji.textures,
                     |ch| picked = Some(ch.to_string()),
                 );
             });

@@ -788,12 +788,12 @@ impl AbcomApp {
                                     &mut self.input_cursor_char,
                                     &mut self.input_has_focus,
                                     &mut self.input_scroll_lines,
-                                    &self.emoji_map,
-                                    &self.emoji_textures,
-                                    &self.emoji_alias_to_char,
-                                    &self.emoji_aliases,
+                                    &self.emoji.map,
+                                    &self.emoji.textures,
+                                    &self.emoji.alias_to_char,
+                                    &self.emoji.aliases,
                                     menu_open_now,
-                                    self.shortcode_selected,
+                                    self.emoji.shortcode_selected,
                                     available_w,
                                     &mut self.input_selection_anchor,
                                 );
@@ -841,7 +841,7 @@ impl AbcomApp {
                                         }
 
                                         let emoji_btn =
-                                            if let Some((_, tex)) = self.emoji_textures.first() {
+                                            if let Some((_, tex)) = self.emoji.textures.first() {
                                                 icon_button(
                                                     ui,
                                                     self.tr("Emojis", "Emoji"),
@@ -1018,16 +1018,16 @@ impl AbcomApp {
                             let shortcode_list = super::emoji_picker::shortcode_suggestions(
                                 &self.input,
                                 self.input_cursor_char,
-                                &self.emoji_alias_to_char,
-                                &self.emoji_aliases,
+                                &self.emoji.alias_to_char,
+                                &self.emoji.aliases,
                                 shortcode_limit,
                             );
 
                             let mut clicked_shortcode: Option<String> = None;
                             if shortcode_list.is_empty() {
-                                self.shortcode_selected = 0;
-                            } else if self.shortcode_selected >= shortcode_list.len() {
-                                self.shortcode_selected = shortcode_list.len() - 1;
+                                self.emoji.shortcode_selected = 0;
+                            } else if self.emoji.shortcode_selected >= shortcode_list.len() {
+                                self.emoji.shortcode_selected = shortcode_list.len() - 1;
                             }
 
                             // Consumir las flechas solo si el menú de shortcodes está abierto
@@ -1036,15 +1036,15 @@ impl AbcomApp {
                                     i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowDown)
                                 }) && !shortcode_list.is_empty()
                                 {
-                                    self.shortcode_selected = (self.shortcode_selected + 1)
+                                    self.emoji.shortcode_selected = (self.emoji.shortcode_selected + 1)
                                         .min(shortcode_list.len() - 1);
                                 }
                                 if ctx.input_mut(|i| {
                                     i.consume_key(egui::Modifiers::NONE, egui::Key::ArrowUp)
                                 }) && !shortcode_list.is_empty()
                                 {
-                                    self.shortcode_selected =
-                                        self.shortcode_selected.saturating_sub(1);
+                                    self.emoji.shortcode_selected =
+                                        self.emoji.shortcode_selected.saturating_sub(1);
                                 }
                             }
 
@@ -1054,9 +1054,9 @@ impl AbcomApp {
                                     ui,
                                     &resp,
                                     &shortcode_list,
-                                    &self.emoji_map,
-                                    &self.emoji_textures,
-                                    self.shortcode_selected,
+                                    &self.emoji.map,
+                                    &self.emoji.textures,
+                                    self.emoji.shortcode_selected,
                                     &mut clicked_shortcode,
                                 );
                             }
@@ -1065,7 +1065,7 @@ impl AbcomApp {
                                 if let Some((start, _)) =
                                     emoji_shortcode_trigger(&self.input, self.input_cursor_char)
                                 {
-                                    if let Some(ch) = self.emoji_alias_to_char.get(&alias) {
+                                    if let Some(ch) = self.emoji.alias_to_char.get(&alias) {
                                         let end = self.input_cursor_char;
                                         composer::replace_char_range(
                                             &mut self.input,

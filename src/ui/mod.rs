@@ -94,6 +94,24 @@ pub(crate) struct NetworkChannels {
     pub(crate) send_media_tx: mpsc::Sender<MediaSendJob>,
 }
 
+/// Données du picker emoji : textures décodées, index de recherche par
+/// shortcode, et état de navigation du picker/des suggestions. Consommées à
+/// la fois par le picker lui-même et par le rendu inline (fil, composeur,
+/// barre de réactions).
+pub(crate) struct EmojiPickerState {
+    /// Résultat du décodage des PNG emoji, effectué dans un thread au
+    /// démarrage : le premier frame n'attend plus les 323 décodages.
+    pub(crate) decode_rx: Option<std::sync::mpsc::Receiver<Vec<(String, egui::ColorImage)>>>,
+    pub(crate) textures: Vec<(String, egui::TextureHandle)>,
+    pub(crate) textures_loaded: bool,
+    pub(crate) category: usize,
+    pub(crate) map: std::collections::HashMap<String, usize>,
+    pub(crate) alias_to_char: std::collections::HashMap<String, String>,
+    pub(crate) aliases: Vec<String>,
+    /// Suggestion sélectionnée dans le menu de complétion `:shortcode`.
+    pub(crate) shortcode_selected: usize,
+}
+
 /// État de l'application UI
 pub(crate) struct AbcomApp {
     pub(crate) state: Arc<Mutex<AppState>>,
@@ -117,9 +135,6 @@ pub(crate) struct AbcomApp {
     pub(crate) notif_preview: bool,
     /// Lancement au démarrage de session activé (persisté + état système).
     pub(crate) autostart_enabled: bool,
-    /// Résultat du décodage des PNG emoji, effectué dans un thread au
-    /// démarrage : le premier frame n'attend plus les 323 décodages.
-    pub(crate) emoji_decode_rx: Option<std::sync::mpsc::Receiver<Vec<(String, egui::ColorImage)>>>,
     pub(crate) net: NetworkChannels,
     pub(crate) input: String,
     pub(crate) input_cursor_char: usize,
@@ -148,13 +163,7 @@ pub(crate) struct AbcomApp {
     pub(crate) notification_time: std::time::Instant,
     pub(crate) has_unread: bool,
     pub(crate) window_focused: bool,
-    pub(crate) emoji_textures: Vec<(String, egui::TextureHandle)>,
-    pub(crate) emoji_textures_loaded: bool,
-    pub(crate) emoji_category: usize,
-    pub(crate) emoji_map: std::collections::HashMap<String, usize>,
-    pub(crate) emoji_alias_to_char: std::collections::HashMap<String, String>,
-    pub(crate) emoji_aliases: Vec<String>,
-    pub(crate) shortcode_selected: usize,
+    pub(crate) emoji: EmojiPickerState,
     pub(crate) show_group_modal: bool,
     pub(crate) group_name_input: String,
     pub(crate) group_members_selected: std::collections::HashSet<String>,
@@ -279,7 +288,6 @@ impl AbcomApp {
             state,
             identity_fingerprint,
             psk_active,
-            emoji_decode_rx,
             net: NetworkChannels {
                 event_rx,
                 send_tx,
@@ -314,13 +322,16 @@ impl AbcomApp {
             notification_time: std::time::Instant::now(),
             has_unread: false,
             window_focused: true,
-            emoji_textures: Vec::new(),
-            emoji_textures_loaded: false,
-            emoji_category: 0,
-            emoji_map: std::collections::HashMap::new(),
-            emoji_alias_to_char: std::collections::HashMap::new(),
-            emoji_aliases: Vec::new(),
-            shortcode_selected: 0,
+            emoji: EmojiPickerState {
+                decode_rx: emoji_decode_rx,
+                textures: Vec::new(),
+                textures_loaded: false,
+                category: 0,
+                map: std::collections::HashMap::new(),
+                alias_to_char: std::collections::HashMap::new(),
+                aliases: Vec::new(),
+                shortcode_selected: 0,
+            },
             show_group_modal: false,
             group_name_input: String::new(),
             group_members_selected: std::collections::HashSet::new(),
@@ -478,10 +489,10 @@ impl AbcomApp {
         }
         self.forget_gif_previews(ctx);
         // Emojis : libérés aussi, re-décodés en arrière-plan au retour.
-        self.emoji_textures.clear();
-        self.emoji_map.clear();
-        self.emoji_textures_loaded = false;
-        self.emoji_decode_rx = None;
+        self.emoji.textures.clear();
+        self.emoji.map.clear();
+        self.emoji.textures_loaded = false;
+        self.emoji.decode_rx = None;
         self.chat_cache.invalidate();
     }
 
@@ -499,7 +510,7 @@ impl AbcomApp {
         #[cfg(not(windows))]
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-        self.emoji_decode_rx = Some(spawn_emoji_decoder());
+        self.emoji.decode_rx = Some(spawn_emoji_decoder());
         self.chat_cache.invalidate();
         ctx.request_repaint();
     }
@@ -606,7 +617,7 @@ impl eframe::App for AbcomApp {
             self.sidebar_cache.refresh(&s);
             let rebuilt = self
                 .chat_cache
-                .refresh(&s, self.ui_language, &self.emoji_map);
+                .refresh(&s, self.ui_language, &self.emoji.map);
             drop(s);
             if let Some(conv_changed) = rebuilt {
                 if conv_changed {
