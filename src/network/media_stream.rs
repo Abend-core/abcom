@@ -40,6 +40,14 @@ fn to_io(e: impl std::fmt::Display) -> std::io::Error {
     std::io::Error::other(e.to_string())
 }
 
+/// Vrai si `id` est un nom de fichier sûr : un seul composant de chemin, donc
+/// utilisable tel quel sous `media/` sans risque de path traversal. L'`id`
+/// arrivant du réseau, on rejette tout ce qui contient un séparateur ou vaut
+/// `.`/`..` (`Path::file_name` renvoie alors autre chose que l'`id` entier).
+fn is_safe_media_id(id: &str) -> bool {
+    std::path::Path::new(id).file_name() == Some(std::ffi::OsStr::new(id))
+}
+
 fn progress(id: &str, done: u64, total: u64, finished: bool) -> AppEvent {
     AppEvent::MediaProgressed(MediaProgress {
         id: id.to_string(),
@@ -230,6 +238,15 @@ async fn stream_in(
     let header: MediaStreamHeader = serde_json::from_slice(&header_bytes).map_err(to_io)?;
     let event_tx = ctx.event_tx.clone();
 
+    // Sécurité : `id` vient du réseau et sert de nom de fichier sous `media/`.
+    // On refuse tout identifiant qui n'est pas un simple composant de chemin
+    // (défense contre le path traversal, p. ex. « ../../… ») avant d'écrire quoi
+    // que ce soit ou de solliciter l'utilisateur.
+    let id = header.media.id.clone();
+    if !is_safe_media_id(&id) {
+        return Err(to_io("identifiant de média invalide"));
+    }
+
     // Médias volumineux : demander l'accord avant d'écrire le moindre octet.
     if header.requires_ack {
         let (decision_tx, decision_rx) = oneshot::channel::<bool>();
@@ -253,7 +270,6 @@ async fn stream_in(
         }
     }
 
-    let id = header.media.id.clone();
     let total = header.media.size_bytes;
     let path = media_dir.join(&id);
 

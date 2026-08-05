@@ -50,4 +50,4 @@ Le suivi au fil de l'eau est dans [CHANGELOG.md](CHANGELOG.md) et [AVANCEMENT.md
 
 ## État du projet
 
-Version 0.0.1, pas encore de release publiée. 226 tests automatisés, CI GitHub Actions sur `dev` et `main` (format, clippy, build, tests, audit de sécurité). Licence MIT.
+Version 0.0.1, pas encore de release publiée. 264 tests automatisés, CI GitHub Actions sur `dev` et `main` (format, clippy, build, tests, audit de sécurité). Licence MIT.
