@@ -260,7 +260,7 @@ impl AbcomApp {
                                                 self.state.lock_safe().set_pref("autostart", v);
                                             }
                                             Err(e) => {
-                                                eprintln!("[autostart] échec : {e}");
+                                                tracing::warn!("échec autostart : {e}");
                                                 self.autostart_enabled = !self.autostart_enabled;
                                             }
                                         }

@@ -504,7 +504,7 @@ impl AbcomApp {
                 self.notify_owned(msg);
             }
             Err(e) => {
-                eprintln!("[ui] Téléchargement échoué ({}): {}", filename, e);
+                tracing::warn!("téléchargement échoué ({}): {}", filename, e);
                 self.notify(self.tr("Téléchargement impossible", "Download failed"));
             }
         }

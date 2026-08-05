@@ -50,7 +50,7 @@ pub fn init_default(existing_pref: Option<bool>) -> bool {
         None => match set_enabled(true) {
             Ok(()) => true,
             Err(e) => {
-                eprintln!("[autostart] activation impossible : {e}");
+                tracing::warn!("activation impossible : {e}");
                 false
             }
         },

@@ -416,7 +416,7 @@ impl AbcomApp {
             self.last_retry_time = std::time::Instant::now();
             let retry_messages = self.state.lock_safe().get_retry_messages();
             for (_hash, addr) in retry_messages {
-                eprintln!("[ui] Retry message delivery vers {}", addr);
+                tracing::debug!("retry message delivery vers {}", addr);
             }
         }
     }

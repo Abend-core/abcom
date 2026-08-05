@@ -293,16 +293,16 @@ impl GifFeed {
                         s.status = GifStatus::Loaded;
                     }
                     Err(e) => {
-                        eprintln!("[klipy] parsing réponse échoué : {e}");
+                        tracing::warn!("parsing réponse échoué : {e}");
                         s.status = GifStatus::Error(e);
                     }
                 },
                 Ok(resp) => {
-                    eprintln!("[klipy] HTTP {} : {}", resp.status, resp.status_text);
+                    tracing::warn!("HTTP {} : {}", resp.status, resp.status_text);
                     s.status = GifStatus::Error(format!("HTTP {}", resp.status));
                 }
                 Err(e) => {
-                    eprintln!("[klipy] requête échouée : {e}");
+                    tracing::warn!("requête échouée : {e}");
                     s.status = GifStatus::Error(e);
                 }
             }
