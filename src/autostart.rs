@@ -30,14 +30,6 @@ pub fn set_enabled(enabled: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// État système actuel (pour refléter la réalité dans Paramètres).
-#[allow(dead_code)] // exposé pour un futur affichage de diagnostic
-pub fn is_enabled() -> bool {
-    launcher()
-        .and_then(|a| Ok(a.is_enabled()?))
-        .unwrap_or(false)
-}
-
 /// Applique la politique de premier lancement : en release, si aucune
 /// préférence n'existe encore, active l'autostart et renvoie la valeur
 /// effective à persister. En debug, ne touche jamais au système.

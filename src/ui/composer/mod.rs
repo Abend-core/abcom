@@ -1,7 +1,3 @@
-#[allow(dead_code)]
-pub mod cursor;
-pub mod render;
-pub mod shortcode;
 pub mod text_ops;
 
 pub use text_ops::{insert_emoji_at_cursor, replace_char_range};

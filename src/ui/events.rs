@@ -226,7 +226,6 @@ impl AbcomApp {
                     self.avatar_sent_to.remove(&username);
                 }
                 AppEvent::UserTyping(username) => s.set_user_typing(username),
-                AppEvent::UserStoppedTyping(_) => s.clear_typing_if_old(),
                 AppEvent::GroupEventReceived(evt) => match evt.action {
                     GroupAction::Create { group } => {
                         // Création ou re-synchronisation par le propriétaire :
