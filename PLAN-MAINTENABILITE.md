@@ -7,6 +7,10 @@
 > dans le même commit.
 >
 > Révisé le 5 août 2026 (branche de référence `dev`).
+>
+> **✅ Exécuté intégralement le 5 août 2026** — P1 à P6 (dont les 6 sous-étapes
+> de P6) déroulées sur `dev`, un commit par phase, barrière verte à chaque étape.
+> Voir le tableau de bord en fin de document pour le détail avant/après.
 
 ## Règles du jeu (à respecter à chaque phase)
 
@@ -59,8 +63,8 @@
 l'app si un thread panique en tenant le verrou (mutex empoisonné). Pas de nouvelle
 dépendance (rester sur `std::sync::Mutex`).
 
-**Étapes :**
-1. Créer `src/util/mutex.rs` (et déclarer `mod util;` dans `main.rs`) avec une
+**Étapes (exécutées telles quelles) :**
+1. Créer `src/util.rs` (et déclarer `mod util;` dans `main.rs`) avec une
    extension de trait :
    ```rust
    use std::sync::{Mutex, MutexGuard};
@@ -238,13 +242,26 @@ P1→P4 sont mécaniques et sûres : idéales pour enchaîner en premier et fair
 la dette mesurable de l'audit. P6 est la seule qui demande de la vigilance —
 la traiter isolément.
 
-## Tableau de bord (mettre à jour après chaque phase)
+## Tableau de bord — état final (5 août 2026)
 
-| Phase | Signal cible | Avant | Après |
-|-------|-------------|-------|-------|
-| P1 | `old/` suivi, `font 2/` | 24 fichiers + dossier | 0 |
-| P2 | `lock().unwrap()` hors tests | 55 | 0 |
-| P3 | `eprintln!`/`println!` prod | 34 | ~0 |
-| P4 | `#[allow(dead_code)]` | 16 | 0 (ou justifiés) |
-| P5 | scan emoji dupliqué | 3 copies | 1 |
-| P6 | champs de `AbcomApp` | 90 | ~8 sous-structs |
+| Phase | Signal cible | Avant | Après | Commit |
+|-------|-------------|-------|-------|--------|
+| P1 | `font 2/`, `.gitignore`, URL repo | résidu + gitignore incomplet | nettoyé (`old/` conservé, décision documentée) | `691a614` |
+| P2 | `lock().unwrap()` hors tests | 55 | **0** | `addbe14` |
+| P3 | `eprintln!`/`println!` prod | 34 | **0** (`tracing`) | `f5bf425` |
+| P4 | `#[allow(dead_code)]` | 16 | **4** (justifiés en commentaire) | `5d36a52` |
+| P5 | scan emoji dupliqué / constantes visuelles | 4 copies / dispersées | **1** (`match_emoji_at`) / `ui/theme.rs` | `d18c188` |
+| P6a | `AbcomApp` : canaux réseau | 9 champs à plat | `net: NetworkChannels` | `3b287f5` |
+| P6b | `AbcomApp` : picker emoji | 8 champs à plat | `emoji: EmojiPickerState` | `283ecc5` |
+| P6c | `AbcomApp` : sélecteur Klipy | 8 champs à plat | `gif_picker: GifPickerState` | `0ca4353` |
+| P6d | `AbcomApp` : zone de saisie | 7 champs à plat | `composer: ComposerState` | `d736eaa` |
+| P6e | `AbcomApp` : modales | 10 champs à plat | `modals: ModalsState` | `b114e19` |
+| P6f | `AbcomApp` : caches média | 8 champs à plat | `media: MediaState` | `38695c6` |
+| **P6 total** | **champs de `AbcomApp`** | **90** | **46** (en 6 sous-structs) | — |
+
+Tous les commits sur `dev`, non poussés. `cargo test` : 257/257 verts à l'état final
+(272 → 257 : suppression des tests dédiés au code mort purgé en P4).
+
+**Reste ouvert (hors périmètre de ce plan, voir `AUDIT.md`) :** découper les gros
+fichiers `chat_panel.rs`/`input_bar.rs` en sous-modules (P6 pose le préalable),
+versionnage Cargo, et toute la dette réseau/sécurité (§4-§5 de l'audit).
