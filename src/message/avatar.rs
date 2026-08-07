@@ -15,6 +15,7 @@ pub struct AvatarAnnounce {
 /// Demande d'envoi d'un avatar à une adresse TCP.
 #[derive(Clone, Debug)]
 pub struct AvatarRequest {
+    pub to_peer: String,
     pub to_addr: SocketAddr,
     pub announce: AvatarAnnounce,
 }

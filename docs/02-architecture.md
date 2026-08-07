@@ -16,8 +16,8 @@ La communication entre ces mondes passe par des canaux `mpsc` tokio. L'état app
                     │   eframe/egui : update() → rendu, saisie   │
                     │   caches dérivés (ChatCache, SidebarCache) │
                     └─────▲──────────────────────────┬───────────┘
-        AppEvent (mpsc,   │                          │  SendRequest, GroupRequest,
-        réveil du repaint)│                          │  TypingRequest, … (mpsc)
+        AppEvent (mpsc,   │                          │  NetworkSendRequest (mpsc)
+        réveil du repaint)│                          │  + MediaSendJob (mpsc)
                     ┌─────┴──────────────────────────▼───────────┐
                     │           Runtime tokio (2 workers)        │
                     │  discovery UDP · serveur TCP · pool de     │
@@ -34,6 +34,7 @@ La communication entre ces mondes passe par des canaux `mpsc` tokio. L'état app
 
 | Module | Rôle |
 |---|---|
+| [lib.rs](../src/lib.rs) | Racine réutilisable du cœur applicatif, utilisée par le binaire et les tests d'intégration externes |
 | [main.rs](../src/main.rs) | Amorçage : lecture de `.env`, création des canaux, ouverture du stockage, chargement de l'identité, lancement des tâches puis de l'UI |
 | [config.rs](../src/config.rs) | Ports et répertoire de données, dérivés de `ABCOM_INSTANCE` (multi-instances locales) ; clé API Klipy |
 | [identity.rs](../src/identity.rs) | Paire X25519 de la machine (`identity.key`, permissions 0600), empreinte BLAKE2s |
@@ -47,7 +48,8 @@ La communication entre ces mondes passe par des canaux `mpsc` tokio. L'état app
 | [archive.rs](../src/archive.rs) | Compression ZIP d'un dossier pour l'envoyer comme un fichier |
 | [autostart.rs](../src/autostart.rs) | Lancement à l'ouverture de session (Launch Agent, clé Run, `.desktop`) |
 | [emoji_registry.rs](../src/emoji_registry.rs) | 323 emojis PNG embarqués dans le binaire, décodés dans un thread au démarrage |
-| [tests/](../src/tests/) | 264 tests : un fichier par module testé, réseau testé sur de vraies sockets |
+| [tests/](../src/tests/) | 288 tests unitaires : un fichier par module testé, réseau testé sur de vraies sockets |
+| [tests/p2p_e2e.rs](../tests/p2p_e2e.rs) | Scénario d'intégration headless entre deux pairs authentifiés |
 
 ## Flux d'un message reçu
 

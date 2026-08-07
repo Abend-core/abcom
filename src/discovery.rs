@@ -109,7 +109,7 @@ pub async fn run(username: String, pubkey_hex: String, tx: Sender<AppEvent>) {
                 if let Ok((len, addr)) = result {
                     if let Ok(pkt) = serde_json::from_slice::<DiscoveryPacket>(&buf[..len]) {
                         // Ignorer son propre broadcast
-                        if pkt.username != username {
+                        if pkt.username != username && crate::protocol::valid_username(&pkt.username) {
                             let now = SystemTime::now()
                                 .duration_since(UNIX_EPOCH)
                                 .unwrap_or_default()

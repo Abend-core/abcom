@@ -5,6 +5,7 @@ use std::time::SystemTime;
 use crate::message::{ChatMessage, Group, PeerRecord, ReactionEntry};
 
 mod avatar;
+mod conversation;
 mod groups;
 pub mod media;
 mod messages;
@@ -15,9 +16,11 @@ pub mod storage;
 mod transfers;
 mod typing;
 
+pub use conversation::ConversationId;
 pub use peers::Peer;
 pub use receipts::{PendingMessage, ReceiptDetail};
 pub use storage::{LoadedState, Storage, StorageCmd};
+pub use transfers::TransferTarget;
 
 pub struct AppState {
     pub my_username: String,
@@ -32,6 +35,8 @@ pub struct AppState {
     /// des salons et de « Tous »).
     pub delivered_receipts: HashMap<u64, HashSet<String>>,
     pub pending_messages: HashMap<u64, PendingMessage>,
+    /// Messages privés dont toutes les tentatives de livraison ont échoué.
+    pub failed_messages: HashMap<u64, String>,
     pub peer_records: Vec<PeerRecord>,
     /// Avatar local (octets PNG normalisés), `None` si non défini.
     pub my_avatar: Option<Vec<u8>>,
@@ -68,6 +73,10 @@ impl AppState {
     /// s'arrête : l'historique plus ancien reste en base).
     pub const MAX_WINDOW: usize = 2000;
 
+    pub fn selected_conversation_id(&self) -> ConversationId {
+        ConversationId::from_key(self.selected_conversation.as_deref())
+    }
+
     pub fn new(
         username: String,
         loaded: LoadedState,
@@ -87,6 +96,7 @@ impl AppState {
             read_receipts: HashMap::new(),
             delivered_receipts: HashMap::new(),
             pending_messages: HashMap::new(),
+            failed_messages: HashMap::new(),
             peer_records: loaded.peer_records,
             my_avatar: None,
             peer_avatars: loaded.peer_avatars,
@@ -120,6 +130,7 @@ impl AppState {
             read_receipts: HashMap::new(),
             delivered_receipts: HashMap::new(),
             pending_messages: HashMap::new(),
+            failed_messages: HashMap::new(),
             peer_records: Vec::new(),
             my_avatar: None,
             peer_avatars: HashMap::new(),

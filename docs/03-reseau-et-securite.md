@@ -18,7 +18,7 @@ Chaque instance émet toutes les 3 secondes un paquet JSON contenant son pseudo,
 
 Côté réception, la tâche de découverte tient l'état de présence (dernier signe de vie par pair, timeout à 6 secondes) et n'émet un événement vers l'UI que lorsque quelque chose change : nouveau pair, adresse modifiée, déconnexion, retour en ligne. Au repos, des pairs connectés ne réveillent donc pas le rendu.
 
-L'annonce transporte l'empreinte de clé **avant** toute connexion TCP : l'association pseudo ↔ clé est connue dès la découverte.
+L'annonce transporte la clé publique avant toute connexion TCP à titre informatif. Une annonce UDP n'étant pas signée, la source de vérité reste la clé présentée pendant le handshake Noise et épinglée par TOFU.
 
 ## Identité et confiance
 
@@ -28,9 +28,9 @@ L'annonce transporte l'empreinte de clé **avant** toute connexion TCP : l'assoc
 
 ## Transport chiffré
 
-**Connexions persistantes.** Un pool ([network/pool.rs](../src/network/pool.rs)) maintient une connexion TCP par pair, établie à la demande et réutilisée pour tout le trafic de chat. Fini le modèle initial « une connexion par paquet » : moins de syscalls, moins de latence, et surtout un seul handshake cryptographique par session.
+**Connexions persistantes.** Un pool ([network/pool.rs](../src/network/pool.rs)) maintient une connexion TCP par pair, établie à la demande et réutilisée pour tout le trafic de chat. Le pseudo reçu dans le `Hello` doit correspondre au destinataire attendu pour l'adresse découverte ; une adresse annonçant un autre pair est rejetée.
 
-**Handshake Noise XX.** Chaque connexion commence par un handshake `Noise_XX_25519_ChaChaPoly_BLAKE2s` (crate `snow`, 3 messages, 1,5 aller-retour — négligeable sur un LAN). Le motif XX échange les clés statiques pendant le handshake : authentification mutuelle, secret de session éphémère (forward secrecy). Ensuite, chaque trame est chiffrée ChaCha20-Poly1305 avec un préfixe de longueur ; les charges utiles dépassant la taille d'un message Noise (64 Ko) sont découpées en plusieurs trames, ce qui permet notamment le passage des avatars. Un client non chiffré (ancienne version, outil quelconque) est rejeté proprement au handshake.
+**Handshake Noise XX.** Chaque connexion commence par un handshake `Noise_XX_25519_ChaChaPoly_BLAKE2s` (crate `snow`, 3 messages, 1,5 aller-retour — négligeable sur un LAN). Le `Hello` qui suit porte le pseudo, la version de protocole et les capacités ; une version incompatible est rejetée explicitement. Chaque paquet reçu est ensuite recoupé avec l'auteur authentifié par la session.
 
 **Passphrase de salon (optionnelle).** Si la variable `ABCOM_PASSPHRASE` est définie (environnement ou fichier `.env`), le handshake passe en `XXpsk3` avec un secret pré-partagé dérivé de la passphrase (BLAKE2s). Sans la bonne passphrase, aucun handshake n'aboutit : c'est un moyen simple de cloisonner un groupe de machines sur un réseau partagé. L'état (actif ou non) est visible dans Paramètres → Profil. Tous les pairs doivent partager la même valeur.
 
@@ -60,7 +60,7 @@ Les messages sont identifiés sur le réseau par un hash FNV-1a déterministe de
 
 - **Chiffrement au repos** : `abcom.db`, le dossier `media/` et les avatars sont en clair sur le disque local. Piste : SQLCipher ou chiffrement fichier (voir [09 — Limites et pistes](09-limites-et-pistes.md)).
 - **Métadonnées de découverte** : l'annonce UDP (pseudo + empreinte) est visible par tout le LAN — c'est la fonction même de la découverte.
-- **Rôles de groupe non authentifiés au niveau protocole** : un client modifié pourrait forger un événement de groupe (le transport, lui, authentifie la machine émettrice). Cohérent avec l'usage visé : un réseau local de confiance.
+- **Événements de groupe non signés** : l'auteur de la session est authentifié et ses droits sont vérifiés localement, mais un événement n'est pas transférable avec une preuve cryptographique hors de cette session.
 - **Robustesse d'entrée** : le serveur limite la taille des trames et applique un timeout de lecture ; les paquets invalides sont ignorés sans faire tomber le service.
 
 Recommandations d'usage : réserver Abcom aux réseaux de confiance, activer la passphrase de salon sur un réseau partagé, vérifier les empreintes pour les échanges sensibles.

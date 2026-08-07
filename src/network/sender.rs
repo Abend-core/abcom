@@ -4,71 +4,48 @@
 //! paquet).
 
 use std::sync::Arc;
+use std::{collections::HashMap, net::SocketAddr};
 
-use tokio::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{self, Receiver};
 
-use crate::message::{
-    AvatarRequest, MessageAckRequest, NetworkPacket, ReactionRequest, ReadReceiptRequest,
-    SendGroupRequest, SendRequest, TypingRequest,
-};
+use crate::message::{NetworkPacket, NetworkSendRequest};
 
 use super::pool::ConnectionPool;
 
-/// Expéditeur pour les messages de chat.
-pub async fn run_sender(mut rx: Receiver<SendRequest>, pool: Arc<ConnectionPool>) {
-    while let Some(req) = rx.recv().await {
-        pool.send(req.to_addr, NetworkPacket::Chat(req.message))
-            .await;
-    }
-}
+const WORKER_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
 
-/// Expéditeur pour les événements de groupe.
-pub async fn run_sender_group(mut rx: Receiver<SendGroupRequest>, pool: Arc<ConnectionPool>) {
+/// Expéditeur commun pour tous les paquets courts.
+pub async fn run_sender(mut rx: Receiver<NetworkSendRequest>, pool: Arc<ConnectionPool>) {
+    let mut workers: HashMap<(String, SocketAddr), mpsc::Sender<NetworkPacket>> = HashMap::new();
     while let Some(req) = rx.recv().await {
-        pool.send(req.to_addr, NetworkPacket::Group(req.event))
-            .await;
-    }
-}
-
-/// Expéditeur pour les indicateurs de frappe (fire-and-forget).
-pub async fn run_sender_typing(mut rx: Receiver<TypingRequest>, pool: Arc<ConnectionPool>) {
-    while let Some(req) = rx.recv().await {
-        pool.send(req.to_addr, NetworkPacket::Typing(req.indicator))
-            .await;
-    }
-}
-
-/// Expéditeur pour les accusés de lecture.
-pub async fn run_sender_read_receipts(
-    mut rx: Receiver<ReadReceiptRequest>,
-    pool: Arc<ConnectionPool>,
-) {
-    while let Some(req) = rx.recv().await {
-        pool.send(req.to_addr, NetworkPacket::ReadReceipt(req.receipt))
-            .await;
-    }
-}
-
-/// Expéditeur pour les annonces d'avatar (image de profil).
-pub async fn run_sender_avatar(mut rx: Receiver<AvatarRequest>, pool: Arc<ConnectionPool>) {
-    while let Some(req) = rx.recv().await {
-        pool.send(req.to_addr, NetworkPacket::Avatar(req.announce))
-            .await;
-    }
-}
-
-/// Expéditeur pour les ACK de livraison.
-pub async fn run_sender_ack(mut rx: Receiver<MessageAckRequest>, pool: Arc<ConnectionPool>) {
-    while let Some(req) = rx.recv().await {
-        pool.send(req.to_addr, NetworkPacket::Ack(req.ack)).await;
-    }
-}
-
-/// Expéditeur pour les réactions emoji (ajout/retrait).
-pub async fn run_sender_reaction(mut rx: Receiver<ReactionRequest>, pool: Arc<ConnectionPool>) {
-    while let Some(req) = rx.recv().await {
-        pool.send(req.to_addr, NetworkPacket::Reaction(req.event))
-            .await;
+        workers.retain(|_, worker| !worker.is_closed());
+        let key = (req.to_peer, req.to_addr);
+        let worker_key = key.clone();
+        let worker = workers.entry(key.clone()).or_insert_with(|| {
+            let (tx, mut peer_rx) = mpsc::channel(64);
+            let pool = pool.clone();
+            tokio::spawn(async move {
+                loop {
+                    let packet =
+                        match tokio::time::timeout(WORKER_IDLE_TIMEOUT, peer_rx.recv()).await {
+                            Ok(Some(packet)) => packet,
+                            Ok(None) => break,
+                            Err(_) => {
+                                peer_rx.close();
+                                while let Some(packet) = peer_rx.recv().await {
+                                    pool.send(&worker_key.0, worker_key.1, packet).await;
+                                }
+                                break;
+                            }
+                        };
+                    pool.send(&worker_key.0, worker_key.1, packet).await;
+                }
+            });
+            tx
+        });
+        if worker.try_send(req.packet).is_err() {
+            tracing::warn!("file réseau du pair saturée : {}", key.0);
+        }
     }
 }
 

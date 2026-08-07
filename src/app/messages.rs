@@ -43,6 +43,7 @@ impl AppState {
         self.delivered_receipts
             .retain(|hash, _| live.contains(hash));
         self.pending_messages.retain(|hash, _| live.contains(hash));
+        self.failed_messages.retain(|hash, _| live.contains(hash));
     }
 
     /// Marque une conversation comme lue. `conv` est un nom de pair

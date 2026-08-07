@@ -6,7 +6,8 @@ use tokio::sync::mpsc;
 
 use crate::identity::Identity;
 use crate::message::{
-    AppEvent, ChatMessage, MessageAck, NetworkPacket, ReactionAction, ReactionEvent, ReadReceipt,
+    AppEvent, AvatarAnnounce, ChatMessage, GroupAction, GroupEvent, MessageAck, NetworkPacket,
+    ReactionAction, ReactionEvent, ReadReceipt, TypingIndicator,
 };
 use crate::network::secure::{exchange_hello, handshake_initiator, SecureStream, TrustStore};
 use crate::network::NetContext;
@@ -23,14 +24,57 @@ fn ctx(username: &str, tx: mpsc::Sender<AppEvent>) -> Arc<NetContext> {
 
 /// Client de test : connexion chiffrée + Hello, prêt à émettre des paquets.
 async fn secure_client(addr: std::net::SocketAddr, username: &str) -> SecureStream {
-    let identity = Identity::ephemeral().unwrap();
+    secure_client_with_identity(addr, username, &Identity::ephemeral().unwrap()).await
+}
+
+async fn secure_client_with_identity(
+    addr: std::net::SocketAddr,
+    username: &str,
+    identity: &Identity,
+) -> SecureStream {
     let mut stream = TcpStream::connect(addr).await.unwrap();
-    let (transport, _) = handshake_initiator(&mut stream, &identity, None)
+    let (transport, _) = handshake_initiator(&mut stream, identity, None)
         .await
         .unwrap();
     let mut secure = SecureStream::new(stream, transport);
     exchange_hello(&mut secure, username, true).await.unwrap();
     secure
+}
+
+#[tokio::test]
+async fn duplicate_authenticated_session_is_rejected() {
+    let (tx, mut rx) = mpsc::channel(8);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(super::run_server_on(listener, ctx("serveur", tx)));
+
+    let identity = Identity::ephemeral().unwrap();
+    let mut first = secure_client_with_identity(addr, "alice", &identity).await;
+    let packet = NetworkPacket::Ack(MessageAck {
+        from: "alice".into(),
+        to: "serveur".into(),
+        message_hash: 1,
+        timestamp: "12:00".into(),
+    });
+    first
+        .send(&serde_json::to_vec(&packet).unwrap())
+        .await
+        .unwrap();
+    assert!(matches!(
+        tokio::time::timeout(Duration::from_secs(2), rx.recv())
+            .await
+            .unwrap(),
+        Some(AppEvent::MessageAckReceived(_))
+    ));
+
+    let mut second = secure_client_with_identity(addr, "alice", &identity).await;
+    let _ = second.send(&serde_json::to_vec(&packet).unwrap()).await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), rx.recv())
+            .await
+            .is_err(),
+        "la seconde session ne doit produire aucun événement"
+    );
 }
 
 async fn dispatch(packet: NetworkPacket) -> Option<AppEvent> {
@@ -59,7 +103,7 @@ async fn dispatch(packet: NetworkPacket) -> Option<AppEvent> {
 #[tokio::test]
 async fn test_receives_chat_message() {
     let packet = NetworkPacket::Chat(ChatMessage {
-        from: "alice".to_string(),
+        from: "client".to_string(),
         content: "hello".to_string(),
         timestamp: "14:00".to_string(),
         timestamp_epoch: None,
@@ -75,20 +119,20 @@ async fn test_receives_chat_message() {
 #[tokio::test]
 async fn test_receives_read_receipt() {
     let packet = NetworkPacket::ReadReceipt(ReadReceipt {
-        from: "bob".to_string(),
-        to: "alice".to_string(),
+        from: "client".to_string(),
+        to: "serveur".to_string(),
         message_hash: 42,
         timestamp: "14:00".to_string(),
     });
     let event = dispatch(packet).await.unwrap();
-    assert!(matches!(event, AppEvent::ReadReceiptReceived(r) if r.from == "bob"));
+    assert!(matches!(event, AppEvent::ReadReceiptReceived(r) if r.from == "client"));
 }
 
 #[tokio::test]
 async fn test_receives_ack() {
     let packet = NetworkPacket::Ack(MessageAck {
-        from: "bob".to_string(),
-        to: "alice".to_string(),
+        from: "client".to_string(),
+        to: "serveur".to_string(),
         message_hash: 99,
         timestamp: "14:00".to_string(),
     });
@@ -101,7 +145,7 @@ async fn test_receives_reaction() {
     let packet = NetworkPacket::Reaction(ReactionEvent {
         message_hash: 55,
         emoji: "👍".to_string(),
-        user: "bob".to_string(),
+        user: "client".to_string(),
         action: ReactionAction::Add,
     });
     let event = dispatch(packet).await.unwrap();
@@ -127,8 +171,8 @@ async fn test_multiple_packets_on_one_connection() {
     let mut client = secure_client(addr, "client").await;
     for i in 0..3 {
         let packet = NetworkPacket::Ack(MessageAck {
-            from: "bob".to_string(),
-            to: "alice".to_string(),
+            from: "client".to_string(),
+            to: "serveur".to_string(),
             message_hash: i,
             timestamp: "14:00".to_string(),
         });
@@ -151,11 +195,123 @@ async fn test_large_avatar_packet_passes() {
     // Régression du bug « paquet > 64 Ko rejeté » : une annonce d'avatar
     // volumineuse traverse le framing chiffré multi-frames.
     let packet = NetworkPacket::Avatar(crate::message::AvatarAnnounce {
-        from: "alice".to_string(),
+        from: "client".to_string(),
         png: vec![42u8; 150_000],
     });
     let event = dispatch(packet).await.unwrap();
     assert!(matches!(event, AppEvent::AvatarReceived(a) if a.png.len() == 150_000));
+}
+
+#[tokio::test]
+async fn test_forged_authors_and_wrong_recipients_are_rejected() {
+    let (tx, mut rx) = mpsc::channel(16);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server_ctx = ctx("serveur", tx);
+
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.unwrap();
+        let _ = super::handle_incoming(stream, server_ctx).await;
+    });
+
+    let mut client = secure_client(addr, "client").await;
+    let forged = [
+        NetworkPacket::Chat(ChatMessage {
+            from: "mallory".to_string(),
+            content: "forged".to_string(),
+            timestamp: "14:00".to_string(),
+            timestamp_epoch: None,
+            to_user: None,
+            media: None,
+            reply_to: None,
+            nonce: None,
+        }),
+        NetworkPacket::Typing(TypingIndicator {
+            from: "mallory".to_string(),
+        }),
+        NetworkPacket::ReadReceipt(ReadReceipt {
+            from: "mallory".to_string(),
+            to: "serveur".to_string(),
+            message_hash: 1,
+            timestamp: "14:00".to_string(),
+        }),
+        NetworkPacket::Ack(MessageAck {
+            from: "mallory".to_string(),
+            to: "serveur".to_string(),
+            message_hash: 1,
+            timestamp: "14:00".to_string(),
+        }),
+        NetworkPacket::Avatar(AvatarAnnounce {
+            from: "mallory".to_string(),
+            png: Vec::new(),
+        }),
+        NetworkPacket::Reaction(ReactionEvent {
+            message_hash: 1,
+            emoji: "x".to_string(),
+            user: "mallory".to_string(),
+            action: ReactionAction::Add,
+        }),
+        NetworkPacket::Chat(ChatMessage {
+            from: "client".to_string(),
+            content: "wrong recipient".to_string(),
+            timestamp: "14:00".to_string(),
+            timestamp_epoch: None,
+            to_user: Some("quelqu-un-d-autre".to_string()),
+            media: None,
+            reply_to: None,
+            nonce: None,
+        }),
+        NetworkPacket::ReadReceipt(ReadReceipt {
+            from: "client".to_string(),
+            to: "quelqu-un-d-autre".to_string(),
+            message_hash: 1,
+            timestamp: "14:00".to_string(),
+        }),
+        NetworkPacket::Ack(MessageAck {
+            from: "client".to_string(),
+            to: "quelqu-un-d-autre".to_string(),
+            message_hash: 1,
+            timestamp: "14:00".to_string(),
+        }),
+    ];
+    for packet in forged {
+        client
+            .send(&serde_json::to_vec(&packet).unwrap())
+            .await
+            .unwrap();
+    }
+    client
+        .send(
+            &serde_json::to_vec(&NetworkPacket::Typing(TypingIndicator {
+                from: "client".to_string(),
+            }))
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+
+    let event = tokio::time::timeout(Duration::from_secs(2), rx.recv())
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(matches!(event, AppEvent::UserTyping(ref peer) if peer == "client"));
+    assert!(rx.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn test_group_event_preserves_authenticated_peer() {
+    let event = dispatch(NetworkPacket::Group(GroupEvent {
+        action: GroupAction::Delete {
+            group_name: "Team".to_string(),
+        },
+    }))
+    .await
+    .unwrap();
+
+    assert!(matches!(
+        event,
+        AppEvent::GroupEventReceived { peer, .. } if peer == "client"
+    ));
 }
 
 #[tokio::test]

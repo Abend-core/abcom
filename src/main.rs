@@ -1,21 +1,8 @@
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
-use util::MutexExt;
-
-mod app;
-mod archive;
-mod autostart;
-mod config;
-mod discovery;
-mod emoji_registry;
-mod identity;
-mod klipy;
-mod message;
-mod network;
-mod notify;
-mod ui;
-mod util;
+use abcom::util::MutexExt;
+use abcom::{app, autostart, config, discovery, identity, message, network, notify, protocol, ui};
 
 fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -42,19 +29,18 @@ fn main() -> anyhow::Result<()> {
             .or_else(|_| std::env::var("USERNAME"))
             .unwrap_or_else(|_| "anonymous".to_string())
     });
+    if !protocol::valid_username(&username) {
+        anyhow::bail!(
+            "pseudo invalide : 1 à {} caractères, sans espace extérieur, contrôle ni préfixe #",
+            protocol::MAX_USERNAME_CHARS
+        );
+    }
 
     // Contexte egui partagé avec les tâches de fond : renseigné au lancement
     // de l'UI, il permet de la réveiller à chaque événement (cf. notify.rs).
     let ui_ctx: notify::UiContext = Arc::new(std::sync::OnceLock::new());
 
-    let (send_tx, send_rx) = mpsc::channel::<message::SendRequest>(256);
-    let (send_group_tx, send_group_rx) = mpsc::channel::<message::SendGroupRequest>(256);
-    let (send_typing_tx, send_typing_rx) = mpsc::channel::<message::TypingRequest>(256);
-    let (send_read_receipt_tx, send_read_receipt_rx) =
-        mpsc::channel::<message::ReadReceiptRequest>(256);
-    let (send_ack_tx, send_ack_rx) = mpsc::channel::<message::MessageAckRequest>(256);
-    let (send_avatar_tx, send_avatar_rx) = mpsc::channel::<message::AvatarRequest>(64);
-    let (send_reaction_tx, send_reaction_rx) = mpsc::channel::<message::ReactionRequest>(256);
+    let (send_tx, send_rx) = mpsc::channel::<message::NetworkSendRequest>(512);
     let (send_media_tx, send_media_rx) = mpsc::channel::<message::MediaSendJob>(64);
 
     let media_dir = config::data_dir().join("media");
@@ -76,8 +62,18 @@ fn main() -> anyhow::Result<()> {
     // chargement de la fenêtre récente, puis thread d'écriture dédié.
     let storage = app::Storage::open(&config::data_dir())
         .map_err(|e| anyhow::anyhow!("ouverture du stockage : {e}"))?;
-    let loaded = storage.load_all(app::storage::INITIAL_WINDOW);
-    let referenced_media = storage.all_media_ids().unwrap_or_default();
+    let loaded = storage
+        .load_all(app::storage::INITIAL_WINDOW)
+        .map_err(|e| anyhow::anyhow!("chargement du stockage : {e}"))?;
+    let referenced_media = match storage.all_media_ids() {
+        Ok(ids) => Some(ids),
+        Err(error) => {
+            tracing::error!(
+                "GC cache désactivé : lecture des médias référencés impossible : {error}"
+            );
+            None
+        }
+    };
     let storage_tx = app::storage::spawn(storage, event_tx.clone());
 
     // Identité cryptographique locale + magasin de confiance TOFU : toutes
@@ -128,7 +124,7 @@ fn main() -> anyhow::Result<()> {
 
     // GC du cache disque des médias (orphelins + plafond), hors chemin de
     // démarrage : l'UI s'ouvre sans attendre le parcours du dossier.
-    {
+    if let Some(referenced_media) = referenced_media {
         let dir = media_dir.clone();
         std::thread::spawn(move || app::media::gc_media_dir(dir, referenced_media));
     }
@@ -140,15 +136,6 @@ fn main() -> anyhow::Result<()> {
     ));
     rt.spawn(network::run_server(net_ctx.clone()));
     rt.spawn(network::run_sender(send_rx, pool.clone()));
-    rt.spawn(network::run_sender_group(send_group_rx, pool.clone()));
-    rt.spawn(network::run_sender_typing(send_typing_rx, pool.clone()));
-    rt.spawn(network::run_sender_read_receipts(
-        send_read_receipt_rx,
-        pool.clone(),
-    ));
-    rt.spawn(network::run_sender_ack(send_ack_rx, pool.clone()));
-    rt.spawn(network::run_sender_avatar(send_avatar_rx, pool.clone()));
-    rt.spawn(network::run_sender_reaction(send_reaction_rx, pool.clone()));
     rt.spawn(network::run_media_sender(send_media_rx, net_ctx.clone()));
     rt.spawn(network::run_media_server(
         net_ctx.clone(),
@@ -161,16 +148,12 @@ fn main() -> anyhow::Result<()> {
         ui_ctx,
         identity_fingerprint,
         psk_active,
-        event_rx,
-        send_tx,
-        send_group_tx,
-        send_typing_tx,
-        send_read_receipt_tx,
-        send_ack_tx,
-        send_avatar_tx,
-        send_reaction_tx,
-        send_media_tx,
-        media_offer_rx,
+        ui::UiRuntimeChannels {
+            event_rx,
+            send_tx,
+            send_media_tx,
+            media_offer_rx,
+        },
     )?;
 
     Ok(())

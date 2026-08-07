@@ -1,7 +1,7 @@
 //! Gestion des images de profil (avatars).
 //!
 //! L'avatar local est conservé sur disque (`avatar.png`) tandis que ceux des
-//! pairs sont mémorisés dans `peer_avatars.json` afin de rester visibles même
+//! pairs sont mémorisés dans SQLite afin de rester visibles même
 //! hors ligne ou après un redémarrage. Les octets manipulés ici sont toujours
 //! des images PNG normalisées (voir `ui::avatar`).
 

@@ -45,11 +45,12 @@ fn presence_dot(ui: &mut egui::Ui, online: bool) {
 }
 
 impl AbcomApp {
-    /// Diffuse un événement de groupe aux adresses données.
-    fn send_group_event(&self, addrs: &[std::net::SocketAddr], action: GroupAction) {
+    /// Diffuse un événement de groupe aux pairs attendus.
+    fn send_group_event(&self, recipients: &[(String, std::net::SocketAddr)], action: GroupAction) {
         let event = GroupEvent { action };
-        for addr in addrs {
-            let _ = self.net.send_group_tx.try_send(SendGroupRequest {
+        for (username, addr) in recipients {
+            self.net.try_send(SendGroupRequest {
+                to_peer: username.clone(),
                 to_addr: *addr,
                 event: event.clone(),
             });
@@ -233,7 +234,7 @@ impl AbcomApp {
             let created = {
                 let mut s = self.state.lock_safe();
                 s.create_group(trimmed.clone(), members)
-                    .map(|g| (g.clone(), s.group_member_addrs(&g.name)))
+                    .map(|g| (g.clone(), s.group_member_recipients(&g.name)))
             };
             match created {
                 Some((group, addrs)) => {
@@ -470,14 +471,14 @@ impl AbcomApp {
                 // Adresses AVANT l'ajout : les membres existants reçoivent
                 // l'AddMember, le nouveau reçoit l'état complet du groupe
                 // (il ne connaît pas encore le salon).
-                let prev_addrs = s.group_member_addrs(&group_name);
+                let prev_addrs = s.group_member_recipients(&group_name);
                 if s.add_member_to_group(&group_name, user.clone()) {
                     let updated = s.get_group(&group_name).cloned();
                     let new_addr = s
                         .peers
                         .iter()
                         .find(|p| p.online && p.username == user)
-                        .map(|p| p.addr);
+                        .map(|p| (p.username.clone(), p.addr));
                     Some((prev_addrs, updated, new_addr))
                 } else {
                     None
@@ -491,8 +492,8 @@ impl AbcomApp {
                         username: user,
                     },
                 );
-                if let (Some(addr), Some(g)) = (new_addr, updated) {
-                    self.send_group_event(&[addr], GroupAction::Create { group: g });
+                if let (Some(recipient), Some(g)) = (new_addr, updated) {
+                    self.send_group_event(&[recipient], GroupAction::Create { group: g });
                 }
             }
         }
@@ -501,7 +502,7 @@ impl AbcomApp {
             let addrs = {
                 let mut s = self.state.lock_safe();
                 // Adresses AVANT le retrait : l'exclu est prévenu lui aussi.
-                let addrs = s.group_member_addrs(&group_name);
+                let addrs = s.group_member_recipients(&group_name);
                 s.remove_member_from_group(&group_name, &user)
                     .then_some(addrs)
             };
@@ -522,7 +523,7 @@ impl AbcomApp {
                 GroupConfirmAction::Leave => {
                     let outcome = {
                         let mut s = self.state.lock_safe();
-                        let addrs = s.group_member_addrs(&group_name);
+                        let addrs = s.group_member_recipients(&group_name);
                         let me = s.my_username.clone();
                         s.leave_group(&group_name).then_some((addrs, me))
                     };
@@ -540,7 +541,7 @@ impl AbcomApp {
                 GroupConfirmAction::Delete => {
                     let addrs = {
                         let mut s = self.state.lock_safe();
-                        let addrs = s.group_member_addrs(&group_name);
+                        let addrs = s.group_member_recipients(&group_name);
                         s.delete_group(&group_name).then_some(addrs)
                     };
                     if let Some(addrs) = addrs {

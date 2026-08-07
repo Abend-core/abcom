@@ -35,7 +35,8 @@ impl AbcomApp {
             action,
         };
         for target in targets {
-            let _ = self.net.send_reaction_tx.try_send(ReactionRequest {
+            self.net.try_send(ReactionRequest {
+                to_peer: target.username,
                 to_addr: target.addr,
                 event: event.clone(),
             });

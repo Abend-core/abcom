@@ -190,10 +190,11 @@ impl AbcomApp {
         self.avatar_sent_to.clear();
         for (username, addr) in online {
             let request = AvatarRequest {
+                to_peer: username.clone(),
                 to_addr: addr,
                 announce: announce.clone(),
             };
-            if self.net.send_avatar_tx.try_send(request).is_ok() {
+            if self.net.try_send(request) {
                 self.avatar_sent_to.insert(username);
             }
         }

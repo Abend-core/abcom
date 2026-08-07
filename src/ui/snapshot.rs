@@ -81,7 +81,7 @@ pub(crate) struct ChatRow {
     pub(crate) header_time: String,
     pub(crate) name_color: egui::Color32,
     /// Pour nos messages en 1-à-1 : (livré, lu). Toujours `None` en salon.
-    pub(crate) receipt: Option<(bool, bool)>,
+    pub(crate) receipt: Option<(bool, bool, bool)>,
     /// Salons et « Tous » : liste nominative reçu/lu (popup « … »), portée
     /// par l'en-tête de chaque groupe de messages, quel qu'en soit l'auteur.
     pub(crate) receipt_detail: Option<ReceiptDetail>,
@@ -323,6 +323,7 @@ impl ChatCache {
                     rows[start].receipt = Some((
                         !s.is_message_pending(last_hash),
                         s.get_read_count(last_hash) > 0,
+                        s.is_message_failed(last_hash),
                     ));
                 }
             }

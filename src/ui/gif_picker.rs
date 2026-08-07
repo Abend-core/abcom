@@ -8,9 +8,8 @@
 
 use eframe::egui;
 
-use crate::app::AppState;
 use crate::klipy::{GifFeed, GifItem, GifStatus};
-use crate::message::{ChatMessage, MediaAttachment, MediaKind, SendRequest};
+use crate::message::{ChatMessage, MediaAttachment, MediaKind};
 use crate::util::MutexExt;
 
 use super::{AbcomApp, GifPickerTab};
@@ -18,14 +17,12 @@ use super::{AbcomApp, GifPickerTab};
 const ATTR_DARK: &[u8] = include_bytes!("../../assets/klipy/attribution_dark_bg.png");
 const ATTR_LIGHT: &[u8] = include_bytes!("../../assets/klipy/attribution_light_bg.png");
 
-fn send_gif(app: &mut AbcomApp, gif: &GifItem) {
-    let (my_name, selected_peer_name, selected_addr, all_peers) = {
+fn send_gif(app: &mut AbcomApp, gif: &GifItem) -> bool {
+    let (my_name, selected_peer_name) = {
         let s = app.state.lock_safe();
         (
             s.my_username.clone(),
-            s.selected_conversation.clone(),
-            s.selected_peer_addr(),
-            s.peers.clone(),
+            s.selected_conversation_id().message_target(),
         )
     };
     let media = MediaAttachment {
@@ -48,39 +45,7 @@ fn send_gif(app: &mut AbcomApp, gif: &GifItem) {
         reply_to: None,
         nonce: Some(ChatMessage::fresh_nonce()),
     };
-    {
-        let msg_hash = AppState::message_hash(&msg);
-        let mut s = app.state.lock_safe();
-        s.add_message(msg.clone());
-        if let Some(peer_name) = &selected_peer_name {
-            if !peer_name.starts_with('#') {
-                let peer_addr = s
-                    .peers
-                    .iter()
-                    .find(|p| p.username == *peer_name)
-                    .map(|p| p.addr);
-                if let Some(addr) = peer_addr {
-                    s.mark_message_sent(msg_hash, addr);
-                }
-            }
-        }
-    }
-    if let Some(addr) = selected_addr {
-        let _ = app.net.send_tx.try_send(SendRequest {
-            to_addr: addr,
-            message: msg,
-        });
-    } else {
-        for peer in all_peers
-            .iter()
-            .filter(|p| p.online && !p.addr.ip().is_unspecified())
-        {
-            let _ = app.net.send_tx.try_send(SendRequest {
-                to_addr: peer.addr,
-                message: msg.clone(),
-            });
-        }
-    }
+    app.enqueue_chat_message(msg)
 }
 
 /// Affiche la grille masonry pour un feed ; retourne (item choisi, besoin load_more).
@@ -358,8 +323,9 @@ impl AbcomApp {
         }
 
         if let Some(gif) = chosen {
-            send_gif(self, &gif);
-            self.gif_picker.show = false;
+            if send_gif(self, &gif) {
+                self.gif_picker.show = false;
+            }
         }
 
         if !gif_button_clicked && ctx.input(|i| i.pointer.any_pressed()) {

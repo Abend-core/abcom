@@ -1,4 +1,4 @@
-.PHONY: all build install uninstall run run2 rung run-multi run-windows help clean test test-verbose test-module test-watch
+.PHONY: all build release install uninstall run run2 rung run-multi run-windows help clean check test testv test-verbose test-module test-watch deploy-bin install-bin
 
 export PATH := $(HOME)/.cargo/bin:$(PATH)
 CARGO := cargo
@@ -11,6 +11,12 @@ SYSTEMCTL := $(shell command -v systemctl 2>/dev/null || true)
 LOGINCTL := $(shell command -v loginctl 2>/dev/null || true)
 
 all: build
+
+## Vérifie le formatage, Clippy et tous les tests
+check:
+	$(CARGO) fmt --all --check
+	$(CARGO) clippy --all-targets --all-features --locked -- -D warnings
+	$(CARGO) test --all-features --locked
 
 ## Compile en mode développement
 build:
@@ -130,6 +136,8 @@ test:
 ## Tests avec sortie complète (println! visibles)
 testv:
 	$(CARGO) test -- --nocapture
+
+test-verbose: testv
 
 ## Tests d'un module spécifique  ex: make test-module M=app::peers
 test-module:

@@ -13,7 +13,7 @@ cargo build
 
 ```bash
 cargo run --release -- <pseudo>       # lancer
-cargo test                            # 264 tests
+cargo test --all-features --locked    # 289 tests
 cargo test app::groups                # un module
 cargo fmt && cargo clippy -- -D warnings   # ce que la CI exigera
 ```
@@ -22,13 +22,13 @@ Le profil release est optimisé pour un binaire compact (`lto = "thin"`, `codege
 
 ## Tests
 
-264 tests automatisés, regroupés dans [src/tests/](../src/tests/) (un fichier par module testé). Points notables :
+289 tests automatisés : 288 tests unitaires regroupés dans [src/tests/](../src/tests/) et un test d'intégration externe dans [tests/p2p_e2e.rs](../tests/p2p_e2e.rs). Points notables :
 
 - les tests réseau utilisent de **vraies sockets** (`TcpListener::bind("127.0.0.1:0")`, UDP réel) — pas de mocks ;
 - le chiffrement est testé par des handshakes Noise complets en mémoire et entre endpoints réels (y compris le rejet d'un client en clair et le refus sur clé changée) ;
 - la migration JSON → SQLite, les règles de groupes (succession, purge d'historique), les accusés et le composer ont chacun leur suite.
 
-`scripts/integration_test.sh` est exécuté par la CI de `main` mais reste sommaire ; un vrai test d'intégration « deux instances se découvrent et échangent » est dans le backlog.
+`scripts/integration_test.sh` exécute exclusivement le scénario P2P headless : handshake Noise, identité applicative et échange d'un message sur une vraie socket. La découverte UDP entre deux processus complets reste un test manuel.
 
 ## Intégration continue
 
@@ -36,8 +36,8 @@ Deux workflows GitHub Actions :
 
 | Workflow | Déclencheur | Étapes |
 |---|---|---|
-| [ci-dev.yml](../.github/workflows/ci-dev.yml) | PR vers `dev` | `cargo fmt --check` · `clippy -D warnings` · `build --release` · `test` (~6 min 30) |
-| [ci-main.yml](../.github/workflows/ci-main.yml) | PR vers `main` | idem + `integration_test.sh` + `cargo audit` |
+| [ci-dev.yml](../.github/workflows/ci-dev.yml) | PR/push vers `dev` | format · Clippy · build · tests sur Linux, checks macOS/Windows |
+| [ci-main.yml](../.github/workflows/ci-main.yml) | PR/push vers `main` | idem + scénario P2P headless + `cargo audit` |
 
 Le hook local `.githooks/pre-commit` bloque tout commit mal formaté avant même la CI.
 
@@ -83,7 +83,7 @@ Chaque merge `dev` → `main` correspond à une version SemVer, taguée `v0.x.x`
 
 ## Dépendances
 
-Une quinzaine de dépendances directes ([Cargo.toml](../Cargo.toml)), ~550 paquets dans le graphe résolu. Les principales :
+Les dépendances directes sont déclarées dans [Cargo.toml](../Cargo.toml) et verrouillées par `Cargo.lock`. Les principales :
 
 | Crate | Rôle |
 |---|---|
@@ -98,7 +98,7 @@ Une quinzaine de dépendances directes ([Cargo.toml](../Cargo.toml)), ~550 paque
 | `rodio` | Sons de notification |
 | `ehttp`, `chrono`, `anyhow`, `dirs` | Requêtes Klipy, horodatage, erreurs, chemins par plateforme |
 
-**Licences** : le projet est MIT. Le graphe est à ~96 % MIT/Apache-2.0 et assimilés, plus quelques paquets MPL-2.0 (famille resvg, symphonia). La MPL-2.0 est un copyleft au niveau du fichier : comme ces crates sont consommés sans modification, aucune obligation n'en découle. Aucune dépendance GPL/AGPL. Ressources embarquées : police Inter (OFL-1.1, licence dans `assets/fonts/`), jeu d'emojis type Twemoji.
+**Licence du projet à décider avant release** : `Cargo.toml` déclare MIT tandis que `LICENSE` et l'interface indiquent AGPL-3.0. Ces sources doivent être alignées dans un même changement après décision du propriétaire. Ressources embarquées : police Inter (OFL-1.1, licence dans `assets/fonts/`), jeu d'emojis type Twemoji.
 
 Outils d'entretien : `cargo audit` (vulnérabilités — exécuté par la CI de `main`), `cargo license` (inventaire), `cargo update` (mises à jour semver). `Cargo.lock` est versionné : builds reproductibles.
 
