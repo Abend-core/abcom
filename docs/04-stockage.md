@@ -47,7 +47,7 @@ peers       (username PRIMARY KEY, alias, avatar BLOB, pubkey BLOB)
 kv          (k PRIMARY KEY, v)                   -- préférences
 ```
 
-Les évolutions de schéma se font par `ALTER TABLE` tolérant (l'erreur « duplicate column » est ignorée sur les bases déjà à jour) — pas de système de migrations versionnées à ce stade.
+Les évolutions de schéma utilisent `PRAGMA user_version` et des migrations transactionnelles. Une migration échouée laisse la version et le schéma précédents intacts.
 
 ### Chargement et pagination
 
@@ -55,7 +55,7 @@ Au démarrage, seule une fenêtre récente est chargée en mémoire (500 message
 
 ### Migration depuis les fichiers JSON
 
-Si `abcom.db` n'existe pas au démarrage et que d'anciens fichiers JSON sont présents (`messages.json`, `reactions.json`, `read_counts.json`, `groups.json`, `peer_records.json`, `peer_avatars.json`), leur contenu est importé puis les fichiers sont renommés en `.bak`. La migration a été vérifiée sur un historique réel de 401 messages. Les hashes de messages sont conservés tels quels (ce sont les identifiants réseau).
+Si `abcom.db` n'existe pas au démarrage et que d'anciens fichiers JSON sont présents (`messages.json`, `reactions.json`, `read_counts.json`, `groups.json`, `peer_records.json`, `peer_avatars.json`), leur contenu est importé transactionnellement. Seuls les fichiers importés avec succès sont renommés en `.bak` ; une erreur conserve les sources actives et annule les écritures partielles.
 
 ## Préférences (table `kv`)
 

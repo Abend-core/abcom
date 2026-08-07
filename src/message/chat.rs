@@ -51,6 +51,7 @@ impl ChatMessage {
 /// Demande d'envoi d'un message à une adresse TCP
 #[derive(Clone, Debug)]
 pub struct SendRequest {
+    pub to_peer: String,
     pub to_addr: SocketAddr,
     pub message: ChatMessage,
 }
@@ -58,6 +59,7 @@ pub struct SendRequest {
 /// Demande d'envoi d'un événement de groupe à une adresse TCP
 #[derive(Clone, Debug)]
 pub struct SendGroupRequest {
+    pub to_peer: String,
     pub to_addr: SocketAddr,
     pub event: GroupEvent,
 }

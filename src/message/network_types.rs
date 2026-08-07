@@ -15,8 +15,8 @@ pub struct DiscoveryPacket {
     /// auquel cas il vaut 9000 par défaut (rétro-compatibilité).
     #[serde(default = "default_chat_port")]
     pub port: u16,
-    /// Clé publique X25519 (hexadécimal) de l'émetteur : lie l'annonce à
-    /// l'identité vérifiée ensuite pendant le handshake Noise (TOFU).
+    /// Clé publique X25519 annoncée à titre informatif. La source de vérité
+    /// reste la clé présentée et épinglée pendant le handshake Noise (TOFU).
     #[serde(default)]
     pub pubkey: String,
 }
@@ -26,6 +26,9 @@ pub struct DiscoveryPacket {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Hello {
     pub username: String,
+    pub protocol_version: u16,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
 }
 
 fn default_chat_port() -> u16 {

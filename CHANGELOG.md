@@ -27,7 +27,7 @@ Format basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/), versi
 - Support pièces jointes (fichiers et dossiers)
 - Modale de paramètres (thème, langue, notifications)
 - Support multilingue FR/EN
-- 264 tests unitaires couvrant tous les modules
+- Suite de tests unitaires couvrant tous les modules
 - Groupes (Phase 10) : messagerie de salon réservée aux membres, gestion des membres (ajout, exclusion, départ avec succession du propriétaire, suppression), compteurs non-lus et sourdine par salon, modal de gestion — voir `docs/05-fonctionnalites.md`
 
 ### Corrigé

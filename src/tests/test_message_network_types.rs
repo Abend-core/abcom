@@ -1,4 +1,4 @@
-use super::{DiscoveryPacket, PeerRecord};
+use super::{DiscoveryPacket, Hello, PeerRecord};
 
 #[test]
 fn peer_record_round_trip_with_alias() {
@@ -52,4 +52,16 @@ fn peer_record_ignores_legacy_last_subnet_field() {
     let decoded: PeerRecord = serde_json::from_str(json).unwrap();
     assert_eq!(decoded.username, "bob");
     assert_eq!(decoded.alias, Some("Robert".to_string()));
+}
+
+#[test]
+fn hello_carries_protocol_version() {
+    let hello = Hello {
+        username: "alice".into(),
+        protocol_version: crate::protocol::PROTOCOL_VERSION,
+        capabilities: vec!["chat".into()],
+    };
+    let decoded: Hello = serde_json::from_str(&serde_json::to_string(&hello).unwrap()).unwrap();
+    assert_eq!(decoded.protocol_version, crate::protocol::PROTOCOL_VERSION);
+    assert_eq!(decoded.capabilities, vec!["chat"]);
 }

@@ -231,19 +231,35 @@ pub async fn exchange_hello(
 ) -> std::io::Result<String> {
     let hello = serde_json::to_vec(&crate::message::Hello {
         username: my_username.to_string(),
+        protocol_version: crate::protocol::PROTOCOL_VERSION,
+        capabilities: Vec::new(),
     })
     .map_err(to_io)?;
     if initiator {
         secure.send(&hello).await?;
         let reply = secure.recv().await?;
         let peer: crate::message::Hello = serde_json::from_slice(&reply).map_err(to_io)?;
-        Ok(peer.username)
+        validate_hello(peer)
     } else {
         let first = secure.recv().await?;
         let peer: crate::message::Hello = serde_json::from_slice(&first).map_err(to_io)?;
         secure.send(&hello).await?;
-        Ok(peer.username)
+        validate_hello(peer)
     }
+}
+
+fn validate_hello(peer: crate::message::Hello) -> std::io::Result<String> {
+    if peer.protocol_version != crate::protocol::PROTOCOL_VERSION {
+        return Err(to_io(format!(
+            "version de protocole incompatible : {} (attendue {})",
+            peer.protocol_version,
+            crate::protocol::PROTOCOL_VERSION
+        )));
+    }
+    if !crate::protocol::valid_username(&peer.username) {
+        return Err(to_io("username distant invalide"));
+    }
+    Ok(peer.username)
 }
 
 // ── TOFU : épinglage username ↔ clé publique ─────────────────────────────

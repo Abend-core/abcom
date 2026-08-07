@@ -97,5 +97,6 @@ Le [Dockerfile](../scripts/docker/Dockerfile) construit une image Rust avec les 
 | `make run` | Lance l'application |
 | `make run-multi` | Plusieurs instances locales |
 | `make install` / `make uninstall` | Installation Linux complète / retrait |
-| `make test` / `make testv` | Tests (silencieux / verbeux) |
+| `make check` | Formatage, Clippy toutes cibles/features et tests |
+| `make test` / `make test-verbose` | Tests (normal / sortie complète) |
 | `make test-module M=app::groups` | Tests d'un module |

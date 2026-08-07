@@ -7,9 +7,8 @@ use tokio::sync::mpsc;
 
 use crate::app::AppState;
 use crate::message::{
-    AppEvent, AvatarRequest, MediaAttachment, MediaProgress, MediaSendJob, MediaStreamOffer,
-    MessageAckRequest, ReactionRequest, ReadReceipt, ReadReceiptRequest, SendGroupRequest,
-    SendRequest, TypingRequest,
+    AppEvent, MediaAttachment, MediaProgress, MediaSendJob, MediaStreamOffer, NetworkSendRequest,
+    ReadReceipt, ReadReceiptRequest,
 };
 use crate::util::MutexExt;
 
@@ -23,6 +22,7 @@ mod group_modal;
 mod input_bar;
 mod markdown;
 mod media;
+mod outbound;
 mod reactions;
 mod settings;
 mod sidebar;
@@ -80,18 +80,42 @@ pub(crate) enum GifPickerTab {
     Sticker,
 }
 
-/// Canaux mpsc indépendants vers les tâches réseau/transfert : un récepteur
-/// d'événements entrants et un émetteur par type de requête sortante.
+/// Canaux vers les tâches réseau : les paquets courts partagent une commande
+/// typée, le streaming média reste séparé.
 pub(crate) struct NetworkChannels {
     pub(crate) event_rx: mpsc::Receiver<AppEvent>,
-    pub(crate) send_tx: mpsc::Sender<SendRequest>,
-    pub(crate) send_group_tx: mpsc::Sender<SendGroupRequest>,
-    pub(crate) send_typing_tx: mpsc::Sender<TypingRequest>,
-    pub(crate) send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
-    pub(crate) send_ack_tx: mpsc::Sender<MessageAckRequest>,
-    pub(crate) send_avatar_tx: mpsc::Sender<AvatarRequest>,
-    pub(crate) send_reaction_tx: mpsc::Sender<ReactionRequest>,
+    pub(crate) send_tx: mpsc::Sender<NetworkSendRequest>,
     pub(crate) send_media_tx: mpsc::Sender<MediaSendJob>,
+}
+
+impl NetworkChannels {
+    fn try_send(&self, request: impl Into<NetworkSendRequest>) -> bool {
+        match self.send_tx.try_send(request.into()) {
+            Ok(()) => true,
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                tracing::warn!("commande réseau ignorée : file pleine");
+                false
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                tracing::warn!("commande réseau ignorée : canal fermé");
+                false
+            }
+        }
+    }
+
+    fn try_send_best_effort(&self, request: impl Into<NetworkSendRequest>) {
+        if let Err(mpsc::error::TrySendError::Closed(_)) = self.send_tx.try_send(request.into()) {
+            tracing::debug!("signal réseau abandonné : canal fermé");
+        }
+    }
+}
+
+/// Canaux créés par le runtime et transférés en bloc à l'interface.
+pub struct UiRuntimeChannels {
+    pub event_rx: mpsc::Receiver<AppEvent>,
+    pub send_tx: mpsc::Sender<NetworkSendRequest>,
+    pub send_media_tx: mpsc::Sender<MediaSendJob>,
+    pub media_offer_rx: mpsc::Receiver<MediaStreamOffer>,
 }
 
 /// Données du picker emoji : textures décodées, index de recherche par
@@ -277,22 +301,11 @@ pub(crate) struct AbcomApp {
 }
 
 impl AbcomApp {
-    // Câblage des canaux mpsc indépendants vers les tâches réseau/transfert.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         state: Arc<Mutex<AppState>>,
         identity_fingerprint: String,
         psk_active: bool,
-        event_rx: mpsc::Receiver<AppEvent>,
-        send_tx: mpsc::Sender<SendRequest>,
-        send_group_tx: mpsc::Sender<SendGroupRequest>,
-        send_typing_tx: mpsc::Sender<TypingRequest>,
-        send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
-        send_ack_tx: mpsc::Sender<MessageAckRequest>,
-        send_avatar_tx: mpsc::Sender<AvatarRequest>,
-        send_reaction_tx: mpsc::Sender<ReactionRequest>,
-        send_media_tx: mpsc::Sender<MediaSendJob>,
-        media_offer_rx: mpsc::Receiver<MediaStreamOffer>,
+        channels: UiRuntimeChannels,
     ) -> Self {
         // Décodage des emojis en arrière-plan dès la création : les textures
         // seront créées (rapide) quand le résultat arrive, sans geler l'UI.
@@ -312,20 +325,14 @@ impl AbcomApp {
             identity_fingerprint,
             psk_active,
             net: NetworkChannels {
-                event_rx,
-                send_tx,
-                send_group_tx,
-                send_typing_tx,
-                send_read_receipt_tx,
-                send_ack_tx,
-                send_avatar_tx,
-                send_reaction_tx,
-                send_media_tx,
+                event_rx: channels.event_rx,
+                send_tx: channels.send_tx,
+                send_media_tx: channels.send_media_tx,
             },
             media: MediaState {
                 textures: std::collections::HashMap::new(),
                 viewer: None,
-                offer_rx: media_offer_rx,
+                offer_rx: channels.media_offer_rx,
                 pending_offers: Vec::new(),
                 progress: std::collections::HashMap::new(),
                 known_gif_urls: std::collections::HashSet::new(),
@@ -478,12 +485,13 @@ impl AbcomApp {
                 continue;
             }
             let hash = crate::app::AppState::message_hash(m);
-            for addr in s.receipt_recipients(m) {
+            for (recipient, addr) in s.receipt_recipients(m) {
                 receipts.push(ReadReceiptRequest {
+                    to_peer: recipient.clone(),
                     to_addr: addr,
                     receipt: ReadReceipt {
                         from: my_name.clone(),
-                        to: m.from.clone(),
+                        to: recipient,
                         message_hash: hash,
                         timestamp: now.clone(),
                     },
@@ -493,7 +501,7 @@ impl AbcomApp {
         drop(s);
 
         for req in receipts {
-            let _ = self.net.send_read_receipt_tx.try_send(req);
+            self.net.try_send(req);
         }
     }
 }
@@ -839,24 +847,13 @@ fn app_icon_data() -> Option<egui::IconData> {
     }
 }
 
-/// Point d'entrée de l'interface graphique
-// Câblage des canaux mpsc indépendants transmis tels quels à `AbcomApp::new`.
-#[allow(clippy::too_many_arguments)]
+/// Point d'entrée de l'interface graphique.
 pub fn run(
     state: Arc<Mutex<AppState>>,
     ui_ctx: crate::notify::UiContext,
     identity_fingerprint: String,
     psk_active: bool,
-    event_rx: mpsc::Receiver<AppEvent>,
-    send_tx: mpsc::Sender<SendRequest>,
-    send_group_tx: mpsc::Sender<SendGroupRequest>,
-    send_typing_tx: mpsc::Sender<TypingRequest>,
-    send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
-    send_ack_tx: mpsc::Sender<MessageAckRequest>,
-    send_avatar_tx: mpsc::Sender<AvatarRequest>,
-    send_reaction_tx: mpsc::Sender<ReactionRequest>,
-    send_media_tx: mpsc::Sender<MediaSendJob>,
-    media_offer_rx: mpsc::Receiver<MediaStreamOffer>,
+    channels: UiRuntimeChannels,
 ) -> anyhow::Result<()> {
     // Handlers tray/menu globaux : chaque événement réveille l'UI via le
     // contexte partagé (fonctionne même fenêtre cachée, sans rendu).
@@ -891,16 +888,7 @@ pub fn run(
                 state,
                 identity_fingerprint,
                 psk_active,
-                event_rx,
-                send_tx,
-                send_group_tx,
-                send_typing_tx,
-                send_read_receipt_tx,
-                send_ack_tx,
-                send_avatar_tx,
-                send_reaction_tx,
-                send_media_tx,
-                media_offer_rx,
+                channels,
             )))
         }),
     )

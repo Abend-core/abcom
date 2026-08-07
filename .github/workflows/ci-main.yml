@@ -3,6 +3,9 @@ name: CI — main
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
 
 env:
   CARGO_TERM_COLOR: always
@@ -35,21 +38,33 @@ jobs:
           restore-keys: ${{ runner.os }}-cargo-
 
       - name: Format
-        run: cargo fmt --check
+        run: cargo fmt --all --check
 
       - name: Lint (warnings = errors)
-        run: cargo clippy -- -D warnings
+        run: cargo clippy --all-targets --all-features --locked -- -D warnings
 
       - name: Build release
-        run: cargo build --release
+        run: cargo build --release --locked
 
       - name: Tests unitaires
-        run: cargo test
+        run: cargo test --all-features --locked
 
       - name: Tests d'intégration
         run: bash scripts/integration_test.sh
 
       - name: Audit sécurité dépendances
         run: |
-          cargo install cargo-audit --quiet
+          cargo install cargo-audit --version 0.21.2 --locked --quiet
           cargo audit
+
+  platform-check:
+    name: Check ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: cargo check --all-targets --all-features --locked

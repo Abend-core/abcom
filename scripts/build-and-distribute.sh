@@ -2,7 +2,7 @@
 # build-and-distribute.sh — Prépare Abcom pour la distribution
 set -euo pipefail
 
-SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 DIST_DIR="$SOURCE_DIR/dist"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 DIST_NAME="abcom_${TIMESTAMP}"
@@ -26,9 +26,8 @@ mkdir -p "$DIST_DIR/$DIST_NAME"
 
 # Copie les fichiers essentiels
 cp target/release/abcom "$DIST_DIR/$DIST_NAME/"
-cp abcom-install.sh "$DIST_DIR/$DIST_NAME/"
-cp INSTALL_FRIEND.md "$DIST_DIR/$DIST_NAME/README.md"
-cp QUICK_DEPLOY.md "$DIST_DIR/$DIST_NAME/DEPLOY.md"
+cp scripts/abcom-install.sh "$DIST_DIR/$DIST_NAME/"
+cp docs/06-installation.md "$DIST_DIR/$DIST_NAME/README.md"
 cp contrib/abcom.desktop "$DIST_DIR/$DIST_NAME/"
 
 # Rend les scripts exécutables
@@ -55,7 +54,6 @@ echo "   Contient:"
 echo "     • abcom (binaire)"
 echo "     • abcom-install.sh (script d'installation)"
 echo "     • README.md (guide pour les copains)"
-echo "     • DEPLOY.md (doc de déploiement)"
 echo ""
 echo "📲 Archive ZIP: $DIST_DIR/${DIST_NAME}.zip (~5 MB)"
 echo ""

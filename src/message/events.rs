@@ -19,7 +19,10 @@ pub enum AppEvent {
         username: String,
     },
     UserTyping(String),
-    GroupEventReceived(GroupEvent),
+    GroupEventReceived {
+        peer: String,
+        event: GroupEvent,
+    },
     ReadReceiptReceived(ReadReceipt),
     MessageAckReceived(MessageAck),
     AvatarReceived(AvatarAnnounce),
@@ -28,7 +31,10 @@ pub enum AppEvent {
     /// Progression d'un transfert média (émission ou réception).
     MediaProgressed(MediaProgress),
     /// Le destinataire a refusé un média : on l'annote dans le fil (côté émetteur).
-    MediaDeclined(MediaStreamHeader),
+    MediaDeclined {
+        peer: String,
+        header: MediaStreamHeader,
+    },
     /// Un pair a ajouté ou retiré une réaction emoji sur un message.
     ReactionReceived(ReactionEvent),
     /// Page d'historique plus ancienne chargée depuis SQLite (pagination du

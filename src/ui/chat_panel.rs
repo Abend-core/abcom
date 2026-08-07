@@ -197,7 +197,7 @@ fn render_message_header(
     display_name: &str,
     timestamp: &str,
     name_color: egui::Color32,
-    receipt: Option<(bool, bool)>,
+    receipt: Option<(bool, bool, bool)>,
     receipt_detail: Option<&crate::app::ReceiptDetail>,
     row_hash: u64,
     language: UiLanguage,
@@ -216,8 +216,8 @@ fn render_message_header(
         );
         if let Some(detail) = receipt_detail {
             show_receipt_detail_button(ui, detail, row_hash, language);
-        } else if let Some((delivered, read)) = receipt {
-            show_receipt(ui, delivered, read);
+        } else if let Some((delivered, read, failed)) = receipt {
+            show_receipt(ui, delivered, read, failed);
         }
     });
 }
@@ -1488,7 +1488,16 @@ pub(crate) fn format_bytes(bytes: u64) -> String {
 /// - ✓  gris  = envoyé, livraison en attente
 /// - ✓✓ gris  = livré (ACK reçu), pas encore lu
 /// - ✓✓ bleu  = lu (ReadReceipt reçu)
-fn show_receipt(ui: &mut egui::Ui, delivered: bool, read: bool) {
+fn show_receipt(ui: &mut egui::Ui, delivered: bool, read: bool, failed: bool) {
+    if failed {
+        ui.label(
+            egui::RichText::new("!")
+                .strong()
+                .color(egui::Color32::from_rgb(225, 90, 90)),
+        )
+        .on_hover_text("Échec de livraison / Delivery failed");
+        return;
+    }
     let double = delivered || read;
     let w = if double { 17.0_f32 } else { 9.0_f32 };
     let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 12.0), egui::Sense::hover());

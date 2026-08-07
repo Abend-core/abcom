@@ -85,26 +85,26 @@ fn load_recent_windows_and_load_older_paginates() {
 #[test]
 fn reactions_round_trip_and_clear() {
     let dir = tmp_dir("reactions");
-    let storage = Storage::open(&dir).unwrap();
+    let mut storage = Storage::open(&dir).unwrap();
     let entries = vec![ReactionEntry {
         emoji: "👍".to_string(),
         users: vec!["alice".to_string(), "bob".to_string()],
     }];
     storage.replace_reactions(42, &entries).unwrap();
 
-    let loaded = storage.load_all(INITIAL_WINDOW);
+    let loaded = storage.load_all(INITIAL_WINDOW).unwrap();
     assert_eq!(loaded.reactions.get(&42).unwrap()[0].users.len(), 2);
 
     // Remplacement par du vide = suppression.
     storage.replace_reactions(42, &[]).unwrap();
-    let loaded = storage.load_all(INITIAL_WINDOW);
+    let loaded = storage.load_all(INITIAL_WINDOW).unwrap();
     assert!(!loaded.reactions.contains_key(&42));
 }
 
 #[test]
 fn read_counts_groups_and_peers_round_trip() {
     let dir = tmp_dir("tables");
-    let storage = Storage::open(&dir).unwrap();
+    let mut storage = Storage::open(&dir).unwrap();
 
     storage.set_read_count("bob", 7).unwrap();
     storage.set_read_count("bob", 9).unwrap(); // upsert
@@ -123,7 +123,7 @@ fn read_counts_groups_and_peers_round_trip() {
     storage.upsert_peer_avatar("bob", Some(&[1, 2, 3])).unwrap();
     storage.upsert_peer_key("bob", &[9; 32]).unwrap();
 
-    let loaded = storage.load_all(INITIAL_WINDOW);
+    let loaded = storage.load_all(INITIAL_WINDOW).unwrap();
     assert_eq!(loaded.read_counts.get("bob"), Some(&9));
     assert_eq!(loaded.groups.len(), 1);
     assert_eq!(loaded.groups[0].owner, "alice");
@@ -210,7 +210,7 @@ fn migrates_legacy_json_once() {
     std::fs::write(dir.join("read_counts.json"), r#"{"bob":3}"#).unwrap();
 
     let storage = Storage::open(&dir).unwrap();
-    let loaded = storage.load_all(INITIAL_WINDOW);
+    let loaded = storage.load_all(INITIAL_WINDOW).unwrap();
     assert_eq!(loaded.messages.len(), 1);
     assert_eq!(loaded.messages[0].content, "historique");
     assert_eq!(loaded.reactions.get(&hash).unwrap()[0].emoji, "❤");
@@ -220,10 +220,226 @@ fn migrates_legacy_json_once() {
     assert!(!dir.join("messages.json").exists());
     assert!(dir.join("messages.json.bak").exists());
 
-    // Réouverture : la base existe, pas de re-migration.
+    // Simule un arrêt après commit mais avant retrait de la source : le marqueur
+    // transactionnel empêche tout double import à la réouverture.
+    drop(storage);
+    std::fs::rename(dir.join("messages.json.bak"), dir.join("messages.json")).unwrap();
+    let storage = Storage::open(&dir).unwrap();
+    assert_eq!(storage.load_all(INITIAL_WINDOW).unwrap().messages.len(), 1);
+    assert!(!dir.join("messages.json").exists());
+    assert!(dir.join("messages.json.bak").exists());
+}
+
+#[test]
+fn load_errors_are_not_hidden() {
+    let dir = tmp_dir("load-errors");
+    let storage = Storage::open(&dir).unwrap();
+    storage
+        .conn
+        .execute(
+            "INSERT INTO messages
+             (hash, from_user, content, timestamp, media) VALUES (1, 'alice', '', '12:00', '{')",
+            [],
+        )
+        .unwrap();
+
+    assert!(storage.load_all(INITIAL_WINDOW).is_err());
+    assert!(storage.all_media_ids().is_err());
+}
+
+#[test]
+fn invalid_group_json_makes_load_all_fail() {
+    let dir = tmp_dir("group-json-error");
+    let storage = Storage::open(&dir).unwrap();
+    storage
+        .conn
+        .execute("INSERT INTO groups (name, data) VALUES ('broken', '{')", [])
+        .unwrap();
+
+    assert!(storage.load_all(INITIAL_WINDOW).is_err());
+}
+
+#[test]
+fn reaction_and_group_replacements_are_atomic() {
+    let dir = tmp_dir("atomic-replacements");
+    let mut storage = Storage::open(&dir).unwrap();
+    let original_reaction = ReactionEntry {
+        emoji: "ok".to_string(),
+        users: vec!["alice".to_string()],
+    };
+    storage
+        .replace_reactions(42, std::slice::from_ref(&original_reaction))
+        .unwrap();
+    storage
+        .conn
+        .execute_batch(
+            "CREATE TRIGGER reject_reaction BEFORE INSERT ON reactions
+             WHEN NEW.username = 'rejected'
+             BEGIN SELECT RAISE(ABORT, 'rejected reaction'); END;",
+        )
+        .unwrap();
+    let rejected_reaction = ReactionEntry {
+        emoji: "bad".to_string(),
+        users: vec!["rejected".to_string()],
+    };
+    assert!(storage.replace_reactions(42, &[rejected_reaction]).is_err());
+
+    let original_group = Group {
+        name: "original".to_string(),
+        owner: "alice".to_string(),
+        members: vec!["alice".to_string()],
+        created_at: "2026-07-04 10:00:00".to_string(),
+    };
+    storage
+        .replace_groups(std::slice::from_ref(&original_group))
+        .unwrap();
+    storage
+        .conn
+        .execute_batch(
+            "CREATE TRIGGER reject_group BEFORE INSERT ON groups
+             WHEN NEW.name = 'rejected'
+             BEGIN SELECT RAISE(ABORT, 'rejected group'); END;",
+        )
+        .unwrap();
+    let rejected_group = Group {
+        name: "rejected".to_string(),
+        ..original_group
+    };
+    assert!(storage.replace_groups(&[rejected_group]).is_err());
+
+    let loaded = storage.load_all(INITIAL_WINDOW).unwrap();
+    assert_eq!(loaded.reactions[&42][0].emoji, "ok");
+    assert_eq!(loaded.groups.len(), 1);
+    assert_eq!(loaded.groups[0].name, "original");
+}
+
+#[test]
+fn schema_migrates_nonce_and_sets_user_version() {
+    let dir = tmp_dir("schema-migration");
+    let conn = rusqlite::Connection::open(dir.join("abcom.db")).unwrap();
+    conn.execute_batch(
+        "CREATE TABLE messages (
+            id INTEGER PRIMARY KEY,
+            hash INTEGER NOT NULL,
+            from_user TEXT NOT NULL,
+            to_user TEXT,
+            content TEXT NOT NULL,
+            timestamp TEXT NOT NULL,
+            ts_epoch INTEGER,
+            media TEXT,
+            reply_to INTEGER
+        );
+        PRAGMA user_version = 0;",
+    )
+    .unwrap();
+    drop(conn);
+
+    let storage = Storage::open(&dir).unwrap();
+    let version: i64 = storage
+        .conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    let nonce_columns: i64 = storage
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'nonce'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(version, super::SCHEMA_VERSION);
+    assert_eq!(nonce_columns, 1);
+
     drop(storage);
     let storage = Storage::open(&dir).unwrap();
-    assert_eq!(storage.load_all(INITIAL_WINDOW).messages.len(), 1);
+    let nonce_columns: i64 = storage
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM pragma_table_info('messages') WHERE name = 'nonce'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(nonce_columns, 1, "la migration est idempotente");
+}
+
+#[test]
+fn fresh_schema_has_current_version() {
+    let dir = tmp_dir("fresh-schema");
+    let storage = Storage::open(&dir).unwrap();
+    let version: i64 = storage
+        .conn
+        .query_row("PRAGMA user_version", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(version, super::SCHEMA_VERSION);
+}
+
+#[test]
+fn malformed_legacy_json_is_not_retired() {
+    let dir = tmp_dir("malformed-migration");
+    std::fs::write(dir.join("messages.json"), "{").unwrap();
+    std::fs::write(dir.join("read_counts.json"), r#"{"bob":3}"#).unwrap();
+
+    let storage = Storage::open(&dir).unwrap();
+    let loaded = storage.load_all(INITIAL_WINDOW).unwrap();
+    assert_eq!(loaded.read_counts.get("bob"), Some(&3));
+    assert!(dir.join("messages.json").exists());
+    assert!(!dir.join("messages.json.bak").exists());
+    assert!(!dir.join("read_counts.json").exists());
+    assert!(dir.join("read_counts.json.bak").exists());
+}
+
+#[test]
+fn failed_legacy_import_rolls_back_and_keeps_sources() {
+    let dir = tmp_dir("migration-rollback");
+    let messages = vec![msg("alice", None, "must roll back", 1)];
+    std::fs::write(
+        dir.join("messages.json"),
+        serde_json::to_string(&messages).unwrap(),
+    )
+    .unwrap();
+    let duplicate = Group {
+        name: "duplicate".to_string(),
+        owner: "alice".to_string(),
+        members: vec!["alice".to_string()],
+        created_at: "2026-07-04 10:00:00".to_string(),
+    };
+    std::fs::write(
+        dir.join("groups.json"),
+        serde_json::to_string(&vec![duplicate.clone(), duplicate]).unwrap(),
+    )
+    .unwrap();
+
+    assert!(Storage::open(&dir).is_err());
+    assert!(dir.join("messages.json").exists());
+    assert!(dir.join("groups.json").exists());
+    assert!(!dir.join("messages.json.bak").exists());
+    assert!(!dir.join("groups.json.bak").exists());
+
+    let conn = rusqlite::Connection::open(dir.join("abcom.db")).unwrap();
+    let count: i64 = conn
+        .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(count, 0);
+    drop(conn);
+
+    std::fs::write(
+        dir.join("groups.json"),
+        serde_json::to_string(&vec![Group {
+            name: "fixed".to_string(),
+            owner: "alice".to_string(),
+            members: vec!["alice".to_string()],
+            created_at: "2026-07-04 10:00:00".to_string(),
+        }])
+        .unwrap(),
+    )
+    .unwrap();
+    let reopened = Storage::open(&dir).expect("la migration doit reprendre à la réouverture");
+    let loaded = reopened.load_all(INITIAL_WINDOW).unwrap();
+    assert_eq!(loaded.messages.len(), 1);
+    assert_eq!(loaded.groups.len(), 1);
+    assert!(dir.join("messages.json.bak").exists());
+    assert!(dir.join("groups.json.bak").exists());
 }
 
 #[test]

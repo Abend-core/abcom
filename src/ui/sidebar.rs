@@ -192,10 +192,11 @@ impl AbcomApp {
                                 timestamp: chrono::Local::now().format("%H:%M").to_string(),
                             };
                             let req = ReadReceiptRequest {
+                                to_peer: peer_name.clone(),
                                 to_addr: peer_addr_for_receipt,
                                 receipt,
                             };
-                            let _ = self.net.send_read_receipt_tx.try_send(req);
+                            self.net.try_send(req);
                         }
                     }
                 }

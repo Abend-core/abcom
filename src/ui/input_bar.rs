@@ -7,9 +7,10 @@ use std::sync::{Arc, Mutex};
 
 use crate::app::AppState;
 use crate::message::{
-    ChatMessage, MediaAttachment, MediaKind, MediaSendJob, MediaStreamHeader, SendRequest,
-    TypingIndicator, TypingRequest,
+    ChatMessage, MediaAttachment, MediaKind, MediaSendJob, MediaStreamHeader, TypingIndicator,
+    TypingRequest,
 };
+use crate::protocol::{media_requires_ack, MAX_MEDIA_TRANSFER_BYTES};
 use crate::util::MutexExt;
 
 use super::composer;
@@ -17,11 +18,6 @@ use super::emoji_picker::emoji_shortcode_trigger;
 use super::AbcomApp;
 
 const ACTION_BUTTON_SIZE: [f32; 2] = [28.0, 28.0];
-
-/// Au-delà de cette taille (1 Go), l'envoi d'un média demande l'accord du
-/// destinataire avant transfert. En dessous, l'envoi est automatique. Dans les
-/// deux cas, c'est le même chemin (streaming par morceaux).
-const MEDIA_ACK_THRESHOLD: u64 = 1024 * 1024 * 1024;
 
 enum AttachmentMenuAction {
     AddFiles,
@@ -294,6 +290,13 @@ fn prepare_and_stream(
     }
 
     let size_bytes = std::fs::metadata(&dest)?.len();
+    if size_bytes > MAX_MEDIA_TRANSFER_BYTES {
+        let _ = std::fs::remove_file(&dest);
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "média trop volumineux (maximum 2 Gio)",
+        ));
+    }
     let (kind, width, height) = if !is_dir && MediaAttachment::is_image_filename(&filename) {
         let dims = image::image_dimensions(&dest).ok();
         (MediaKind::Image, dims.map(|d| d.0), dims.map(|d| d.1))
@@ -317,8 +320,31 @@ fn prepare_and_stream(
         timestamp: now.format("%H:%M").to_string(),
         timestamp_epoch: Some(now.timestamp() as u64),
         media: media.clone(),
-        requires_ack: size_bytes > MEDIA_ACK_THRESHOLD,
+        requires_ack: media_requires_ack(size_bytes),
     };
+
+    let jobs: Vec<MediaSendJob> = targets
+        .iter()
+        .map(|(username, addr)| MediaSendJob {
+            to_peer: username.clone(),
+            to_addr: *addr,
+            source_path: dest.clone(),
+            header: header.clone(),
+        })
+        .collect();
+    let mut permits = Vec::with_capacity(jobs.len());
+    for _ in &jobs {
+        match send_media_tx.try_reserve() {
+            Ok(permit) => permits.push(permit),
+            Err(error) => {
+                let _ = std::fs::remove_file(&dest);
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WouldBlock,
+                    format!("mise en file du média impossible : {error}"),
+                ));
+            }
+        }
+    }
 
     // Notre propre copie du message (la carte apparaît, avec progression).
     state.lock_safe().add_message(ChatMessage {
@@ -334,12 +360,8 @@ fn prepare_and_stream(
         nonce: None,
     });
 
-    for (_, addr) in targets {
-        let _ = send_media_tx.try_send(MediaSendJob {
-            to_addr: *addr,
-            source_path: dest.clone(),
-            header: header.clone(),
-        });
+    for (permit, job) in permits.into_iter().zip(jobs) {
+        permit.send(job);
     }
     Ok(())
 }
@@ -352,33 +374,33 @@ fn chat_wire_size(msg: &ChatMessage) -> usize {
         .unwrap_or(usize::MAX)
 }
 
-fn send_current_message(
-    app: &mut AbcomApp,
-    selected_addr: Option<std::net::SocketAddr>,
-    all_peers: &[crate::app::Peer],
-) -> bool {
+fn send_current_message(app: &mut AbcomApp) -> bool {
     let has_message = !app.composer.text.trim().is_empty();
     let has_attachments = !app.composer.pending_attachments.is_empty();
     if !has_message && !has_attachments {
         return false;
     }
 
-    let (my_name, selected_peer_name, transfer_targets, group_addrs) = {
+    let (my_name, selected_peer_name, transfer_targets) = {
         let s = app.state.lock_safe();
-        // Salon de groupe sélectionné : les destinataires sont les membres
-        // en ligne du groupe, pas l'ensemble des pairs.
-        let group_addrs = s
-            .selected_conversation
-            .as_deref()
-            .and_then(|c| c.strip_prefix('#'))
-            .map(|g| s.group_member_addrs(g));
         (
             s.my_username.clone(),
-            s.selected_conversation.clone(),
+            s.selected_conversation_id().message_target(),
             s.selected_transfer_targets(),
-            group_addrs,
         )
     };
+
+    if has_attachments && transfer_targets.is_empty() {
+        app.last_notification = Some(
+            app.tr(
+                "Aucun destinataire en ligne pour l'envoi",
+                "No online recipient available",
+            )
+            .to_string(),
+        );
+        app.notification_time = std::time::Instant::now();
+        return false;
+    }
 
     if has_message {
         if app.composer.text.ends_with('\n') {
@@ -413,49 +435,8 @@ fn send_current_message(
             return false;
         }
 
-        {
-            let msg_hash = AppState::message_hash(&msg);
-            let mut s = app.state.lock_safe();
-            s.add_message(msg.clone());
-            if let Some(peer_name) = &selected_peer_name {
-                if !peer_name.starts_with('#') {
-                    let peer_addr = s
-                        .peers
-                        .iter()
-                        .find(|p| p.username == *peer_name)
-                        .map(|p| p.addr);
-                    if let Some(addr) = peer_addr {
-                        s.mark_message_sent(msg_hash, addr);
-                    }
-                }
-            }
-        }
-
-        if let Some(addrs) = &group_addrs {
-            // Salon : uniquement les membres en ligne du groupe.
-            for addr in addrs {
-                let _ = app.net.send_tx.try_send(SendRequest {
-                    to_addr: *addr,
-                    message: msg.clone(),
-                });
-            }
-        } else if let Some(addr) = selected_addr {
-            let _ = app.net.send_tx.try_send(SendRequest {
-                to_addr: addr,
-                message: msg,
-            });
-        } else {
-            // Diffusion : uniquement aux pairs en ligne et joignables. On ignore
-            // les pairs hors-ligne restaurés depuis l'historique (adresse nulle).
-            for peer in all_peers
-                .iter()
-                .filter(|p| p.online && !p.addr.ip().is_unspecified())
-            {
-                let _ = app.net.send_tx.try_send(SendRequest {
-                    to_addr: peer.addr,
-                    message: msg.clone(),
-                });
-            }
+        if !app.enqueue_chat_message(msg) {
+            return false;
         }
     }
 
@@ -466,19 +447,8 @@ fn send_current_message(
             .map(|t| (t.username.clone(), t.addr))
             .collect();
 
-        if targets.is_empty() {
-            app.last_notification = Some(
-                app.tr(
-                    "Aucun destinataire en ligne pour l'envoi",
-                    "No online recipient available",
-                )
-                .to_string(),
-            );
-            app.notification_time = std::time::Instant::now();
-        } else {
-            for path in app.composer.pending_attachments.clone() {
-                send_one_media(app, &path, &my_name, &selected_peer_name, &targets);
-            }
+        for path in app.composer.pending_attachments.clone() {
+            send_one_media(app, &path, &my_name, &selected_peer_name, &targets);
         }
     }
 
@@ -770,10 +740,6 @@ impl AbcomApp {
                                     });
                                 ui.add_space(6.0);
                             }
-
-                            // Rangée du haut : champ de saisie seul, pleine largeur.
-                            let selected_addr = self.sidebar_cache.selected_peer_addr;
-                            let all_peers = self.sidebar_cache.peers.clone();
 
                             let menu_open_now =
                                 emoji_shortcode_trigger(&self.composer.text, self.composer.cursor_char)
@@ -1086,33 +1052,14 @@ impl AbcomApp {
                             if changed && self.last_typing_broadcast.elapsed().as_millis() > 1500
                             {
                                 self.last_typing_broadcast = std::time::Instant::now();
-                                let (my_name, target_addrs) = {
+                                let (my_name, targets) = {
                                     let s = self.state.lock_safe();
-                                    let name = s.my_username.clone();
-                                    let addrs = match &s.selected_conversation {
-                                        None => s
-                                            .peers
-                                            .iter()
-                                            .filter(|p| p.online)
-                                            .map(|p| p.addr)
-                                            .collect::<Vec<_>>(),
-                                        // Salon : membres en ligne du groupe.
-                                        Some(conv) => match conv.strip_prefix('#') {
-                                            Some(g) => s.group_member_addrs(g),
-                                            None => s
-                                                .peers
-                                                .iter()
-                                                .find(|p| p.online && &p.username == conv)
-                                                .map(|p| p.addr)
-                                                .into_iter()
-                                                .collect(),
-                                        },
-                                    };
-                                    (name, addrs)
+                                    (s.my_username.clone(), s.selected_transfer_targets())
                                 };
-                                for addr in target_addrs {
-                                    let _ = self.net.send_typing_tx.try_send(TypingRequest {
-                                        to_addr: addr,
+                                for target in targets {
+                                    self.net.try_send_best_effort(TypingRequest {
+                                        to_peer: target.username,
+                                        to_addr: target.addr,
                                         indicator: TypingIndicator {
                                             from: my_name.clone(),
                                         },
@@ -1133,7 +1080,7 @@ impl AbcomApp {
                                 pressed_enter_fallback,
                                 menu_open_now,
                                 &self.composer.text,
-                            ) && send_current_message(self, selected_addr, &all_peers)
+                            ) && send_current_message(self)
                             {
                                 self.composer.selection_anchor = None;
                                 resp.request_focus();
