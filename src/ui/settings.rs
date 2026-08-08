@@ -267,6 +267,30 @@ impl AbcomApp {
                                     }
                                 }
                                 ui.end_row();
+
+                                // Diagnostic : compteurs de la session en cours
+                                // (cf. `metrics`). « Jetés » non nul = file
+                                // saturée ou pair injoignable.
+                                ui.label(
+                                    egui::RichText::new(self.tr("Diagnostic", "Diagnostics"))
+                                        .strong(),
+                                );
+                                {
+                                    let m = crate::metrics::snapshot();
+                                    let line = format!(
+                                        "{} {} · {} {} · {} {} · {} {}",
+                                        self.tr("envoyés", "sent"),
+                                        m.packets_sent,
+                                        self.tr("reçus", "received"),
+                                        m.packets_received,
+                                        self.tr("jetés", "dropped"),
+                                        m.packets_dropped,
+                                        self.tr("pairs vus", "peers seen"),
+                                        m.peers_seen,
+                                    );
+                                    ui.label(egui::RichText::new(line).small().weak());
+                                }
+                                ui.end_row();
                             });
                     }
                     SettingsTab::Credits => {

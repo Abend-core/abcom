@@ -232,6 +232,8 @@ impl AbcomApp {
                     s.mark_peer_offline(&username);
                     // Réémettre l'avatar à la prochaine reconnexion de ce pair.
                     self.avatar_sent_to.remove(&username);
+                    // Idem accusés de lecture : il a pu manquer ceux émis pendant son absence.
+                    self.read_receipts_sent.remove(&username);
                 }
                 AppEvent::UserTyping(username) => s.set_user_typing(username),
                 AppEvent::GroupEventReceived { peer, event } => {
@@ -253,8 +255,8 @@ impl AbcomApp {
                     s.apply_reaction_event(&event);
                 }
                 AppEvent::KeyChanged { username } => {
-                    // Alerte sécurité : la clé du pair ne correspond plus à
-                    // celle épinglée — la connexion a été refusée.
+                    // Clé non concordante : connexion refusée, la modale offre le ré-appairage.
+                    self.modals.key_mismatch = Some(username.clone());
                     let label = self.tr(
                         "la clé d'identité a changé, connexion refusée",
                         "identity key changed, connection refused",
@@ -266,6 +268,15 @@ impl AbcomApp {
                     } else if self.enable_sound_notifications {
                         play_notification_sound();
                     }
+                }
+                AppEvent::SendFailed { username } => {
+                    // Sans ceci, l'échec disparaît dans les logs d'un binaire sans console.
+                    let label = self.tr(
+                        "injoignable, message non envoyé",
+                        "unreachable, message not sent",
+                    );
+                    self.last_notification = Some(format!("{username} : {label}"));
+                    self.notification_time = std::time::Instant::now();
                 }
                 AppEvent::OlderMessagesLoaded {
                     messages,

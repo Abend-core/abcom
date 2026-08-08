@@ -404,3 +404,14 @@ fn cursor_from_point_empty_is_zero() {
         0
     );
 }
+
+#[test]
+fn caret_signature_distinguishes_every_input() {
+    let base = super::caret_signature("bonjour", 18.0, 300.0, 2.0);
+    assert_eq!(base, super::caret_signature("bonjour", 18.0, 300.0, 2.0));
+    // Chaque paramètre change le tracé, donc la signature.
+    assert_ne!(base, super::caret_signature("bonjou", 18.0, 300.0, 2.0));
+    assert_ne!(base, super::caret_signature("bonjour", 20.0, 300.0, 2.0));
+    assert_ne!(base, super::caret_signature("bonjour", 18.0, 301.0, 2.0));
+    assert_ne!(base, super::caret_signature("bonjour", 18.0, 300.0, 1.0));
+}

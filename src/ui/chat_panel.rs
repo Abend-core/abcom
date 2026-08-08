@@ -975,6 +975,63 @@ impl AbcomApp {
                 }
             }
 
+            // Alerte TOFU : la clé présentée par un pair ne correspond plus à
+            // celle épinglée. Deux causes possibles — usurpation, ou
+            // réinstallation légitime du pair. On ne tranche pas à sa place :
+            // la connexion reste refusée tant que l'utilisateur n'a pas
+            // explicitement ré-appairé, empreinte vérifiée hors-bande.
+            if let Some(peer) = self.modals.key_mismatch.clone() {
+                let title = self.tr("Clé d'identité modifiée", "Identity key changed");
+                let explain = self.tr(
+                    "La clé de ce pair ne correspond plus à celle enregistrée. \
+                     Cela arrive après une réinstallation — mais aussi en cas \
+                     d'usurpation. Ne continuez qu'après avoir vérifié son \
+                     empreinte de vive voix.",
+                    "This peer's key no longer matches the pinned one. This happens \
+                     after a reinstall — but also when someone is impersonating them. \
+                     Only continue after checking their fingerprint out of band.",
+                );
+                let trust_lbl = self.tr("Faire confiance à la nouvelle clé", "Trust the new key");
+                let keep_lbl = self.tr("Garder l'ancienne clé", "Keep the current key");
+
+                let mut open = true;
+                let mut do_trust = false;
+                let mut do_keep = false;
+                egui::Window::new(format!("⚠️ {title}"))
+                    .open(&mut open)
+                    .resizable(false)
+                    .collapsible(false)
+                    .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
+                    .show(ctx, |ui| {
+                        ui.set_max_width(360.0);
+                        ui.label(egui::RichText::new(&peer).strong());
+                        ui.add_space(6.0);
+                        ui.label(explain);
+                        ui.add_space(10.0);
+                        ui.horizontal(|ui| {
+                            do_trust = ui.button(trust_lbl).clicked();
+                            do_keep = ui.button(keep_lbl).clicked();
+                        });
+                    });
+
+                if do_trust {
+                    // Désépinglage : la prochaine connexion ré-épingle la clé
+                    // présentée (retour au TOFU pour ce pair).
+                    self.trust.forget(&peer);
+                    self.last_notification = Some(
+                        self.tr(
+                            "Clé oubliée : la prochaine connexion sera ré-appairée",
+                            "Key forgotten: the next connection will be re-paired",
+                        )
+                        .to_string(),
+                    );
+                    self.notification_time = std::time::Instant::now();
+                    self.modals.key_mismatch = None;
+                } else if do_keep || !open {
+                    self.modals.key_mismatch = None;
+                }
+            }
+
             // Avatars et textures des médias image, préparés hors zone
             // défilante (les deux caches de textures sont persistants :
             // seuls les éléments manquants déclenchent un chargement).
