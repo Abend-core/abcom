@@ -365,7 +365,7 @@ pub fn custom_composer_input(
     input_has_focus: &mut bool,
     scroll_lines: &mut f32,
     emoji_map: &std::collections::HashMap<String, usize>,
-    emoji_textures: &[(String, egui::TextureHandle)],
+    emoji_textures: &super::EmojiTextures,
     emoji_alias_to_char: &std::collections::HashMap<String, String>,
     emoji_aliases: &[String],
     shortcode_menu_open: bool,
@@ -849,7 +849,7 @@ pub fn custom_composer_input(
 
             let mut matched = false;
             if let Some((len, idx)) = super::emoji_picker::match_emoji_at(&chars, i, emoji_map) {
-                if let Some((_, tex)) = emoji_textures.get(idx) {
+                if let Some(tex) = emoji_textures.get(ui.ctx(), idx) {
                     if x + 20.0 > right && x > content_rect.left() {
                         x = content_rect.left();
                         y += line_height;

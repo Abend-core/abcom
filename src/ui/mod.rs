@@ -131,16 +131,45 @@ pub struct UiRuntimeChannels {
     pub trust: Arc<crate::network::secure::TrustStore>,
 }
 
-/// Données du picker emoji : textures décodées, index de recherche par
-/// shortcode, et état de navigation du picker/des suggestions. Consommées à
-/// la fois par le picker lui-même et par le rendu inline (fil, composeur,
-/// barre de réactions).
+/// Textures emoji décodées à la demande, indexées comme `emoji_registry::EMOJI_DATA`.
+///
+/// Les 323 PNG étaient décodés et téléversés en GPU au lancement même si le
+/// sélecteur n'était jamais ouvert. La mutabilité intérieure permet de garder
+/// les emprunts partagés du code de rendu.
+#[derive(Default)]
+pub struct EmojiTextures {
+    cache: std::cell::RefCell<std::collections::HashMap<usize, Option<egui::TextureHandle>>>,
+}
+
+impl EmojiTextures {
+    /// Texture d'un emoji, décodée au premier affichage puis mémorisée.
+    pub fn get(&self, ctx: &egui::Context, index: usize) -> Option<egui::TextureHandle> {
+        if let Some(cached) = self.cache.borrow().get(&index) {
+            return cached.clone();
+        }
+        let decoded = crate::emoji_registry::EMOJI_DATA
+            .get(index)
+            .and_then(|(ch, bytes)| {
+                let rgba = image::load_from_memory(bytes).ok()?.to_rgba8();
+                let (w, h) = rgba.dimensions();
+                let image = egui::ColorImage::from_rgba_unmultiplied(
+                    [w as usize, h as usize],
+                    rgba.as_raw(),
+                );
+                Some(ctx.load_texture(format!("emoji_{ch}"), image, egui::TextureOptions::LINEAR))
+            });
+        self.cache.borrow_mut().insert(index, decoded.clone());
+        decoded
+    }
+
+    pub fn clear(&self) {
+        self.cache.borrow_mut().clear();
+    }
+}
+
+/// Index de recherche emoji et état de navigation du picker.
 pub(crate) struct EmojiPickerState {
-    /// Résultat du décodage des PNG emoji, effectué dans un thread au
-    /// démarrage : le premier frame n'attend plus les 323 décodages.
-    pub(crate) decode_rx: Option<std::sync::mpsc::Receiver<Vec<(String, egui::ColorImage)>>>,
-    pub(crate) textures: Vec<(String, egui::TextureHandle)>,
-    pub(crate) textures_loaded: bool,
+    pub(crate) textures: EmojiTextures,
     pub(crate) category: usize,
     pub(crate) map: std::collections::HashMap<String, usize>,
     pub(crate) alias_to_char: std::collections::HashMap<String, String>,
@@ -328,10 +357,17 @@ impl AbcomApp {
         psk_active: bool,
         channels: UiRuntimeChannels,
     ) -> Self {
-        // Décodage des emojis en arrière-plan dès la création : les textures
-        // seront créées (rapide) quand le résultat arrive, sans geler l'UI.
-        let emoji_decode_rx = Some(spawn_emoji_decoder());
-
+        // Index emoji construit sur le registre statique : aucun décodage ici.
+        let characters: Vec<String> = crate::emoji_registry::EMOJI_DATA
+            .iter()
+            .map(|(ch, _)| (*ch).to_string())
+            .collect();
+        let emoji_map: std::collections::HashMap<String, usize> = characters
+            .iter()
+            .enumerate()
+            .map(|(i, ch)| (ch.clone(), i))
+            .collect();
+        let (alias_to_char, aliases) = emoji_picker::build_emoji_shortcode_index(&characters);
         // Préférences persistées (table kv).
         let (notif_preview, autostart_enabled) = {
             let s = state.lock_safe();
@@ -387,13 +423,11 @@ impl AbcomApp {
             has_unread: false,
             window_focused: true,
             emoji: EmojiPickerState {
-                decode_rx: emoji_decode_rx,
-                textures: Vec::new(),
-                textures_loaded: false,
+                textures: EmojiTextures::default(),
                 category: 0,
-                map: std::collections::HashMap::new(),
-                alias_to_char: std::collections::HashMap::new(),
-                aliases: Vec::new(),
+                map: emoji_map,
+                alias_to_char,
+                aliases,
                 shortcode_selected: 0,
             },
             modals: ModalsState {
@@ -569,9 +603,6 @@ impl AbcomApp {
         self.forget_gif_previews(ctx);
         // Emojis : libérés aussi, re-décodés en arrière-plan au retour.
         self.emoji.textures.clear();
-        self.emoji.map.clear();
-        self.emoji.textures_loaded = false;
-        self.emoji.decode_rx = None;
         self.chat_cache.invalidate();
         // Libérer ne suffit pas : sans ceci le RSS ne bouge pas.
         release_memory_to_os();
@@ -591,7 +622,6 @@ impl AbcomApp {
         #[cfg(not(windows))]
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-        self.emoji.decode_rx = Some(spawn_emoji_decoder());
         self.chat_cache.invalidate();
         ctx.request_repaint();
     }
@@ -693,7 +723,6 @@ impl eframe::App for AbcomApp {
         }
 
         self.apply_theme_preference(ctx);
-        self.lazy_load_emoji(ctx);
 
         // Rafraîchit les caches dérivés si l'état a changé (génération) —
         // sinon la frame se rend sans reprendre le verrou ni rien re-dériver.
@@ -941,37 +970,9 @@ pub fn run(
     Ok(())
 }
 
-/// Décode les PNG du registre d'emojis dans un thread dédié (le premier
-/// frame de l'UI n'attend plus ~323 décodages d'images).
-fn spawn_emoji_decoder() -> std::sync::mpsc::Receiver<Vec<(String, egui::ColorImage)>> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::Builder::new()
-        .name("abcom-emoji".into())
-        .spawn(move || {
-            let images: Vec<(String, egui::ColorImage)> = crate::emoji_registry::EMOJI_DATA
-                .iter()
-                .filter_map(|(ch, bytes)| {
-                    image::load_from_memory(bytes).ok().map(|img| {
-                        let rgba = img.to_rgba8();
-                        let (w, h) = rgba.dimensions();
-                        let color_image = egui::ColorImage::from_rgba_unmultiplied(
-                            [w as usize, h as usize],
-                            rgba.as_raw(),
-                        );
-                        (ch.to_string(), color_image)
-                    })
-                })
-                .collect();
-            let _ = tx.send(images);
-        })
-        .ok();
-    rx
-}
-
 /// Rend à l'OS les pages libérées mais retenues par l'allocateur (sans effet hors mimalloc).
 pub(crate) fn release_memory_to_os() {
-    // SAFETY : `mi_collect` est thread-safe et sans précondition ; le
-    // paramètre `force = true` demande la restitution effective des pages.
+    // SAFETY : mi_collect est thread-safe et sans précondition ; force = true rend les pages.
     unsafe {
         libmimalloc_sys::mi_collect(true);
     }

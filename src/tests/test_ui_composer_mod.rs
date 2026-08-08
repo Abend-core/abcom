@@ -105,7 +105,7 @@ fn run_composer_frames(
     let mut scroll = 0.0f32;
     let mut anchor = None;
     let emoji_map = HashMap::new();
-    let textures: Vec<(String, egui::TextureHandle)> = Vec::new();
+    let textures = crate::ui::EmojiTextures::default();
     let (alias_to_char, aliases) = emoji_index();
     let mut submitted = false;
 

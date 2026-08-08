@@ -1,5 +1,3 @@
-use eframe::egui;
-
 use super::{sound::play_notification_sound, AbcomApp};
 use crate::app::AppState;
 use crate::message::{
@@ -10,67 +8,6 @@ use crate::protocol::media_requires_ack;
 use crate::util::MutexExt;
 
 impl AbcomApp {
-    /// Textures emoji : les PNG sont décodés dans un thread au démarrage
-    /// (cf. `spawn_emoji_decoder`) ; ici on ne fait que récupérer le résultat
-    /// et créer les textures (rapide). Tant qu'il n'est pas prêt, l'UI
-    /// s'affiche sans emojis et repeint brièvement en attendant.
-    pub(crate) fn lazy_load_emoji(&mut self, ctx: &egui::Context) {
-        if self.emoji.textures_loaded {
-            return;
-        }
-        let Some(rx) = &self.emoji.decode_rx else {
-            return;
-        };
-        let images = match rx.try_recv() {
-            Ok(images) => images,
-            Err(std::sync::mpsc::TryRecvError::Empty) => {
-                // Décodage en cours : re-tenter très bientôt.
-                ctx.request_repaint_after(std::time::Duration::from_millis(50));
-                return;
-            }
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.emoji.decode_rx = None;
-                return;
-            }
-        };
-        self.emoji.decode_rx = None;
-
-        self.emoji.textures = images
-            .into_iter()
-            .map(|(ch, color_image)| {
-                let texture = ctx.load_texture(
-                    format!("emoji_{ch}"),
-                    color_image,
-                    egui::TextureOptions::LINEAR,
-                );
-                (ch, texture)
-            })
-            .collect();
-
-        self.emoji.map = self
-            .emoji
-            .textures
-            .iter()
-            .enumerate()
-            .map(|(i, (ch, _))| (ch.clone(), i))
-            .collect();
-        let available: Vec<String> = self
-            .emoji
-            .textures
-            .iter()
-            .map(|(ch, _)| ch.clone())
-            .collect();
-
-        let (alias_to_char, aliases) = super::emoji_picker::build_emoji_shortcode_index(&available);
-        self.emoji.alias_to_char = alias_to_char;
-        self.emoji.aliases = aliases;
-        self.emoji.textures_loaded = true;
-
-        // Les messages parsés avant l'arrivée du registre ont une détection
-        // « emoji seul » erronée : on reconstruit le cache du fil.
-        self.chat_cache.invalidate();
-    }
-
     /// Dépile les événements réseau reçus depuis les tâches tokio
     pub(crate) fn process_events(&mut self) {
         let mut s = self.state.lock_safe();

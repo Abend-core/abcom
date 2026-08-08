@@ -524,7 +524,7 @@ pub(crate) fn render_parsed_markdown(
     ui: &mut egui::Ui,
     parsed: &ParsedMarkdown,
     emoji_map: &std::collections::HashMap<String, usize>,
-    emoji_textures: &[(String, egui::TextureHandle)],
+    emoji_textures: &super::EmojiTextures,
 ) {
     let emoji_size = if parsed.emoji_only { 44.0 } else { 22.0 };
 
@@ -656,7 +656,7 @@ fn render_spans_with_emoji_size(
     ui: &mut egui::Ui,
     spans: &[MarkdownSpan],
     emoji_map: &std::collections::HashMap<String, usize>,
-    emoji_textures: &[(String, egui::TextureHandle)],
+    emoji_textures: &super::EmojiTextures,
     override_style: Option<SpanOverride>,
     emoji_size: f32,
 ) {
@@ -715,7 +715,7 @@ fn render_blockquote_with_emoji_size(
     ui: &mut egui::Ui,
     spans: &[MarkdownSpan],
     emoji_map: &std::collections::HashMap<String, usize>,
-    emoji_textures: &[(String, egui::TextureHandle)],
+    emoji_textures: &super::EmojiTextures,
     emoji_size: f32,
 ) {
     let dark_mode = ui.visuals().dark_mode;
@@ -786,7 +786,7 @@ fn render_table(
     header: &[Vec<MarkdownSpan>],
     rows: &[Vec<Vec<MarkdownSpan>>],
     emoji_map: &std::collections::HashMap<String, usize>,
-    emoji_textures: &[(String, egui::TextureHandle)],
+    emoji_textures: &super::EmojiTextures,
     emoji_size: f32,
 ) {
     let dark_mode = ui.visuals().dark_mode;
@@ -857,7 +857,7 @@ fn render_table_row(
     background: Option<egui::Color32>,
     is_header: bool,
     emoji_map: &std::collections::HashMap<String, usize>,
-    emoji_textures: &[(String, egui::TextureHandle)],
+    emoji_textures: &super::EmojiTextures,
     emoji_size: f32,
 ) {
     let mut frame = egui::Frame::NONE.inner_margin(egui::Margin {
