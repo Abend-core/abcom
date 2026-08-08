@@ -44,6 +44,7 @@ pub async fn run_sender(mut rx: Receiver<NetworkSendRequest>, pool: Arc<Connecti
             tx
         });
         if worker.try_send(req.packet).is_err() {
+            crate::metrics::record_packet_dropped();
             tracing::warn!("file réseau du pair saturée : {}", key.0);
         }
     }

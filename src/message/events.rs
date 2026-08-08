@@ -49,4 +49,10 @@ pub enum AppEvent {
     KeyChanged {
         username: String,
     },
+    /// Aucune connexion sécurisée n'a pu être établie vers ce pair : le
+    /// paquet est perdu. Remonté à l'UI (bannière) car sur un binaire release
+    /// sans console, l'utilisateur n'a aucun autre signal.
+    SendFailed {
+        username: String,
+    },
 }

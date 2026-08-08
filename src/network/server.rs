@@ -134,9 +134,11 @@ async fn dispatch_packet(
         }
     };
     if !packet_matches_peer(&packet, peer, local_username) {
+        crate::metrics::record_packet_dropped();
         tracing::warn!("paquet entrant rejeté pour le pair authentifié {peer}");
         return;
     }
+    crate::metrics::record_packet_received();
 
     match packet {
         NetworkPacket::Chat(msg) => {

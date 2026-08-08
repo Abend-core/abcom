@@ -156,3 +156,23 @@ fn trust_store_loads_preexisting_pins() {
     assert_eq!(store.verify_and_pin("alice", &[7u8; 32]), Trust::Match);
     assert_eq!(store.verify_and_pin("alice", &[8u8; 32]), Trust::Mismatch);
 }
+
+#[test]
+fn forgetting_a_key_restores_tofu() {
+    let store = TrustStore::new(Default::default(), None);
+    let key_a = [1u8; 32];
+    let key_b = [2u8; 32];
+
+    assert_eq!(store.verify_and_pin("bob", &key_a), Trust::Pinned);
+    assert_eq!(store.verify_and_pin("bob", &key_b), Trust::Mismatch);
+
+    // Ré-appairage explicite : la nouvelle clé est acceptée une fois, puis
+    // ré-épinglée comme n'importe quelle première rencontre.
+    assert!(store.forget("bob"));
+    assert_eq!(store.verify_and_pin("bob", &key_b), Trust::Pinned);
+    assert_eq!(store.verify_and_pin("bob", &key_b), Trust::Match);
+    assert_eq!(store.verify_and_pin("bob", &key_a), Trust::Mismatch);
+
+    // Oublier un pair inconnu ne fait rien et le signale.
+    assert!(!store.forget("carol"));
+}

@@ -42,11 +42,7 @@ impl Identity {
         bytes.extend_from_slice(&keypair.public);
         std::fs::create_dir_all(base)?;
         std::fs::write(&path, &bytes)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-        }
+        restrict_to_owner(&path);
         tracing::info!(
             "nouvelle identité générée ({})",
             fingerprint(&keypair.public)
@@ -86,6 +82,37 @@ impl Identity {
 /// Hexadécimal minuscule.
 pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Réserve la clé à son propriétaire : 0600 sur Unix, réécriture d'ACL sur Windows où il est sans effet.
+fn restrict_to_owner(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(error) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
+            tracing::warn!("permissions 0600 impossibles sur la clé : {error}");
+        }
+    }
+    #[cfg(windows)]
+    {
+        let Ok(user) = std::env::var("USERNAME") else {
+            tracing::warn!("ACL de la clé non restreinte : USERNAME absent");
+            return;
+        };
+        let output = std::process::Command::new("icacls")
+            .arg(path)
+            .args(["/inheritance:r", "/grant:r"])
+            .arg(format!("{user}:F"))
+            .output();
+        match output {
+            Ok(out) if out.status.success() => {}
+            Ok(out) => tracing::warn!(
+                "ACL de la clé non restreinte : {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
+            Err(error) => tracing::warn!("ACL de la clé non restreinte : {error}"),
+        }
+    }
 }
 
 /// Empreinte lisible d'une clé publique : 8 groupes de 4 hexa.

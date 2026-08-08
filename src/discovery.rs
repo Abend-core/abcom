@@ -50,7 +50,14 @@ fn bind_discovery_socket() -> std::io::Result<UdpSocket> {
 /// Tâche de découverte des pairs par UDP broadcast.
 /// Diffuse le nom d'utilisateur toutes les 3 secondes et écoute les autres.
 /// Détecte aussi les déconnexions quand un peer n'a pas répondu pendant 10s.
-pub async fn run(username: String, pubkey_hex: String, tx: Sender<AppEvent>) {
+///
+/// `peer_gone_tx` : chaque pair expiré, pour que le pool libère sa connexion.
+pub async fn run(
+    username: String,
+    pubkey_hex: String,
+    tx: Sender<AppEvent>,
+    peer_gone_tx: Sender<String>,
+) {
     let socket = match bind_discovery_socket() {
         Ok(s) => s,
         Err(e) => {
@@ -102,6 +109,7 @@ pub async fn run(username: String, pubkey_hex: String, tx: Sender<AppEvent>) {
                 for username in disconnected {
                     peer_timestamps.remove(&username);
                     peer_addrs.remove(&username);
+                    let _ = peer_gone_tx.send(username.clone()).await;
                     let _ = tx.send(AppEvent::PeerDisconnected { username }).await;
                 }
             }
@@ -123,6 +131,9 @@ pub async fn run(username: String, pubkey_hex: String, tx: Sender<AppEvent>) {
                             // déconnexion) : chaque événement réveille l'UI,
                             // les annonces périodiques ne doivent pas.
                             let is_new = peer_timestamps.insert(pkt.username.clone(), now).is_none();
+                            if is_new {
+                                crate::metrics::record_peer_seen();
+                            }
                             let addr_changed = peer_addrs.insert(pkt.username.clone(), tcp_addr)
                                 != Some(tcp_addr);
                             if is_new || addr_changed {
