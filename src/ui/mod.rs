@@ -304,6 +304,8 @@ pub(crate) struct AbcomApp {
     pub(crate) avatar_sent_to: std::collections::HashSet<String>,
     /// Sélection d'image de profil différée (sélecteur natif, voir `update`).
     pub(crate) pending_avatar_pick: bool,
+    /// Export de conversation demandé : sélecteur natif ouvert à la frame suivante.
+    pub(crate) pending_export: bool,
     pub(crate) media: MediaState,
     /// Ligne dont la barre d'actions au survol est affichée : (index absolu
     /// dans le fil, hash du message). L'index désambiguïse les messages au
@@ -459,6 +461,7 @@ impl AbcomApp {
             avatar_textures: std::collections::HashMap::new(),
             avatar_sent_to: std::collections::HashSet::new(),
             pending_avatar_pick: false,
+            pending_export: false,
             hover_toolbar_target: None,
             reaction_picker_open: None,
             recent_reaction_emojis: DEFAULT_RECENT_EMOJIS
@@ -801,6 +804,29 @@ impl eframe::App for AbcomApp {
                     }
                 }
                 _ => {}
+            }
+        }
+
+        // Export de conversation : même report que les autres sélecteurs natifs.
+        if self.pending_export {
+            self.pending_export = false;
+            let title = self.tr("Exporter la conversation", "Export conversation");
+            let done = self.tr("Conversation exportée", "Conversation exported");
+            let name = {
+                let state = self.state.lock_safe();
+                match &state.selected_conversation {
+                    Some(conv) => conv.trim_start_matches('#').to_string(),
+                    None => "tous".to_string(),
+                }
+            };
+            if let Some(path) = rfd::FileDialog::new()
+                .set_title(title)
+                .set_file_name(format!("abcom-{name}.txt"))
+                .save_file()
+            {
+                self.state.lock_safe().export_selected_conversation(path);
+                self.last_notification = Some(done.to_string());
+                self.notification_time = std::time::Instant::now();
             }
         }
 

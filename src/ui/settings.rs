@@ -269,6 +269,34 @@ impl AbcomApp {
                                 }
                                 ui.end_row();
 
+                                ui.label(egui::RichText::new(self.tr("Données", "Data")).strong());
+                                ui.horizontal(|ui| {
+                                    if ui
+                                        .button(self.tr(
+                                            "Exporter la conversation…",
+                                            "Export conversation…",
+                                        ))
+                                        .clicked()
+                                    {
+                                        self.pending_export = true;
+                                    }
+                                    if ui
+                                        .button(self.tr("Compacter la base", "Compact database"))
+                                        .clicked()
+                                    {
+                                        self.state.lock_safe().compact_storage();
+                                        self.last_notification = Some(
+                                            self.tr(
+                                                "Compaction de la base lancée",
+                                                "Database compaction started",
+                                            )
+                                            .to_string(),
+                                        );
+                                        self.notification_time = std::time::Instant::now();
+                                    }
+                                });
+                                ui.end_row();
+
                                 // Diagnostic : compteurs de la session en cours
                                 // (cf. `metrics`). « Jetés » non nul = file
                                 // saturée ou pair injoignable.

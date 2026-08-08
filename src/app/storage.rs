@@ -100,6 +100,14 @@ pub enum StorageCmd {
     DequeueOutbox {
         hash: u64,
     },
+    /// Compaction de la base (VACUUM + ANALYZE), à la demande de l'utilisateur.
+    Compact,
+    /// Export texte d'une conversation vers un fichier choisi par l'utilisateur.
+    ExportConversation {
+        me: String,
+        conv: Option<String>,
+        path: std::path::PathBuf,
+    },
     /// Accusé nominatif livré/lu reçu d'un pair.
     AddReceipt {
         hash: u64,
@@ -432,6 +440,68 @@ impl Storage {
             params![username, pubkey],
         )?;
         Ok(())
+    }
+
+    /// Compacte la base et réindexe : le fichier ne récupère jamais seul
+    /// l'espace des conversations effacées.
+    pub fn compact(&self) -> rusqlite::Result<()> {
+        self.conn.execute_batch("VACUUM; ANALYZE;")
+    }
+
+    /// Taille du fichier de base et nombre de messages, pour l'affichage Paramètres.
+    pub fn footprint(&self, base: &Path) -> rusqlite::Result<(u64, u64)> {
+        let messages: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))?;
+        let bytes = std::fs::metadata(base.join("abcom.db"))
+            .map(|m| m.len())
+            .unwrap_or(0);
+        Ok((bytes, messages as u64))
+    }
+
+    /// Exporte une conversation en texte lisible (portabilité local-first).
+    ///
+    /// `conv` suit la convention du reste du stockage : `None` = « Tous »,
+    /// `Some("#salon")`, `Some("pair")`.
+    pub fn export_conversation(&self, me: &str, conv: Option<&str>) -> rusqlite::Result<String> {
+        let mut out = String::new();
+        for message in self.conversation_messages(me, conv)? {
+            let stamp = message
+                .timestamp_epoch
+                .and_then(|e| chrono::DateTime::from_timestamp(e as i64, 0))
+                .map(|dt| dt.format("%Y-%m-%d %H:%M").to_string())
+                .unwrap_or_else(|| message.timestamp.clone());
+            out.push_str(&format!(
+                "[{stamp}] {} : {}\n",
+                message.from, message.content
+            ));
+            if let Some(media) = &message.media {
+                out.push_str(&format!("    (pièce jointe : {})\n", media.filename));
+            }
+        }
+        Ok(out)
+    }
+
+    fn conversation_messages(
+        &self,
+        me: &str,
+        conv: Option<&str>,
+    ) -> rusqlite::Result<Vec<ChatMessage>> {
+        let (clause, params): (&str, Vec<String>) = match conv {
+            None => ("to_user IS NULL", Vec::new()),
+            Some(group) if group.starts_with('#') => ("to_user = ?1", vec![group.to_string()]),
+            Some(peer) => (
+                "(from_user = ?1 AND to_user = ?2) OR (from_user = ?2 AND to_user = ?1)",
+                vec![peer.to_string(), me.to_string()],
+            ),
+        };
+        let sql = format!(
+            "SELECT {} FROM messages WHERE {clause} ORDER BY id",
+            Self::MSG_COLS
+        );
+        let mut stmt = self.conn.prepare(&sql)?;
+        let rows = stmt.query_map(rusqlite::params_from_iter(params), Self::row_to_message)?;
+        rows.map(|row| row.map(|(_, message)| message)).collect()
     }
 
     /// Met un message de côté pour un destinataire hors ligne.
@@ -971,6 +1041,20 @@ fn run(
                 message,
             } => storage.enqueue_outbox(hash, &to_peer, &message),
             StorageCmd::DequeueOutbox { hash } => storage.dequeue_outbox(hash),
+            StorageCmd::Compact => storage.compact(),
+            StorageCmd::ExportConversation { me, conv, path } => {
+                match storage.export_conversation(&me, conv.as_deref()) {
+                    Ok(text) => {
+                        if let Err(error) = std::fs::write(&path, text) {
+                            tracing::error!("export impossible : {error}");
+                        } else {
+                            tracing::info!("conversation exportée vers {}", path.display());
+                        }
+                        Ok(())
+                    }
+                    Err(error) => Err(error),
+                }
+            }
             StorageCmd::AddReceipt {
                 hash,
                 username,

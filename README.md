@@ -1,5 +1,9 @@
 # Abcom
 
+[![CI — dev](https://github.com/Abend-core/abcom/actions/workflows/ci-dev.yml/badge.svg?branch=dev)](https://github.com/Abend-core/abcom/actions/workflows/ci-dev.yml)
+[![CI — main](https://github.com/Abend-core/abcom/actions/workflows/ci-main.yml/badge.svg?branch=main)](https://github.com/Abend-core/abcom/actions/workflows/ci-main.yml)
+[![Licence AGPL-3.0](https://img.shields.io/badge/licence-AGPL--3.0-blue.svg)](LICENSE)
+
 Messagerie instantanée pour réseau local, écrite en Rust. Les machines d'un même LAN se découvrent automatiquement et échangent messages, fichiers et médias en pair-à-pair, sans serveur, sans compte, sans connexion Internet. Tout le trafic est chiffré de bout en bout (Noise XX) et l'historique est stocké localement en SQLite.
 
 Interface graphique native (egui), pensée pour tourner en permanence : la fenêtre se replie dans la barre de menus / zone de notification, l'application reste joignable et consomme quasiment rien au repos.
@@ -14,6 +18,8 @@ Interface graphique native (egui), pensée pour tourner en permanence : la fenê
 - **Sécurité** : identité X25519 par machine, chiffrement Noise XX, épinglage des clés (TOFU), passphrase de salon optionnelle
 - **Résident** : fermeture = repli dans le tray, notifications système, badge non-lus, lancement automatique à l'ouverture de session
 - **Bilingue** : interface FR/EN, thème clair/sombre
+- **Hors ligne** : un message écrit à un pair absent part automatiquement à sa reconnexion
+- **Local-first** : export texte d'une conversation et compaction de la base depuis Paramètres
 
 ## Démarrage rapide
 
@@ -27,7 +33,7 @@ cargo run --release -- <pseudo>
 # Tester le P2P en local : deux instances sur la même machine
 ABCOM_INSTANCE=1 cargo run --release -- alice   # terminal 1
 ABCOM_INSTANCE=2 cargo run --release -- bob     # terminal 2
-# ou : bash scripts/run-multi.sh
+# ou : make run2  (raccourci de scripts/run-multi.sh)
 ```
 
 Installation par plateforme (Linux/systemd, Windows, Docker) : voir [docs/06-installation.md](docs/06-installation.md).
@@ -46,8 +52,10 @@ Installation par plateforme (Linux/systemd, Windows, Docker) : voir [docs/06-ins
 | [08 — Historique et audits](docs/08-historique-et-audits.md) | Phases du projet, audits menés, résultats mesurés |
 | [09 — Limites et pistes](docs/09-limites-et-pistes.md) | Limites connues et travaux envisagés |
 
-Le suivi au fil de l'eau est dans [CHANGELOG.md](CHANGELOG.md) et [AVANCEMENT.md](AVANCEMENT.md). Les documents historiques (audits et plans d'origine, ADR, anciennes versions) sont conservés tels quels dans [old/](old/).
+Pour contribuer : [CONTRIBUTING.md](CONTRIBUTING.md) (barrière verte, conventions, workflow Git). Le suivi au fil de l'eau est dans [CHANGELOG.md](CHANGELOG.md) et [AVANCEMENT.md](AVANCEMENT.md). Les documents historiques (audits et plans d'origine, ADR, anciennes versions) sont conservés tels quels dans [old/](old/).
 
 ## État du projet
 
-Version 0.0.1, pas encore de release publiée. 289 tests automatisés, dont un scénario P2P headless externe, et CI GitHub Actions sur Linux, macOS et Windows. Les mentions de licence MIT et AGPL-3.0 présentes dans le dépôt doivent être harmonisées avant la première release.
+Version **1.0.0-beta.1**, sous licence **AGPL-3.0**. 308 tests automatisés — dont un scénario P2P headless externe et un rendu headless de toute l'interface — et CI GitHub Actions sur Linux, macOS et Windows, avec MSRV, `cargo audit`, `cargo deny` et mesure de couverture.
+
+Ce qui reste ouvert est listé dans [AUDIT.md](AUDIT.md).

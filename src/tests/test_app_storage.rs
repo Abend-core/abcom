@@ -577,3 +577,40 @@ fn outbox_survives_a_restart() {
     storage.dequeue_outbox(hash).unwrap();
     assert!(storage.load_all(INITIAL_WINDOW).unwrap().outbox.is_empty());
 }
+
+#[test]
+fn export_renders_a_readable_transcript() {
+    let dir = tmp_dir("export");
+    let storage = Storage::open(&dir).unwrap();
+    storage
+        .insert_message(&msg("alice", Some("moi"), "salut", 0))
+        .unwrap();
+    storage
+        .insert_message(&msg("moi", Some("alice"), "salut à toi", 60))
+        .unwrap();
+    // Une autre conversation ne doit pas fuiter dans l'export.
+    storage
+        .insert_message(&msg("bob", Some("moi"), "secret", 120))
+        .unwrap();
+
+    let export = storage.export_conversation("moi", Some("alice")).unwrap();
+    assert!(export.contains("alice : salut"));
+    assert!(export.contains("moi : salut à toi"));
+    assert!(!export.contains("secret"));
+    assert_eq!(export.lines().count(), 2);
+}
+
+#[test]
+fn compaction_keeps_the_data_intact() {
+    let dir = tmp_dir("vacuum");
+    let storage = Storage::open(&dir).unwrap();
+    storage
+        .insert_message(&msg("alice", None, "gardé", 1))
+        .unwrap();
+    let (_, before) = storage.footprint(&dir).unwrap();
+    storage.compact().unwrap();
+    let (bytes, after) = storage.footprint(&dir).unwrap();
+    assert_eq!(before, after);
+    assert!(bytes > 0);
+    assert_eq!(storage.load_all(INITIAL_WINDOW).unwrap().messages.len(), 1);
+}

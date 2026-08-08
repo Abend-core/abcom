@@ -244,6 +244,20 @@ impl AppState {
 
     /// Flush synchrone du stockage (fermeture de l'application) : attend que
     /// toutes les commandes en file soient écrites.
+    /// Compacte la base : l'espace des conversations effacées n'est pas rendu seul.
+    pub fn compact_storage(&self) {
+        self.persist(StorageCmd::Compact);
+    }
+
+    /// Exporte la conversation sélectionnée en texte vers `path`.
+    pub fn export_selected_conversation(&self, path: std::path::PathBuf) {
+        self.persist(StorageCmd::ExportConversation {
+            me: self.my_username.clone(),
+            conv: self.selected_conversation.clone(),
+            path,
+        });
+    }
+
     pub fn flush_storage(&self) {
         if let Some(tx) = &self.storage {
             let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(1);
