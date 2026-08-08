@@ -623,7 +623,8 @@ impl AbcomApp {
 }
 
 impl eframe::App for AbcomApp {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    /// État et notifications : appelé aussi quand la fenêtre est repliée, sans aucune passe egui.
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // HWND natif capté une fois : permet de replier/restaurer la fenêtre
         // au niveau OS sous Windows (voir tray::win).
         #[cfg(windows)]
@@ -678,11 +679,14 @@ impl eframe::App for AbcomApp {
         if let Some(t) = &mut self.tray {
             t.set_unread(unread);
         }
+    }
 
-        // Cachée ou minimisée : l'état et SQLite sont à jour, les
-        // notifications natives sont parties — aucun rendu, aucun repaint
-        // programmé (CPU/GPU ~0). Le prochain réveil viendra du réseau, du
-        // tray ou de la restauration de la fenêtre.
+    /// Rendu : jamais appelé fenêtre repliée, la logique vit dans [`Self::logic`].
+    fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = root.ctx().clone();
+        let ctx = &ctx;
+
+        // Minimisée : l'état est à jour, rien à peindre et aucun repaint programmé.
         let minimized = ctx.input(|i| i.viewport().minimized.unwrap_or(false));
         if self.window_hidden || minimized {
             return;
@@ -794,14 +798,15 @@ impl eframe::App for AbcomApp {
             }
         }
 
-        self.show_sidebar_panel(ctx);
-        let (emoji_btn_clicked, gif_btn_clicked) = self.show_input_bar(ctx);
+        // Ordre imposé par egui : panneaux latéraux, puis bas, puis central.
+        self.show_sidebar_panel(root);
+        let (emoji_btn_clicked, gif_btn_clicked) = self.show_input_bar(root);
         self.show_notification(ctx);
         self.show_emoji_picker_window(ctx, emoji_btn_clicked);
         self.show_gif_picker_window(ctx, gif_btn_clicked);
         self.render_group_modal(ctx);
         self.render_group_manage_modal(ctx);
-        self.show_central_panel(ctx);
+        self.show_central_panel(root);
         self.show_reaction_emoji_picker(ctx);
         self.render_settings(ctx);
         self.show_media_viewer(ctx);
@@ -1009,3 +1014,7 @@ fn set_dock_visible(visible: bool) {
 
 #[cfg(not(target_os = "macos"))]
 fn set_dock_visible(_visible: bool) {}
+
+#[cfg(test)]
+#[path = "../tests/test_ui_app.rs"]
+mod app_tests;

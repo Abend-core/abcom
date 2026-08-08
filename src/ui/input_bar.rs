@@ -515,15 +515,17 @@ impl AbcomApp {
 
     /// Barre de saisie en bas de fenêtre. Retourne `(emoji_cliqué, gif_cliqué)`
     /// pour piloter l'ouverture des sélecteurs respectifs.
-    pub(crate) fn show_input_bar(&mut self, ctx: &egui::Context) -> (bool, bool) {
+    pub(crate) fn show_input_bar(&mut self, ui: &mut egui::Ui) -> (bool, bool) {
+        let ctx = ui.ctx().clone();
+        let ctx = &ctx;
         // Présence et frappe lues depuis le cache dérivé : aucune prise de
         // verrou par frame dans la barre de saisie.
         let selected_peer_online = self.sidebar_cache.selected_peer_online;
 
         if !selected_peer_online {
-            egui::TopBottomPanel::bottom("input_panel")
-                .exact_height(40.0)
-                .show(ctx, |ui| {
+            egui::Panel::bottom("input_panel")
+                .exact_size(40.0)
+                .show(ui, |ui| {
                     ui.centered_and_justified(|ui| {
                         ui.label(
                             egui::RichText::new(self.tr(
@@ -547,12 +549,10 @@ impl AbcomApp {
 
         // Marge uniforme entre les bords du panneau et le cadre du composant
         // (la marge par défaut du panneau est plus large sur les côtés).
-        egui::TopBottomPanel::bottom("input_panel")
+        egui::Panel::bottom("input_panel")
             .resizable(false)
-            .frame(
-                egui::Frame::side_top_panel(&ctx.style()).inner_margin(egui::Margin::same(8)),
-            )
-            .show(ctx, |ui| {
+            .frame(egui::Frame::side_top_panel(&ui.style().clone()).inner_margin(egui::Margin::same(8)))
+            .show(ui, |ui| {
                 let gif_label = self.tr("GIF", "GIF");
                 egui::Frame::default()
                     .fill(egui::Color32::from_rgb(66, 66, 69))

@@ -8,11 +8,11 @@ use super::AbcomApp;
 
 impl AbcomApp {
     /// Panneau gauche : pairs et groupes
-    pub(crate) fn show_sidebar_panel(&mut self, ctx: &egui::Context) {
-        egui::SidePanel::left("peers_panel")
+    pub(crate) fn show_sidebar_panel(&mut self, ui: &mut egui::Ui) {
+        egui::Panel::left("peers_panel")
             .resizable(false)
-            .exact_width(220.0)
-            .show(ctx, |ui| {
+            .exact_size(220.0)
+            .show(ui, |ui| {
                 // Instantané depuis le cache dérivé : pairs, compteurs
                 // non-lus et alias ne sont recalculés qu'au changement de
                 // génération, pas à chaque frame.

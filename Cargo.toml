@@ -34,15 +34,15 @@ serde_json = "1"
 # OpenGL est déprécié sur macOS et y est émulé au-dessus de Metal, au prix d'un
 # contexte GPU d'une quarantaine de Mo pour une UI 2D. `glow` est explicitement
 # retiré des features par défaut pour qu'il ne reste aucun backend OpenGL lié.
-eframe = { version = "0.31", default-features = false, features = [
+eframe = { version = "0.36", default-features = false, features = [
     "accesskit",
     "default_fonts",
     "wgpu",
     "wayland",
     "x11",
 ] }
-egui = "0.31"
-egui_extras = { version = "0.31", features = ["image", "http", "gif", "webp"] }
+egui = "0.36"
+egui_extras = { version = "0.36", features = ["image", "http", "gif", "webp"] }
 ehttp = "0.7"
 chrono = "0.4"
 anyhow = "1"

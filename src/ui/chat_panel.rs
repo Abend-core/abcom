@@ -233,15 +233,10 @@ fn show_receipt_detail_button(
 ) {
     let popup_id = ui.make_persistent_id(("receipt_popup", row_hash));
     let btn = ui.small_button("...");
-    if btn.clicked() {
-        ui.memory_mut(|m| m.toggle_popup(popup_id));
-    }
-    egui::popup_below_widget(
-        ui,
-        popup_id,
-        &btn,
-        egui::PopupCloseBehavior::CloseOnClickOutside,
-        |ui| {
+    egui::Popup::from_toggle_button_response(&btn)
+        .id(popup_id)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
             ui.set_min_width(160.0);
             let (delivered_lbl, read_lbl) = match language {
                 UiLanguage::French => ("Reçu par", "Lu par"),
@@ -264,8 +259,7 @@ fn show_receipt_detail_button(
                     ui.label(name);
                 }
             }
-        },
-    );
+        });
 }
 
 /// Rend le corps d'un message (texte Markdown puis média éventuel). Les
@@ -730,8 +724,10 @@ impl AbcomApp {
     /// verrou sur `AppState`, aucun clone de conversation, aucun re-parse
     /// markdown par frame. Le fil est fenêtré façon Discord : seuls les
     /// derniers messages sont rendus, remonter charge les 100 précédents.
-    pub(crate) fn show_central_panel(&mut self, ctx: &egui::Context) {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    pub(crate) fn show_central_panel(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let ctx = &ctx;
+        egui::CentralPanel::default().show(ui, |ui| {
             let rows = self.chat_cache.rows.clone();
             let my_name = self.chat_cache.my_name.clone();
             let selected_conv: Option<String> = self.chat_cache.conversation().map(str::to_string);
@@ -785,7 +781,7 @@ impl AbcomApp {
                         };
                         if ui.button(sound_text).clicked() {
                             self.enable_sound_notifications = !self.enable_sound_notifications;
-                            ui.close_menu();
+                            ui.close();
                         }
                         let this_conv = selected_conv.clone();
                         let is_muted = self.muted_conversations.contains(&this_conv);
@@ -803,14 +799,14 @@ impl AbcomApp {
                             } else {
                                 self.muted_conversations.insert(this_conv);
                             }
-                            ui.close_menu();
+                            ui.close();
                         }
                         if ui
                             .button(self.tr("👥 Voir les participants", "👥 View participants"))
                             .clicked()
                         {
                             self.modals.participants_open = true;
-                            ui.close_menu();
+                            ui.close();
                         }
                         if let Some(gname) = &selected_group_name {
                             if ui
@@ -819,7 +815,7 @@ impl AbcomApp {
                             {
                                 self.modals.group_manage_target = Some(gname.clone());
                                 self.modals.group_manage_confirm = None;
-                                ui.close_menu();
+                                ui.close();
                             }
                         }
                         if let Some(user) = &private_peer {
@@ -837,7 +833,7 @@ impl AbcomApp {
                                     .and_then(|r| r.alias.clone())
                                     .unwrap_or_default();
                                 self.modals.rename_target = Some(user.clone());
-                                ui.close_menu();
+                                ui.close();
                             }
                         }
                         if !is_broadcast
@@ -846,7 +842,7 @@ impl AbcomApp {
                                 .clicked()
                         {
                             self.state.lock_safe().clear_conversation_history();
-                            ui.close_menu();
+                            ui.close();
                         }
                     });
                 });

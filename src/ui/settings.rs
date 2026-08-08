@@ -14,7 +14,7 @@ impl AbcomApp {
     pub(crate) fn apply_theme_preference(&mut self, ctx: &egui::Context) {
         let initial_dark_mode = self
             .system_dark_mode
-            .get_or_insert_with(|| ctx.style().visuals.dark_mode);
+            .get_or_insert_with(|| ctx.theme() == egui::Theme::Dark);
 
         let dark_mode = match self.theme_preference {
             ThemePreference::System => *initial_dark_mode,
