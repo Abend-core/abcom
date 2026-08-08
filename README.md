@@ -58,4 +58,4 @@ Pour contribuer : [CONTRIBUTING.md](CONTRIBUTING.md) (barrière verte, conventio
 
 Version **1.0.0-beta.1**, sous licence **AGPL-3.0**. 308 tests automatisés — dont un scénario P2P headless externe et un rendu headless de toute l'interface — et CI GitHub Actions sur Linux, macOS et Windows, avec MSRV, `cargo audit`, `cargo deny` et mesure de couverture.
 
-Ce qui reste ouvert est listé dans [AUDIT.md](AUDIT.md).
+Ce qui reste ouvert est listé dans [AUDIT.md](AUDIT.md) (dette de code) et [AUDIT-DEPENDANCES.md](AUDIT-DEPENDANCES.md) (ce que nos dépendances offrent et qu'on n'exploite pas).
