@@ -1,8 +1,9 @@
 //! Limites partagées du protocole réseau.
 
-/// Version du protocole filaire. Le projet n'ayant pas encore publié de
-/// release, les versions incompatibles sont rejetées explicitement.
-pub const PROTOCOL_VERSION: u16 = 1;
+/// Version du protocole filaire ; les versions incompatibles sont rejetées.
+///
+/// 2 : annonces de découverte signées (Ed25519 dérivé de l'identité Noise).
+pub const PROTOCOL_VERSION: u16 = 2;
 
 pub const MAX_USERNAME_CHARS: usize = 64;
 
