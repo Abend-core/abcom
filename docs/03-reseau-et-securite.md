@@ -14,7 +14,7 @@ Sur un pare-feu Linux : `sudo ufw allow 9000:9001/tcp && sudo ufw allow 9001/udp
 
 ## Découverte des pairs
 
-Chaque instance émet toutes les 3 secondes un paquet JSON contenant son pseudo, son port TCP et l'empreinte de sa clé publique. L'émission se fait en broadcast (`255.255.255.255`) et sur le groupe multicast `239.255.42.98` — le broadcast n'étant pas rebouclé localement sur macOS, le multicast avec loopback permet aux instances d'une même machine de se découvrir.
+Chaque instance émet toutes les 3 secondes un paquet JSON **signé** contenant son pseudo, son port TCP, ses clés publiques et un horodatage. L'émission se fait en broadcast (`255.255.255.255`) et sur le groupe multicast `239.255.42.98` — le broadcast n'étant pas rebouclé localement sur macOS, le multicast avec loopback permet aux instances d'une même machine de se découvrir.
 
 Côté réception, la tâche de découverte tient l'état de présence (dernier signe de vie par pair, timeout à 6 secondes) et n'émet un événement vers l'UI que lorsque quelque chose change : nouveau pair, adresse modifiée, déconnexion, retour en ligne. Au repos, des pairs connectés ne réveillent donc pas le rendu. Un pair expiré est aussi signalé au pool de connexions, qui libère la connexion correspondante.
 
@@ -30,7 +30,13 @@ Côté réception, la tâche de découverte tient l'état de présence (dernier 
 
 Le coût réseau au repos est de deux datagrammes (multicast + broadcast) toutes les 3 secondes et par instance ; c'est le poste qui empêche la carte réseau de rester en veille prolongée. Les valeurs sont dans [discovery.rs](../src/discovery.rs) et [protocol.rs](../src/protocol.rs).
 
-L'annonce transporte la clé publique avant toute connexion TCP à titre informatif. Une annonce UDP n'étant pas signée, la source de vérité reste la clé présentée pendant le handshake Noise et épinglée par TOFU.
+### Annonces signées
+
+Chaque annonce porte une clé Ed25519 de vérification, un horodatage et une signature de `(pseudo, port, clé X25519, clé Ed25519, horodatage)`. La clé de signature est **dérivée de l'identité Noise** par BLAKE2s avec un domaine dédié : `identity.key` garde son format, et une identité produit toujours la même clé de signature.
+
+Une annonce dont la signature ne vérifie pas, ou dont l'horodatage s'écarte de plus de 60 secondes de l'heure locale, est ignorée. Cela ferme trois choses : les annonces fabriquées pour une clé qu'on ne possède pas (pairs fantômes injectés sur le LAN), le détournement du port annoncé, et le rejeu d'annonces capturées.
+
+Cela ne ferme **pas** la première rencontre : un pair peut toujours annoncer le pseudo d'un autre avec sa propre clé, correctement signée (voir le modèle de menace). La source de vérité pour la conversation reste la clé présentée pendant le handshake Noise et épinglée par TOFU.
 
 ## Identité et confiance
 
@@ -62,6 +68,8 @@ Tous les échanges de chat sont des `NetworkPacket` (enum JSON taggé, [message/
 | `Reaction` | Ajout ou retrait d'une réaction emoji |
 | `Avatar` | Annonce de l'avatar de l'expéditeur |
 
+La version de protocole vaut **2** depuis l'ajout des annonces signées : un pair d'une version différente est rejeté au `Hello`.
+
 Les messages sont identifiés sur le réseau par un hash FNV-1a déterministe de (expéditeur, destinataire, timestamp epoch, contenu) — stable entre machines et plateformes, contrairement au `DefaultHasher` utilisé à l'origine.
 
 ## Modèle de menace
@@ -70,7 +78,7 @@ Les messages sont identifiés sur le réseau par un hash FNV-1a déterministe de
 
 **Non couvert, assumé à ce stade** :
 
-- **La toute première rencontre** : le TOFU protège les connexions *suivantes*, pas la première. Tant qu'aucune clé n'est épinglée pour un pseudo, un pair malveillant peut annoncer le pseudo de quelqu'un d'autre avec sa propre clé et se faire épingler à sa place — l'annonce UDP n'est pas signée. La parade est la vérification d'empreinte hors-bande (Paramètres → Profil) au premier contact, et l'usage de la passphrase de salon sur un réseau ouvert.
+- **La toute première rencontre** : le TOFU protège les connexions *suivantes*, pas la première. Tant qu'aucune clé n'est épinglée pour un pseudo, un pair malveillant peut annoncer le pseudo de quelqu'un d'autre **avec sa propre clé**, et signer cette annonce sans difficulté — la signature prouve la possession de la clé annoncée, pas le droit d'utiliser ce pseudo. La parade est la vérification d'empreinte hors-bande (Paramètres → Profil) au premier contact, et l'usage de la passphrase de salon sur un réseau ouvert.
 - **Chiffrement au repos** : `abcom.db` (messages, avatars, clés épinglées), le dossier `media/` et le dossier de travail `scratch/` sont en clair sur le disque local. Ils sont dans le répertoire de données de l'utilisateur (`identity.key` est en 0600, ACL restreinte sous Windows), donc protégés des *autres comptes* de la machine, mais pas d'un accès physique au disque ni d'une sauvegarde. Piste : SQLCipher ou chiffrement fichier (voir [09 — Limites et pistes](09-limites-et-pistes.md)).
 - **Métadonnées de découverte** : l'annonce UDP (pseudo + empreinte) est visible par tout le LAN — c'est la fonction même de la découverte.
 - **Événements de groupe non signés** : l'auteur de la session est authentifié et ses droits sont vérifiés localement, mais un événement n'est pas transférable avec une preuve cryptographique hors de cette session.

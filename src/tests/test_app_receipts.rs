@@ -323,7 +323,9 @@ fn retry_limit_marks_message_as_failed() {
 
 #[test]
 fn offline_messages_wait_for_the_peer_to_return() {
-    let mut s = AppState::new_with_base("moi", &std::env::temp_dir());
+    let dir = std::env::temp_dir().join(format!("abcom-outbox-{:?}", std::thread::current().id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = AppState::new_with_base("moi", &dir);
     let msg = ChatMessage {
         from: "moi".into(),
         content: "tu me liras plus tard".into(),
