@@ -451,7 +451,7 @@ impl AbcomApp {
         max_px: Option<u32>,
     ) -> Option<egui::TextureHandle> {
         let bytes = self.state.lock_safe().media_bytes(id)?;
-        let mut image = image::load_from_memory(&bytes).ok()?;
+        let mut image = crate::util::decode_image_bounded(&bytes)?;
         let name = match max_px {
             Some(max) => {
                 if image.width().max(image.height()) > max {

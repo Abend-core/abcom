@@ -52,7 +52,9 @@ rfd = "0.17"
 walkdir = "2"
 socket2 = { version = "0.6", features = ["all"] }
 resvg = { version = "0.48", optional = true }
-zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+# Un seul backend deflate : la feature `deflate` tire aussi zopfli, qui
+# n'est jamais exercé au niveau de compression par défaut.
+zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 snow = "0.10.0"
 # Signature des annonces de découverte (clé dérivée de l'identité Noise).
