@@ -16,7 +16,19 @@ Sur un pare-feu Linux : `sudo ufw allow 9000:9001/tcp && sudo ufw allow 9001/udp
 
 Chaque instance émet toutes les 3 secondes un paquet JSON contenant son pseudo, son port TCP et l'empreinte de sa clé publique. L'émission se fait en broadcast (`255.255.255.255`) et sur le groupe multicast `239.255.42.98` — le broadcast n'étant pas rebouclé localement sur macOS, le multicast avec loopback permet aux instances d'une même machine de se découvrir.
 
-Côté réception, la tâche de découverte tient l'état de présence (dernier signe de vie par pair, timeout à 6 secondes) et n'émet un événement vers l'UI que lorsque quelque chose change : nouveau pair, adresse modifiée, déconnexion, retour en ligne. Au repos, des pairs connectés ne réveillent donc pas le rendu.
+Côté réception, la tâche de découverte tient l'état de présence (dernier signe de vie par pair, timeout à 6 secondes) et n'émet un événement vers l'UI que lorsque quelque chose change : nouveau pair, adresse modifiée, déconnexion, retour en ligne. Au repos, des pairs connectés ne réveillent donc pas le rendu. Un pair expiré est aussi signalé au pool de connexions, qui libère la connexion correspondante.
+
+### Constantes de découverte et leur coût
+
+| Constante | Valeur | Effet si on l'augmente | Effet si on la diminue |
+|---|---|---|---|
+| Groupe multicast | `239.255.42.98` | — | — |
+| Intervalle d'annonce | 3 s | Moins de trafic et de réveils radio (meilleure autonomie), détection plus lente | Détection plus réactive, mais un paquet toutes les N secondes par instance sur tout le LAN |
+| Timeout de présence | 6 s (= 2 annonces) | Moins de faux « hors ligne » sur un réseau qui perd des paquets, pairs fantômes plus longtemps | Détection de coupure plus rapide, mais un seul paquet perdu suffit à faire clignoter la présence |
+| Balayage des expirés | 2 s | — | Réveils plus fréquents de la tâche |
+| Buffer de réception | 1 024 octets | — | Un pseudo très long tronquerait l'annonce (JSON invalide, paquet ignoré) — d'où le plafond de 64 caractères sur le pseudo |
+
+Le coût réseau au repos est de deux datagrammes (multicast + broadcast) toutes les 3 secondes et par instance ; c'est le poste qui empêche la carte réseau de rester en veille prolongée. Les valeurs sont dans [discovery.rs](../src/discovery.rs) et [protocol.rs](../src/protocol.rs).
 
 L'annonce transporte la clé publique avant toute connexion TCP à titre informatif. Une annonce UDP n'étant pas signée, la source de vérité reste la clé présentée pendant le handshake Noise et épinglée par TOFU.
 
@@ -58,9 +70,21 @@ Les messages sont identifiés sur le réseau par un hash FNV-1a déterministe de
 
 **Non couvert, assumé à ce stade** :
 
-- **Chiffrement au repos** : `abcom.db`, le dossier `media/` et les avatars sont en clair sur le disque local. Piste : SQLCipher ou chiffrement fichier (voir [09 — Limites et pistes](09-limites-et-pistes.md)).
+- **La toute première rencontre** : le TOFU protège les connexions *suivantes*, pas la première. Tant qu'aucune clé n'est épinglée pour un pseudo, un pair malveillant peut annoncer le pseudo de quelqu'un d'autre avec sa propre clé et se faire épingler à sa place — l'annonce UDP n'est pas signée. La parade est la vérification d'empreinte hors-bande (Paramètres → Profil) au premier contact, et l'usage de la passphrase de salon sur un réseau ouvert.
+- **Chiffrement au repos** : `abcom.db` (messages, avatars, clés épinglées), le dossier `media/` et le dossier de travail `scratch/` sont en clair sur le disque local. Ils sont dans le répertoire de données de l'utilisateur (`identity.key` est en 0600, ACL restreinte sous Windows), donc protégés des *autres comptes* de la machine, mais pas d'un accès physique au disque ni d'une sauvegarde. Piste : SQLCipher ou chiffrement fichier (voir [09 — Limites et pistes](09-limites-et-pistes.md)).
 - **Métadonnées de découverte** : l'annonce UDP (pseudo + empreinte) est visible par tout le LAN — c'est la fonction même de la découverte.
 - **Événements de groupe non signés** : l'auteur de la session est authentifié et ses droits sont vérifiés localement, mais un événement n'est pas transférable avec une preuve cryptographique hors de cette session.
+- **Identifiants de messages devinables** : les réactions, réponses et accusés ciblent un message par son hash FNV-1a, qui n'est pas cryptographique. Un pair authentifié peut donc forger un identifiant plausible pour cibler un message qu'il n'a pas reçu. L'impact est limité (il faut déjà être un pair authentifié), mais c'est une raison de ne pas transformer ce hash en identifiant de sécurité.
 - **Robustesse d'entrée** : le serveur limite la taille des trames et applique un timeout de lecture ; les paquets invalides sont ignorés sans faire tomber le service.
 
-Recommandations d'usage : réserver Abcom aux réseaux de confiance, activer la passphrase de salon sur un réseau partagé, vérifier les empreintes pour les échanges sensibles.
+### Passphrase de salon : ce qu'elle protège, et ce qu'elle ne protège pas
+
+| Question | Réponse |
+|---|---|
+| Qui la connaît ? | Tous les membres du salon, à l'identique — c'est un secret **partagé**, pas une identité |
+| Comment se distribue-t-elle ? | Hors-bande, par un canal de confiance (de vive voix, gestionnaire de mots de passe). Elle est lue depuis `ABCOM_PASSPHRASE` ou le `.env` local, jamais transmise sur le réseau |
+| Que protège-t-elle ? | Elle empêche un inconnu du LAN d'**établir la moindre session** (le handshake `XXpsk3` échoue sans elle) : ni connexion, ni paquet, ni découverte utile |
+| Que ne protège-t-elle pas ? | Elle n'authentifie **personne à l'intérieur** du salon : un membre qui la connaît reste identifié par sa clé et son épinglage TOFU, pas par la passphrase. Elle ne se révoque pas individuellement — retirer l'accès à quelqu'un impose de la changer partout |
+| Fuite de la passphrase | Elle ne compromet **pas** le contenu des sessions passées (les clés de session viennent du handshake, pas du PSK) : elle redonne seulement la capacité de se connecter |
+
+Recommandations d'usage : réserver Abcom aux réseaux de confiance, activer la passphrase de salon sur un réseau partagé, vérifier les empreintes pour les échanges sensibles — en particulier au premier contact.

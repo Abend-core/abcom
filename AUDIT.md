@@ -1,40 +1,50 @@
 # Audit qualité — abcom
 
 > Checklist complète des améliorations pour un projet propre au maximum.
-> **Révisé le 5 août 2026, branche `dev`** (passe initiale : 7 juillet 2026).
-> Seconde passe approfondie incluse : lecture ligne à ligne de `network/` (pool,
-> découverte, handshake, streaming média), `identity.rs`, `main.rs` et `storage.rs`.
+> **Révisé le 8 août 2026, branche `dev`** (passes précédentes : 7 juillet, 5 août 2026).
 > Priorités : 🔴 important (correctif ou dette bloquante) · 🟠 recommandé · 🟢 confort/finition.
 > Chaque point référence les fichiers concernés ; cocher au fur et à mesure.
 >
 > **Un plan d'exécution détaillé et séquencé — pensé pour être déroulé pas à pas —
 > est dans [`PLAN-MAINTENABILITE.md`](PLAN-MAINTENABILITE.md).**
 
-### Revérification du 5 août 2026 (branche `dev`)
+### Revérification du 8 août 2026 (branche `dev`)
 
-Métriques recomptées sur le code actuel — **inchangées** depuis le 7 juillet sauf mention :
+Métriques recomptées sur le code actuel :
 
-| Signal | 07/07 | 05/08 (avant) | 05/08 (après P1-P6) | État |
-|--------|-------|----------------|----------------------|------|
-| `unwrap`/`expect`/`panic!` hors tests | 62 | 62 | **~7** (hors `lock_safe`) | ✅ P2 |
-| dont `lock().unwrap()` | 55 | 55 | **0** | ✅ P2 |
-| `eprintln!`/`println!` de prod | 34 | 34 | **0** (`tracing`) | ✅ P3 |
-| `#[allow(dead_code)]` | 16 | 16 | **4** (tous justifiés) | ✅ P4 |
-| Tests (`#[test]`/`#[tokio::test]`) | 259 | 272 | **257** (dead code purgé) | — |
+| Signal | 07/07 | 05/08 | 08/08 | État |
+|--------|-------|-------|-------|------|
+| `unwrap`/`expect`/`panic!` hors tests | 62 | ~7 | **7** | ✅ résiduels justifiés |
+| dont `lock().unwrap()` | 55 | 0 | **0** | ✅ `lock_safe` |
+| `eprintln!`/`println!` de prod | 34 | 0 | **0** | ✅ `tracing` |
+| `#[allow(dead_code)]` | 16 | 4 | **4** (justifiés) | ✅ |
+| Tests | 259 | 257 | **299** (296 unitaires + 2 bin + 1 e2e) | ✅ |
 | `clippy -D warnings` / `fmt --check` | vert | vert | **vert** | CI bloquante OK |
-| Champs `AbcomApp` (god-struct) | 90 | 90 | **46** en 6 sous-structs | ✅ P6 |
-| Scan emoji dupliqué | 3 copies | 4 copies | **1** (`match_emoji_at`) | ✅ P5 |
+| Champs `AbcomApp` (god-struct) | 90 | 46 | **48** en 6 sous-structs | ✅ |
+| Version `Cargo.toml` | `0.0.1` | `0.0.1` | **`1.0.0-beta.1`** + MSRV | ✅ |
+| MSRV déclarée et testée en CI | ✗ | ✗ | **1.95** (job `msrv`) | ✅ |
+| Renderer | Glow (OpenGL émulé) | Glow | **wgpu (Metal natif)** | ✅ mesuré |
+| Contexte GPU au repos | 42,4 Mo | — | **3,9 Mo** | ✅ mesuré |
+| Licence déclarée | `MIT` ≠ LICENSE | idem | **`AGPL-3.0-only`** cohérente | ✅ |
 
-**Exécuté le 5 août 2026 : les 6 phases de [`PLAN-MAINTENABILITE.md`](PLAN-MAINTENABILITE.md)
-(P1 hygiène, P2 mutex, P3 logging, P4 dead code, P5 thème/dédup, P6 découpage
-AbcomApp) — 6 commits sur `dev`, barrière verte (`fmt`+`clippy -D warnings`+`test`)
-à chaque étape. Détail des sous-structs P6 : `NetworkChannels`, `EmojiPickerState`,
-`GifPickerState`, `ComposerState`, `ModalsState`, `MediaState`.**
+**Trois vagues de travaux depuis la passe du 5 août :**
 
-**Sécurité — corrigé depuis (à cocher ci-dessous) :** ✅ la traversée de répertoire à la
-réception de média est fermée par `is_safe_media_id` (`media_stream.rs`, PR #28) —
-**S1 résolu**. Toujours ouverts : S2 (vérif `from` == pair authentifié), R1 (retry
-réel, encore un `eprintln!` stub à `events.rs:418`), R2/R3/R4 et toute la dette §2.
+1. **Refactor `dev` (commit `0e5720e`)** — crate exposé en lib, `protocol.rs`,
+   `app/conversation.rs`, `ui/outbound.rs`, tests d'intégration P2P. A fermé
+   **S2, R1, R2** et une bonne partie de §3-§4 (voir les cases cochées).
+2. **Passe 08/08 (a)** — durcissement réseau/stockage, remontée d'erreurs à
+   l'utilisateur, ré-appairage TOFU, chaîne d'approvisionnement CI, pipeline
+   de release.
+3. **Passe 08/08 (b)** — dépendances à jour (dont sept montées majeures),
+   renderer wgpu, mimalloc, chemins chauds, persistance des accusés, licence
+   tranchée. Chaque étape validée par `fmt` + `clippy -D warnings` + tests, et
+   l'application relancée réellement après la bascule du renderer.
+
+**Sécurité — état :** S1 (traversée de répertoire) et S2 (usurpation applicative)
+sont **résolus**. S3 (première rencontre TOFU) reste ouvert par nature, mais est
+désormais **documenté explicitement** dans le modèle de menace, et le
+**ré-appairage légitime** (absent jusqu'ici alors que la doc le promettait) est
+implémenté.
 
 ---
 
@@ -47,195 +57,177 @@ réel, encore un `eprintln!` stub à `events.rs:418`), R2/R3/R4 et toute la dett
   décision documentée — à conserver.
 - [x] 🟠 Supprimer le dossier vide `font 2/` à la racine — **fait (05/08)**.
 - [x] 🟠 Compléter `.gitignore` (`.DS_Store`, `*.log`) — **fait (05/08)**.
-- [ ] 🟠 `Cargo.toml` : la version est figée à `0.0.1` alors que le projet a un CHANGELOG —
-  adopter un versionnage réel (bump à chaque merge sur `main`, tags git).
-- [x] 🟢 Vérifier l'URL `repository` de `Cargo.toml` — **fait (05/08)** : corrigée en
-  `https://github.com/Abend-core/abcom` (remote réel confirmé via `git remote -v`).
-- [ ] 🟢 `scripts/` : préfixer chaque script d'un en-tête d'usage homogène et lister les
-  scripts dans `docs/07-developpement.md` (`integration_test.sh` tourne en CI main,
-  `QUICK_START_TEST.sh` est un pense-bête interactif — clarifier le rôle de chacun).
+- [x] 🟠 `Cargo.toml` : versionnage réel — **fait (07/08)** : `1.0.0-beta.1`,
+  première bêta publiée, CHANGELOG à jour. Complété le 08/08 par
+  `rust-version = "1.95"` (MSRV testée en CI).
+- [x] 🟢 Vérifier l'URL `repository` de `Cargo.toml` — **fait (05/08)**.
+- [x] 🟢 `scripts/` : en-tête d'usage homogène (`# <nom> — <rôle>` + ligne
+  `Usage :`) sur chaque script, et **tableau des scripts** dans
+  `docs/07-developpement.md` précisant le rôle de chacun (CI, dev, installation)
+  — **fait (08/08)**.
 
 ## 2. Qualité du code
 
-- [x] 🔴 **55 `lock().unwrap()`** sur le mutex `AppState` — **fait (05/08, P2)** : trait
-  `util::MutexExt::lock_safe()` (`unwrap_or_else(|e| e.into_inner())`), remplacement
-  mécanique des 55 sites de production.
-- [x] 🔴 **34 `eprintln!`/`println!`** de production — **fait (05/08, P3)** : migration vers
-  `tracing`/`tracing-subscriber` (niveaux, horodatage, filtre `RUST_LOG`).
-- [x] 🟠 Purger les **16 `#[allow(dead_code)]`** — **fait (05/08, P4)** : 12 supprimés
-  (dont les modules orphelins entiers `composer/cursor.rs`, `composer/render.rs`,
-  `composer/shortcode.rs`, superseded par `emoji_picker.rs`/`composer/mod.rs`), 4 restants
-  justifiés par un commentaire (drop `Tray::icon`, `Identity::ephemeral` utilisé par les
-  tests, `cleanup_inactive_peers` filet de sécurité, `rename_group` gap fonctionnel UI).
-- [ ] 🟠 Découper les gros fichiers UI : `chat_panel.rs` (1 522 lignes),
-  `input_bar.rs` (1 164), `markdown.rs` (996), `composer/mod.rs` (927), `ui/mod.rs` (915).
-  Extraire par exemple le rendu d'une ligne de fil, la barre de survol, et le popup
-  notifications dans des sous-modules (le modèle `composer/` — cursor/text_ops/shortcode/
-  render — est à répliquer).
-- [x] 🟠 Dédupliquer le scan d'emojis — **fait (05/08, P5)** : les 4 sites
-  (`markdown.rs`, `emoji_picker.rs`, `composer/mod.rs` ×2) consomment désormais
-  `emoji_picker::match_emoji_at`, point d'entrée unique.
+- [x] 🔴 **55 `lock().unwrap()`** — **fait (05/08, P2)** : `util::MutexExt::lock_safe()`.
+- [x] 🔴 **34 `eprintln!`/`println!`** — **fait (05/08, P3)** : `tracing`.
+- [x] 🟠 Purger les **16 `#[allow(dead_code)]`** — **fait (05/08, P4)** : 4 restants,
+  justifiés en commentaire.
+- [ ] 🟠 Découper les gros fichiers UI : `chat_panel.rs` (1 589 lignes),
+  `input_bar.rs` (1 133), `ui/mod.rs` (1 007), `markdown.rs` (987),
+  `composer/mod.rs` (908). Extraire le rendu d'une ligne de fil, la barre de
+  survol, les modales (le modèle `composer/` est à répliquer). **Reste le plus
+  gros chantier de maintenabilité ouvert.**
+- [x] 🟠 Dédupliquer le scan d'emojis — **fait (05/08, P5)** : `match_emoji_at`.
 - [x] 🟠 Centraliser les constantes visuelles dupliquées — **fait (05/08, P5)** :
-  `ui/theme.rs` regroupe les 3 valeurs réellement dupliquées (`LINE_HEIGHT`,
-  `SEPARATOR`, `TEXT_MUTED`). Les teintes proches mais choisies indépendamment
-  (gris 140/160/165/190, bleu du récépissé lu) restent en dur à leur point d'usage
-  — les fusionner créerait un couplage visuel qui n'existe pas dans le code.
-- [ ] 🟠 i18n : `tr(fr, en)` retourne des `&'static str` éparpillés dans tout le code UI,
-  et plusieurs rendus contournent `tr` avec des `match language` locaux
-  (`chat_panel.rs::show_receipt_detail_button`, `render_message_body`). Centraliser les
+  `ui/theme.rs`.
+- [ ] 🟠 i18n : **172 appels `self.tr(fr, en)`** dispersés dans l'UI, et plusieurs
+  rendus contournent `tr` avec des `match language` locaux
+  (`chat_panel.rs::day_divider_label`, `render_message_body`). Centraliser les
   chaînes (table de clés) pour pouvoir ajouter une langue sans toucher 30 fichiers.
-- [ ] 🟢 Homogénéiser la gestion d'erreurs : `anyhow` est présent mais peu exploité en
-  dehors de `main.rs`/`klipy.rs` ; les couches `app/`/`network/` mélangent `Option`,
-  `std::io::Error` et silences (`let _ = …`). Définir une politique (erreurs typées dans
-  `network`, `anyhow` au bord).
-- [ ] 🟢 Documenter la convention de tests `src/tests/*.rs` raccordés par
-  `#[path = …] mod tests;` dans `docs/07-developpement.md` (inhabituelle mais cohérente —
-  un nouveau contributeur la cherchera).
+- [ ] 🟢 Homogénéiser la gestion d'erreurs : `anyhow` peu exploité hors
+  `main.rs`/`klipy.rs` ; `app/`/`network/` mélangent `Option`, `std::io::Error` et
+  silences (`let _ = …`). Définir une politique (erreurs typées dans `network`,
+  `anyhow` au bord).
+- [x] 🟢 Documenter la convention de tests `src/tests/*.rs` raccordés par
+  `#[path = …] mod tests;` — **fait (08/08)** : section dédiée dans
+  `docs/07-developpement.md`, avec les deux exceptions assumées (modules à tests
+  courts en inline, `tests/p2p_e2e.rs` externe).
 
 ## 3. Architecture
 
-- [ ] 🟠 `ui/events.rs::process_events` mélange trois responsabilités : réception réseau,
-  mutation d'état, et politique de notification (sons, tray, focus). Extraire la logique
-  métier (ACK/receipts, groupes) dans `app/` pour la tester sans UI.
-- [ ] 🟠 Le mutex global `AppState` est verrouillé/déverrouillé plusieurs fois par frame
-  et par événement (avec des `drop(s)`/`relock` manuels dans `events.rs`, source classique
-  de deadlocks à la modification). Envisager : file de commandes vers un unique
-  propriétaire de l'état, ou au minimum documenter l'ordre de verrouillage.
-- [ ] 🟢 `klipy.rs` (API externe) vit à la racine de `src/` à côté de `app/`, `network/`,
-  `ui/` — le déplacer dans un module `services/` ou `net/klipy.rs` pour clarifier les
-  couches.
-- [x] 🟠 `AbcomApp` était un god-struct de **90 champs** — **fait (05/08, P6)** : éclaté
-  en 6 sous-structs (`NetworkChannels`, `EmojiPickerState`, `GifPickerState`,
-  `ComposerState`, `ModalsState`, `MediaState`), 46 champs restants à plat. Un commit
-  par sous-struct, migration mécanique des ~280 sites d'accès au total. Préalable posé
-  pour le découpage des gros fichiers UI (toujours ouvert ci-dessus).
-- [ ] 🟠 `network/sender.rs` : **sept boucles d'émission quasi identiques**
-  (`run_sender`, `_group`, `_typing`, `_read_receipts`, `_ack`, `_avatar`, `_reaction`)
-  + sept canaux et sept spawns dans `main.rs`. Une seule file générique
-  `(SocketAddr, NetworkPacket)` supprimerait ~100 lignes et 6 canaux.
-- [ ] 🟠 `ui::run` prend **14 paramètres positionnels** (`main.rs:149-164`) — les
-  regrouper dans un struct de contexte (erreur de câblage silencieuse garantie sinon).
-- [ ] 🟢 Regrouper l'intégration bureau dans un module `platform/` : aujourd'hui
-  `notify.rs` et `autostart.rs` vivent à la racine de `src/`, `tray.rs` dans `ui/`,
-  et la bascule Dock macOS dans `ui/mod.rs`.
-- [ ] 🟢 `main.rs` parse `.env` à la main (`split_once('=')`) : pas de guillemets, pas
-  d'échappement, et `set_var` sera `unsafe` en édition 2024. Utiliser `dotenvy` ou
-  restreindre explicitement aux deux clés attendues (`ABCOM_KLIPY_API_KEY`,
-  `ABCOM_PASSPHRASE`).
+- [ ] 🟠 `ui/events.rs::process_events` mélange encore réception réseau, mutation
+  d'état et politique de notification (sons, tray, focus). `app/conversation.rs`
+  et `ui/outbound.rs` ont sorti une partie de la logique d'envoi ; la partie
+  réception/notification reste à extraire pour être testable sans UI.
+- [ ] 🟠 Le mutex global `AppState` est verrouillé/déverrouillé plusieurs fois par
+  frame et par événement (`drop(s)`/`relock` manuels dans `events.rs`). Envisager :
+  file de commandes vers un unique propriétaire de l'état, ou au minimum
+  documenter l'ordre de verrouillage.
+- [ ] 🟢 `klipy.rs` (API externe) vit à la racine de `src/` à côté de `app/`,
+  `network/`, `ui/` — le déplacer dans `services/` pour clarifier les couches.
+- [x] 🟠 `AbcomApp` god-struct de 90 champs — **fait (05/08, P6)** : 6 sous-structs.
+- [x] 🟠 `network/sender.rs` : sept boucles d'émission quasi identiques —
+  **fait (07/08)** : une seule file générique `NetworkSendRequest` → un worker par
+  pair → `ConnectionPool` (54 lignes au lieu de ~150, six canaux supprimés).
+- [x] 🟠 `ui::run` prenait 14 paramètres positionnels — **fait (07/08)** :
+  regroupés dans `ui::UiRuntimeChannels`.
+- [ ] 🟢 Regrouper l'intégration bureau dans un module `platform/` : `notify.rs`
+  et `autostart.rs` à la racine de `src/`, `tray.rs` dans `ui/`, bascule Dock
+  macOS dans `ui/mod.rs`.
+- [x] 🟢 `main.rs` parsait `.env` à la main — **fait (08/08)** : `parse_dotenv`
+  restreint aux trois clés attendues (`ABCOM_KLIPY_API_KEY`, `ABCOM_PASSPHRASE`,
+  `ABCOM_INSTANCE`), gère guillemets et `export`, l'environnement existant prime,
+  fonction pure testée (2 tests). Le `set_var` reste commenté « appelé avant tout
+  spawn » — à revoir au passage en édition 2024 (`unsafe`).
 
 ## 4. Protocole & robustesse réseau
 
-- [ ] 🔴 **Le retry des messages est un stub** : `ui/events.rs::periodic_tasks` fait
-  seulement `eprintln!("[ui] Retry message delivery …")` — les messages 1-à-1 non ACKés
-  ne sont **jamais réémis** malgré `PendingMessage.retry_count` et le backoff calculé
-  dans `app/receipts.rs::get_retry_messages`. Brancher la réémission réelle via le pool.
-- [ ] 🔴 Pas de **versionnage du protocole** : `NetworkPacket` est un JSON sans champ de
-  version ni de capacités. Deux builds différents sur le même LAN peuvent se parler sans
-  le savoir. Ajouter `proto_version` au Hello et une politique de compatibilité.
-- [ ] 🟠 **17 `try_send`** côté UI : quand un canal (256 slots) est plein, le paquet est
-  silencieusement jeté (messages, ACKs, réactions…). Au minimum compter et logger les
-  pertes ; idéalement, back-pressure ou canal illimité pour les paquets critiques.
-- [ ] 🟠 Accusés livré/lu **non persistés** (`read_receipts`/`delivered_receipts` en
-  mémoire seule) : au redémarrage, coches et détail « … » repartent de zéro alors que
-  l'historique des messages, lui, est persisté. Persister (table dédiée) comme le faisait
-  la branche AR avec `receipts.json`.
-- [ ] 🟠 Pas de **file d'attente hors-ligne** : un message envoyé à un pair hors ligne
-  (ou un membre de salon absent) est perdu — seul le 1-à-1 a un `pending` (sans retry,
-  cf. ci-dessus). Définir la sémantique voulue (stocker et réémettre à la reconnexion ?)
-  et l'implémenter ou la documenter.
-- [ ] 🟠 Le garde-fou de taille à l'envoi (`input_bar.rs::chat_wire_size`, ajouté le
-  07/07) ne couvre que les messages de chat : un avatar volumineux ou un événement de
-  groupe énorme peut encore dépasser `MAX_LOGICAL_MESSAGE` et faire couper la connexion
-  par le récepteur. Déplacer la vérification dans `pool.send` (générique à tout paquet).
-- [ ] 🟠 `ConnectionPool` n'a **aucune éviction ni limite** (`network/pool.rs`) : une
-  entrée par pair jamais nettoyée, une tâche d'écriture par connexion qui ne se termine
-  qu'en cas d'erreur d'envoi. Sur un LAN mouvant (pairs qui changent d'IP), la map et les
-  tâches s'accumulent. Ajouter un TTL/éviction sur `PeerDisconnected`.
-- [ ] 🟠 `ConnectionPool::connect` **prend un verrou puis fait un handshake réseau sous
-  ce verrou** dans `dial_and_send` (`self.conns.lock().await` autour de `connect`) : deux
-  émissions concurrentes vers le même pair sérialisent un handshake complet, et une
-  émission vers un pair lent bloque l'insertion des autres. Dialer hors verrou, ne
-  verrouiller que pour insérer.
-- [ ] 🟢 La découverte lit dans un **buffer fixe de 1 024 octets** (`discovery.rs:75`) :
-  un `DiscoveryPacket` (username libre + clé hex 64 + port) tient largement, mais un
-  username très long le tronquerait silencieusement (JSON invalide → paquet ignoré).
-  Borner la longueur du username à la source.
-- [ ] 🟠 Les accusés de lecture différés sont **réémis pour toute la fenêtre de
-  messages** à chaque ouverture de conversation (`ui/mod.rs::
-  send_read_receipts_for_conversation`, 05-07/07) : jusqu'à 2 000 messages × N membres
-  de salon à chaque clic de sidebar. Mémoriser le dernier hash accusé par conversation
-  et n'émettre que le delta.
-- [ ] 🟢 Documenter les constantes de découverte (`discovery.rs` : multicast
-  `239.255.42.98`, broadcast 3 s, timeout 6 s) et leur impact batterie/réseau dans
-  `docs/03-reseau-et-securite.md`.
+- [x] 🔴 **Retry des messages** — **fait (07/08)** : `periodic_tasks` réémet
+  réellement via le pool (backoff de `get_retry_messages`, `mark_retry_enqueued`,
+  notification à l'utilisateur après `MAX_RETRY_COUNT`).
+- [x] 🔴 **Versionnage du protocole** — **fait (07/08)** : `Hello` porte
+  `protocol_version` + `capabilities`, `validate_hello` rejette explicitement une
+  version incompatible (`protocol::PROTOCOL_VERSION`).
+- [x] 🟠 **`try_send` silencieux** — **fait (08/08)** : chaque perte est comptée
+  (`metrics::record_packet_dropped`) et journalisée ; les diffusions réservent
+  toutes leurs places avant d'émettre (`ui/outbound.rs::queue_chat_requests`, pas
+  de diffusion à moitié envoyée) ; le compteur est visible dans Paramètres →
+  Général → Diagnostic.
+- [x] 🟠 Accusés livré/lu **non persistés** — **fait (08/08)** : table `receipts`
+  (hash, pair, nature), écriture idempotente, rechargement au démarrage et purge
+  des accusés orphelins à l'ouverture de la base. Testé (aller-retour + purge).
+- [ ] 🟠 Pas de **file d'attente hors-ligne** : un message vers un pair hors ligne
+  (ou un membre de salon absent) est perdu — seul le 1-à-1 a un `pending` avec
+  retry, borné à la session. Définir la sémantique voulue (stocker et réémettre à
+  la reconnexion ?) et l'implémenter ou la documenter.
+- [x] 🟠 Garde-fou de taille **générique** — **fait (08/08)** : déplacé dans
+  `ConnectionPool::send`, qui sérialise **une seule fois** et refuse tout paquet
+  au-delà de `MAX_LOGICAL_MESSAGE` (avatar volumineux, événement de groupe énorme)
+  avant qu'il ne fasse couper la connexion par le récepteur.
+- [x] 🟠 `ConnectionPool` sans éviction — **fait (08/08)** : balayage périodique
+  des connexions fermées (`sweep_closed`, 60 s) **et** libération ciblée quand la
+  découverte déclare un pair expiré (`drop_peer`, câblé depuis `discovery::run`).
+- [x] 🟠 `ConnectionPool::connect` faisait le handshake **sous le verrou** —
+  **fait (07/08)** : `dial_and_send` dialogue hors verrou et ne verrouille que
+  pour insérer.
+- [x] 🟢 Découverte : buffer fixe de 1 024 octets — **résolu à la source (07/08)** :
+  `protocol::valid_username` borne le pseudo à 64 caractères, à l'émission comme à
+  la réception ; l'annonce ne peut plus être tronquée.
+- [x] 🟠 Accusés de lecture différés réémis **pour toute la fenêtre** à chaque
+  ouverture de conversation — **fait (08/08)** : mémo par destinataire
+  (`read_receipts_sent`), seul le delta part. Le mémo d'un pair est vidé à sa
+  déconnexion, pour qu'il reçoive à la reconnexion ce qu'il a manqué.
+- [x] 🟢 Documenter les constantes de découverte — **fait (08/08)** : tableau dans
+  `docs/03-reseau-et-securite.md` (multicast, intervalle, timeout, buffer) avec
+  l'effet de chaque réglage sur la batterie et la fiabilité de détection.
 
 ## 5. Sécurité
 
-- [ ] 🔴 **Usurpation d'identité applicative** : après le handshake Noise et le Hello,
-  `network/server.rs::dispatch_packet` ne vérifie jamais que le champ `from` des paquets
-  (`ChatMessage`, `ReadReceipt`, `MessageAck`, `ReactionEvent`, `TypingIndicator`,
-  `AvatarAnnounce`) correspond au username authentifié de la connexion. Tout pair
-  authentifié peut se faire passer pour n'importe qui (messages, réactions, accusés).
-  Passer le `peer` du Hello à `dispatch_packet` et rejeter les paquets dont
-  `from != peer`. Idem côté média : `stream_in` authentifie le pair (TOFU) mais ne
-  recoupe pas `header.from` avec ce pair (`network/media_stream.rs`).
-- [ ] 🔴 **Le username n'est pas lié à la clé au niveau découverte** : `DiscoveryPacket`
-  annonce `username` + `pubkey` en clair, sans preuve de possession. Un pair malveillant
-  peut annoncer le username d'un autre avec sa propre clé ; à la **première** rencontre
-  (avant tout épinglage TOFU) la victime épingle la mauvaise clé. Le TOFU protège les
-  rencontres suivantes, pas la première. Documenter cette limite et envisager une
-  signature de l'annonce par la clé privée.
-- [x] 🔴 **Traversée de répertoire à la réception de média** — ✅ **Résolu (PR #28).**
-  Le récepteur valide désormais l'`id` via `is_safe_media_id` avant tout écriture
-  (`network/media_stream.rs:246`) et rejette tout composant de chemin non simple
-  (`.`, `..`, séparateurs). *(Constat initial : `media_dir.join(&header.media.id)` était
-  écrit sans ré-assainir un `header` venu brut du réseau.)*
-- [ ] 🟠 TOFU : le changement de clé déclenche bien alerte + refus (`Trust::Mismatch`),
-  mais il n'existe **aucun flux de ré-appairage légitime** (réinstallation d'un pair) —
-  l'utilisateur est bloqué sans passer par la suppression manuelle des données. Ajouter
-  une action « faire confiance à la nouvelle clé » explicite dans l'UI.
-- [ ] 🟠 Historique **en clair au repos** : `abcom.db` (messages, avatars) n'est pas
-  chiffré. Documenter ce choix dans le modèle de menace, et évaluer SQLCipher
-  (rusqlite feature `sqlcipher`) en option.
-- [ ] 🟠 `cargo audit` tourne déjà en CI **main** (réinstallé à chaque run, sans cache),
-  mais pas sur **dev** : l'étendre aux PR vers dev, mettre l'outil en cache, et ajouter
-  `cargo deny` (licences + doublons de crates).
-- [ ] 🟠 Le collage trop long écrit le `.txt` dans `std::env::temp_dir()`
-  (`input_bar.rs::stash_overflow_paste`, ajouté le 07/07) : lisible par les autres
-  utilisateurs de la machine et jamais nettoyé. L'écrire dans le répertoire de données
-  de l'app (0600) et le supprimer après envoi.
-- [ ] 🟢 `identity.key` en 0600 ✓ — vérifier l'équivalent Windows (ACL) où
-  `from_mode(0o600)` est sans effet.
-- [ ] 🟢 Documenter le modèle de menace de la passphrase de salon (PSK `XXpsk3`) :
-  qui la connaît, comment elle se distribue, ce qu'elle protège réellement.
-- [ ] 🟢 Les messages sont identifiés par un hash **FNV-1a non cryptographique**
-  (`app/receipts.rs::message_hash`) : réactions, réponses et accusés d'un pair peuvent
-  cibler un hash forgé/deviné. Évaluer un identifiant aléatoire porté par le message
-  (le champ `nonce` existe déjà) plutôt qu'un hash dérivé du contenu.
+- [x] 🔴 **Usurpation d'identité applicative** — ✅ **résolu (07/08, S2)** :
+  `server.rs::packet_matches_peer` recoupe le champ `from` (et `to`) de **chaque**
+  type de paquet avec le pair authentifié par la session, et rejette sinon
+  (perte comptée). Côté média, `media_stream.rs` vérifie
+  `header.from == authenticated_peer` avant tout traitement.
+- [ ] 🔴 **Le username n'est pas lié à la clé au niveau découverte (S3)** :
+  `DiscoveryPacket` annonce `username` + `pubkey` en clair, sans preuve de
+  possession. À la **première** rencontre (avant tout épinglage TOFU), la victime
+  peut épingler la mauvaise clé. **Documenté (08/08)** dans le modèle de menace
+  comme limite explicite, avec la parade (vérification d'empreinte hors-bande,
+  passphrase de salon). **Reste à faire** : signer l'annonce avec la clé privée
+  pour fermer réellement le trou.
+- [x] 🔴 **Traversée de répertoire à la réception de média** — ✅ **résolu (PR #28)** :
+  `is_safe_media_id` valide l'`id` avant toute écriture.
+- [x] 🟠 TOFU : **aucun flux de ré-appairage légitime** — **fait (08/08)** :
+  `TrustStore::forget()` désépingle (mémoire + SQLite via
+  `StorageCmd::DeletePeerKey`), déclenché par une modale explicite « Faire
+  confiance à la nouvelle clé » qui affiche le risque d'usurpation. La connexion
+  reste refusée tant que l'utilisateur n'a pas tranché. *(La doc promettait déjà
+  cette action alors qu'elle n'existait pas — l'écart est refermé.)*
+- [x] 🟠 Historique **en clair au repos** — **documenté (08/08)** : périmètre exact
+  (`abcom.db`, `media/`, `scratch/`), ce qui est protégé (autres comptes de la
+  machine) et ce qui ne l'est pas (accès disque, sauvegardes). **Reste à évaluer** :
+  SQLCipher (`rusqlite` feature `sqlcipher`) en option.
+- [x] 🟠 `cargo audit` seulement sur `main`, réinstallé à chaque run — **fait
+  (08/08)** : job `supply-chain` sur **`dev` et `main`**, binaires pré-compilés
+  (`taiki-e/install-action`, plus de `cargo install`), et **`cargo deny`** ajouté
+  (licences, sources, doublons de crates) avec [`deny.toml`](deny.toml).
+- [x] 🟠 Collage trop long écrit dans `std::env::temp_dir()` — **fait (08/08)** :
+  écrit dans `<données>/scratch/` (dossier 0700, fichier 0600), purgé après 24 h.
+  La suppression immédiate après envoi n'est pas possible — le transfert média lit
+  le fichier de façon asynchrone — d'où la purge par ancienneté.
+- [x] 🟢 `identity.key` en 0600 : équivalent Windows — **fait (08/08)** :
+  `restrict_to_owner()` applique 0600 sur Unix et réécrit l'ACL sous Windows
+  (`icacls /inheritance:r /grant:r <user>:F`), échec journalisé sans être fatal.
+- [x] 🟢 Documenter le modèle de menace de la passphrase de salon (PSK `XXpsk3`) —
+  **fait (08/08)** : tableau dédié (qui la connaît, distribution, ce qu'elle
+  protège, ce qu'elle **ne** protège pas, conséquence d'une fuite).
+- [ ] 🟢 Messages identifiés par un hash **FNV-1a non cryptographique**
+  (`app/receipts.rs::message_hash`) : un pair authentifié peut cibler un hash
+  forgé. **Documenté (08/08)** comme limite ; évaluer un identifiant aléatoire
+  porté par le message (le champ `nonce` existe déjà).
 
 ## 6. Persistance & données
 
-- [ ] 🟠 Migration JSON → SQLite : les fichiers `*.json.bak` (et
-  `messages.json.bak.<epoch>`) restent indéfiniment dans le répertoire de données.
-  Ajouter une politique de nettoyage (suppression après N versions/jours) et une note
-  de migration dans la doc.
+- [x] 🟠 Sauvegardes de migration JSON conservées indéfiniment — **fait (08/08)** :
+  `storage::purge_legacy_backups` supprime `*.json.bak` (et
+  `messages.json.bak.<epoch>`) au-delà de 30 jours, à chaque ouverture de la base.
+  Testé.
 - [ ] 🟠 `read_counts` compte des **nombres de messages lus** : après
-  `clear_conversation_history` ou la purge du ring-buffer, le compte peut désigner un
-  ensemble différent de messages (bord de fenêtre). Baser le « lu jusqu'à » sur un
-  rowid/hash de dernier message lu, plus robuste.
-- [ ] 🟢 Aucune maintenance de la base : ni `VACUUM` périodique, ni contrôle de taille
-  (l'historique croît sans limite). Ajouter une commande de compaction et,
+  `clear_conversation_history` ou la purge du ring-buffer, le compte peut désigner
+  un ensemble différent de messages. Baser le « lu jusqu'à » sur un rowid/hash de
+  dernier message lu.
+- [ ] 🟢 Aucune maintenance de la base : ni `VACUUM` périodique, ni contrôle de
+  taille (l'historique croît sans limite). Ajouter une commande de compaction et,
   optionnellement, une rétention configurable.
-- [ ] 🟢 Pas d'export/sauvegarde de l'historique (portabilité) : une commande
-  d'export JSON/texte par conversation serait cohérente avec l'esprit local-first.
+- [ ] 🟢 Pas d'export/sauvegarde de l'historique : une commande d'export
+  JSON/texte par conversation serait cohérente avec l'esprit local-first.
 
 ## 7. Performance
 
 ### 7a. Empreinte mémoire (mesurée le 07/07, macOS, `vmmap`/`ps`)
 
 > **Constat : ~92-98 Mo RSS par instance, 132 Mo d'empreinte physique**, même au
-> repos (fenêtre visible, aucune conversation active). Répartition réelle mesurée sur
-> une instance (`vmmap --summary`) :
+> repos. Répartition mesurée (`vmmap --summary`) :
 >
 > | Poste | Taille | Nature |
 > |-------|--------|--------|
@@ -246,207 +238,222 @@ réel, encore un `eprintln!` stub à `events.rs:418`), R2/R3/R4 et toute la dett
 >
 > Le poste dominant n'est pas l'état applicatif (léger) mais **la pile graphique**.
 
-- [ ] 🔴 **Passer le renderer de Glow (OpenGL) à wgpu (Metal natif)** — le plus gros
-  levier mémoire *et* pérennité. OpenGL est déprécié sur macOS et émulé au-dessus de
-  Metal (le binaire lie encore `OpenGL.framework`) : ~42 Mo d'`IOAccelerator` pour une
-  UI 2D triviale. Le seul lien dur à Glow dans le code est **un paramètre inutilisé**
-  (`ui/mod.rs:704 on_exit(_gl: Option<&eframe::glow::Context>)`) ; le reste est
-  `renderer: Renderer::Glow` (`ui/mod.rs:795`) et la feature eframe. Migration à faible
-  risque, gain attendu sur la baseline GPU et le rendu, et aligne l'app sur le backend
-  supporté de macOS. À valider par mesure après bascule.
-- [ ] 🟠 **Décoder les emojis paresseusement**, par catégorie et à la demande : les 323
-  PNG sont décodés et téléversés en GPU **au lancement** (`ui/mod.rs::spawn_emoji_decoder`)
-  même si l'utilisateur n'ouvre jamais le sélecteur — ~6,7 Mo GPU + 6,5 Mo de
-  `ColorImage` CPU + latence de démarrage. Ne décoder que les emojis réellement présents
-  dans le fil visible, et le reste à l'ouverture du picker (par onglet).
-- [ ] 🟠 **Rendre la RAM au système sur repli tray** : `hide_to_tray` libère déjà les
-  textures (bien), mais le RSS ne baisse pas — l'allocateur système ne rend pas les
-  pages à l'OS (24 % de fragmentation constatée). Adopter **mimalloc** (ou jemalloc) en
-  allocateur global et déclencher un *purge/decommit* explicite sur `hide_to_tray` :
-  c'est la seule façon de faire réellement chuter la mémoire de l'app en arrière-plan,
-  qui est l'objectif prioritaire.
-- [ ] 🟠 Sur repli tray, envisager de **libérer aussi le contexte graphique** (ou réduire
-  la fentere à 1×1 / la détruire) plutôt que de garder ~42 Mo d'`IOAccelerator` alloués
-  pendant que l'app ne fait que veiller le réseau — à arbitrer contre le coût de
-  reconstruction à la réouverture.
-- [ ] 🟢 Runtime tokio en **2 worker threads** (`main.rs:56`) pour une charge purement
-  I/O : un runtime `current_thread` (ou 1 worker) suffirait probablement et économise
-  des piles de threads — à mesurer.
+- [x] 🔴 **Renderer Glow (OpenGL) → wgpu (Metal natif)** — **fait et mesuré
+  (08/08)**. `eframe` est déclaré `default-features = false` pour retirer `glow`
+  de l'arbre de dépendances (vérifiable : `cargo tree | grep -i glow` ne renvoie
+  plus rien). Mesures A/B au repos, même machine, même build :
+
+  | | Glow | wgpu | wgpu + mimalloc |
+  |---|---|---|---|
+  | `IOAccelerator (graphics)` | 29,6 Mo | 6,2 Mo | **3,9 Mo** |
+  | RSS | 155,8 Mo | 146,0 Mo | **138,9 Mo** |
+  | Empreinte physique (pic) | 132,4 Mo | 110,8 Mo | **110,6 Mo** |
+- [ ] 🟠 **Décoder les emojis paresseusement** : les 323 PNG sont décodés et
+  téléversés en GPU **au lancement** (`spawn_emoji_decoder`) même si le sélecteur
+  n'est jamais ouvert — ~6,7 Mo GPU + 6,5 Mo CPU + latence de démarrage.
+  *Non fait délibérément (08/08)* : le couple `emoji_map: HashMap<String, usize>`
+  + `emoji_textures: &[(String, TextureHandle)]` traverse une vingtaine de sites
+  de rendu en emprunt partagé ; le décodage à la demande impose une cache à
+  mutabilité intérieure et la réécriture de ces signatures. Le rendu des emojis
+  est très visible : à faire dans une passe dédiée, avec vérification à l'écran.
+- [x] 🟠 **Rendre la RAM au système sur repli tray** — **fait (08/08)** :
+  mimalloc en allocateur global + `mi_collect(true)` appelé explicitement dans
+  `hide_to_tray`. Sans cet appel, l'allocateur gardait les pages et le RSS ne
+  bougeait pas malgré la libération des textures.
+- [ ] 🟠 Sur repli tray, envisager de **libérer aussi le contexte graphique**
+  plutôt que de garder ~42 Mo d'`IOAccelerator` pendant que l'app veille le réseau.
+- [ ] 🟢 Runtime tokio en **2 worker threads** (`main.rs`) pour une charge purement
+  I/O : un runtime `current_thread` suffirait probablement — à mesurer.
 
 ### 7b. Chemins chauds & rafraîchissement
 
-- [ ] 🟠 `composer/mod.rs::composer_caret_positions` reconstruit à **chaque frame** un
-  `Vec<Pos2>` en itérant tous les caractères de la saisie (avec 1-2 lookups HashMap par
-  caractère), même sans changement — et deux fois quand la scrollbar apparaît. Memoïser
-  par (texte, largeur) comme le fil le fait avec son cache.
-- [ ] 🟠 `unread_count`/`mark_conversation_read` re-scannent tous les messages en mémoire
-  à chaque rafraîchissement de sidebar ; avec 2 000 messages × N conversations ça reste
-  du O(n·m) évitable → compteurs incrémentaux mis à jour dans `add_message`.
-- [ ] 🟢 Les seuils du repli des longs messages (`snapshot.rs::COLLAPSE_*`) et le plafond
-  du composeur (`composer::MAX_INPUT_CHARS`) sont fondés sur des mesures du 07/07
-  (~14 ms de layout pour 100 k caractères) — consigner ces mesures dans la doc et les
-  re-vérifier à chaque montée de version egui.
-- [ ] 🟢 Le cache de textures médias (`media_textures`, `avatar_textures`) n'a pas de
-  borne d'éviction explicite hors GIFs — vérifier le comportement sur un long historique
-  d'images.
-- [ ] 🟠 Le thread de stockage traite les commandes **une par une, sans transaction de
-  lot** (`app/storage.rs::run`) : une rafale (import, réception de salon actif) fait un
-  commit WAL par message. Regrouper les `InsertMessage` en attente dans une transaction
-  quand la file en contient plusieurs (`try_recv` en boucle courte). *(WAL +
-  `synchronous=NORMAL` + `prepare_cached` déjà en place — c'est le lot qui manque.)*
-- [ ] 🟢 **Rafraîchissement intelligent — déjà solide, à préserver.** L'`update`
-  court-circuite tout rendu quand la fenêtre est cachée/minimisée (`ui/mod.rs:568`), les
-  caches dérivés (fil, sidebar) ne se reconstruisent que sur changement de génération
-  d'état, et les GIFs sortis du fil libèrent leurs frames. C'est le bon modèle. Point de
-  vigilance : `request_repaint` est appelé depuis ~14 endroits, dont certains dans la
-  boucle de rendu (survol, flash de highlight, décodage emoji en attente avec
-  `request_repaint_after(50ms)`) — vérifier qu'aucun ne maintient un repaint continu à
-  60 fps hors animation réelle (coût CPU/batterie sur fenêtre visible mais inactive).
-- [ ] 🟢 egui recalcule le layout de tout le fil visible à chaque frame de repaint : le
-  cache `ChatCache` évite le re-parse markdown mais pas le re-layout galley d'egui.
-  Vérifier que `stick_to_bottom` + fenêtrage (`chat_visible_count`) borne bien le nombre
-  de lignes réellement mises en page, y compris sur un très long historique déroulé.
+- [x] 🟠 `composer_caret_positions` reconstruit à chaque frame — **fait (08/08)** :
+  mémoïsation par (texte, taille d'emoji, largeur, densité de pixels) dans la
+  mémoire d'egui, fenêtre glissante de 4 mesures (la frame en demande deux, le
+  clic/glisser une troisième). Signature testée.
+- [x] 🟠 `unread_count`/`mark_conversation_read` re-scannaient tous les messages
+  pour chaque conversation — **fait (08/08)** : cache **dérivé** (un seul parcours
+  par génération de contenu) plutôt que des compteurs maintenus à la main, qui
+  auraient pu se désynchroniser à la purge du ring-buffer. Testé.
+- [ ] 🟢 Consigner dans la doc les mesures qui fondent les seuils de repli
+  (`snapshot.rs::COLLAPSE_*`, `composer::MAX_INPUT_CHARS`) et les re-vérifier à
+  chaque montée de version egui.
+- [ ] 🟢 Le cache de textures médias n'a pas de borne d'éviction explicite hors
+  GIFs — vérifier le comportement sur un long historique d'images.
+- [x] 🟠 Thread de stockage : une commande à la fois, **un commit WAL par message**
+  — **fait (08/08)** : les `InsertMessage` en attente sont drainés (`try_recv`) et
+  appliqués dans **une seule transaction** (lot borné à 256). L'ordre des autres
+  commandes est préservé : celle qui interrompt le lot est différée, jamais
+  réordonnée. Testé.
+- [ ] 🟢 **Rafraîchissement intelligent — déjà solide, à préserver.** `update`
+  court-circuite tout rendu fenêtre cachée, les caches dérivés ne se
+  reconstruisent que sur changement de génération. Point de vigilance :
+  `request_repaint` est appelé depuis ~14 endroits — vérifier qu'aucun ne
+  maintient un repaint continu à 60 fps hors animation réelle.
+- [ ] 🟢 egui recalcule le layout du fil visible à chaque frame de repaint :
+  vérifier que `stick_to_bottom` + fenêtrage borne bien le nombre de lignes
+  réellement mises en page sur un très long historique déroulé.
 
 ## 8. Tests
 
-- [ ] 🟠 Aucun test **bout-en-bout multi-processus** : `scripts/integration_test.sh`
-  (CI main) vérifie compilation, tests unitaires et présence du binaire, pas un échange
-  réel entre deux instances (découverte → message → ACK → read receipt) — le cœur du
-  produit reste testé à la main via `make run2`. Les briques existent :
-  `test_network_server.rs` sait monter un vrai serveur + client chiffrés.
-- [ ] 🟠 Mesurer la couverture en CI (`cargo llvm-cov`) : 259 tests unitaires passent
-  mais aucune visibilité sur les zones non couvertes (le rendu UI notamment, où vivent
-  beaucoup de régressions récentes : survol, pagination, curseur).
-- [ ] 🟢 Ajouter des bancs `criterion` pour les chemins chauds mesurés à la main cette
-  semaine (parse markdown, `message_hash`, reconstruction du snapshot) afin d'objectiver
-  les régressions de perf.
-- [ ] 🟢 Tests de propriété (proptest) sur `message_hash` (stabilité inter-versions,
-  collisions nonce) et sur les opérations de curseur du composeur (invariants UTF-8) —
-  les crashs récents (frontières de sélection) auraient été attrapés.
+- [x] 🟠 Aucun test **bout-en-bout multi-processus** — **fait (07/08)** :
+  `tests/p2p_e2e.rs` monte deux piles réseau complètes et vérifie l'échange
+  authentifié de bout en bout (le crate est exposé en lib pour cela).
+- [ ] 🟠 Mesurer la couverture en CI (`cargo llvm-cov`) : 295 tests passent mais
+  aucune visibilité sur les zones non couvertes — le rendu UI notamment, où vivent
+  la plupart des régressions récentes (survol, pagination, curseur).
+- [ ] 🟢 Ajouter des bancs `criterion` pour les chemins chauds (parse markdown,
+  `message_hash`, reconstruction du snapshot).
+- [ ] 🟢 Tests de propriété (proptest) sur `message_hash` et sur les opérations de
+  curseur du composeur (invariants UTF-8).
 
 ## 9. CI/CD & outillage
 
-- [ ] 🟠 La CI (fmt, clippy `-D warnings`, build, tests) ne tourne que sur
-  `ubuntu-latest` alors que les cibles réelles sont macOS et Windows (code
-  spécifique : `objc2`, tray, rodio, ACL). Ajouter une matrice `macos-latest` /
-  `windows-latest` au moins sur `main`.
-- [ ] 🟠 Pas de pipeline de **release** : aucun binaire publié sur tag, distribution
-  uniquement via `scripts/build-and-distribute.sh` manuel. Automatiser (GitHub Release +
-  artefacts signés par OS).
-- [ ] 🟢 Fixer une MSRV (rust-version dans `Cargo.toml`) et la tester en CI.
-- [ ] 🟢 Finaliser les githooks partagés (branche `task/shared-githooks` restée ouverte)
-  pour aligner le hook local `clippy` (commit `fix/hook-add-clippy`) sur la CI.
-- [ ] 🟢 `cargo outdated` périodique (workflow mensuel) : `dirs 5`, `rodio 0.19`,
-  `egui 0.31`… — définir une politique de mise à jour plutôt que de subir les montées
-  de version.
+- [x] 🟠 CI seulement sur `ubuntu-latest` — **fait (07/08)** : job `platform-check`
+  (`macos-latest`, `windows-latest`) sur `dev` **et** `main`.
+- [x] 🟠 Pas de pipeline de **release** — **fait (08/08)** :
+  [`release.yml`](.github/workflows/release.yml) construit les trois cibles sur tag
+  `v*`, publie une GitHub Release avec les archives et `SHA256SUMS.txt`, et marque
+  les préversions comme telles. **La signature macOS reste absente** (aucun
+  certificat dans les secrets) : la limite est écrite en tête du workflow et dans
+  la note de release.
+- [x] 🟢 Fixer une MSRV et la tester en CI — **fait (08/08)** :
+  `rust-version = "1.95"` + job `msrv` qui lit la valeur depuis `Cargo.toml`.
+  **À noter** : la contrainte ne vient pas du code d'abcom mais du build script de
+  `libsqlite3-sys` (via `rusqlite` 0.40), qui échoue dès 1.94 — la MSRV est donc
+  aujourd'hui égale au dernier stable, et pourra redescendre.
+- [ ] 🟢 Finaliser les githooks partagés (branche `task/shared-githooks` restée
+  ouverte) pour aligner le hook local `clippy` sur la CI.
+- [x] 🟢 `cargo outdated` périodique — **fait (08/08)** :
+  [`dependencies.yml`](.github/workflows/dependencies.yml), mensuel, rapport
+  `cargo outdated` + `cargo audit` sans blocage.
 
 ## 10. Documentation
 
-- [ ] 🟠 Mettre à jour `docs/05-fonctionnalites.md` **et la section « Non publié » du
-  CHANGELOG** avec les changements de la semaine : accusés nominatifs de salon (« … »),
-  rendu multiligne, plafond de saisie et compteur, repli des longs messages,
-  collage → `.txt`, seed de démo.
-- [ ] 🟠 `docs/08-historique-et-audits.md` référence l'audit du 27/06 — y ajouter le
-  présent audit et archiver l'ancien processus (`AVANCEMENT.md` a une règle anti-conflit
-  spécifique, la rappeler dans le README de `docs/`).
-- [ ] 🟢 README : ajouter badges CI, capture d'écran à jour (la barre de saisie a changé),
-  et un « Quick start » 3 lignes (`make run2`).
-- [ ] 🟢 Documenter le format du protocole (paquets JSON, handshake Noise XX/XXpsk3,
-  framing 64 Ko, `MAX_LOGICAL_MESSAGE`) dans `docs/03-reseau-et-securite.md` — la doc
-  actuelle décrit l'intention, pas le format binaire exact.
-- [ ] 🟢 Ajouter un `CONTRIBUTING.md` court pointant `docs/git.md` (workflow de branches
-  déjà rédigé) et la convention de tests.
+- [x] 🟠 Mettre à jour `docs/05-fonctionnalites.md` et le CHANGELOG — **fait
+  (07-08/08)** : `1.0.0-beta.1` publiée, section « Non publié » alimentée.
+- [ ] 🟠 `docs/08-historique-et-audits.md` : y ajouter la présente passe (08/08) et
+  archiver l'ancien processus.
+- [ ] 🟢 README : badges CI, capture d'écran à jour, « Quick start » 3 lignes.
+- [ ] 🟢 Documenter le format exact du protocole (paquets JSON, framing 64 Ko,
+  `MAX_LOGICAL_MESSAGE`) dans `docs/03-reseau-et-securite.md` — la doc décrit
+  l'intention et les constantes, pas encore le format binaire complet.
+- [ ] 🟢 Ajouter un `CONTRIBUTING.md` court pointant le workflow de branches et la
+  convention de tests (désormais documentée dans `07-developpement.md`).
+- [x] 🔴 **Incohérence de licence** — **tranchée (08/08)** : le projet est sous
+  **AGPL-3.0**. `LICENSE` (texte intégral de la GNU AGPL v3) et l'onglet Licence
+  de l'application faisaient déjà foi ; seul `Cargo.toml` disait `MIT`, il déclare
+  désormais `AGPL-3.0-only`. Ce n'était pas une double licence mais une erreur de
+  métadonnée. `deny.toml` autorise explicitement cette licence pour la crate
+  racine.
 
 ## 11. Distribution & plateforme
 
-- [ ] 🟠 macOS : binaire ni signé ni notarisé — Gatekeeper le bloquera hors de la machine
-  de dev. Documenter la limitation ou intégrer la signature au pipeline de release.
-- [ ] 🟢 Tester réellement `scripts/install-windows.ps1` et `contrib/` (desktop entry
-  Linux) sur les OS cibles ; noter la matrice de support dans le README.
-- [ ] 🟢 `panic = "abort"` en release + absence de logging fichier = crash silencieux
-  chez l'utilisateur : au minimum un hook de panique qui écrit la cause dans le
-  répertoire de données avant d'abandonner.
+- [ ] 🟠 macOS : binaire ni signé ni notarisé — Gatekeeper le bloquera hors de la
+  machine de dev. **Limitation désormais explicite** (en-tête de `release.yml` +
+  note de release) ; l'intégrer réellement au pipeline demande un certificat
+  Developer ID dans les secrets.
+- [ ] 🟢 Tester réellement `scripts/install-windows.ps1` et `contrib/` sur les OS
+  cibles ; noter la matrice de support dans le README.
+- [x] 🟢 `panic = "abort"` en release + absence de logging fichier = crash
+  silencieux — **fait (08/08)** : hook de panique qui écrit
+  `<données>/last-panic.txt` (version, horodatage, cause) avant d'abandonner.
 
 ## 12. UI / UX
 
 - [ ] 🟠 Vérifier le **thème clair** : un sélecteur système/sombre/clair existe
-  (`ui/settings.rs::theme_preference`) mais une grande partie des couleurs du fil, de la
-  sidebar et de la barre de saisie sont codées en dur pour un fond sombre (texte blanc
-  fixe de l'indicateur de frappe, gris 140-160, liseré 96-96-100…).
-- [ ] 🟢 Navigation clavier au-delà du composeur : passer d'une conversation à l'autre
-  (Ctrl+Tab / Cmd+K style), atteindre la recherche d'emoji, fermer les popups à
-  l'Échap de manière homogène.
-- [ ] 🟢 Accessibilité : egui expose AccessKit — vérifier que les boutons peints
-  (icônes maison, « + », coches) portent bien un libellé lisible par lecteur d'écran ;
-  la barre de survol et les popups n'en ont probablement pas.
-- [ ] 🟢 États vides : conversation sans message (« Aucun message »), pair hors ligne,
-  salon vide — harmoniser le ton et proposer une action (« Envoyer le premier
-  message »).
+  mais une grande partie des couleurs du fil, de la sidebar et de la barre de
+  saisie sont codées en dur pour un fond sombre.
+- [ ] 🟢 Navigation clavier au-delà du composeur : passer d'une conversation à
+  l'autre, atteindre la recherche d'emoji, fermer les popups à l'Échap de manière
+  homogène.
+- [ ] 🟢 Accessibilité : vérifier que les boutons peints portent un libellé
+  lisible par lecteur d'écran (AccessKit).
+- [ ] 🟢 États vides : conversation sans message, pair hors ligne, salon vide —
+  harmoniser le ton et proposer une action.
 
 ## 13. Observabilité & robustesse à l'exécution
 
-- [ ] 🔴 **Aucune remontée d'erreur à l'utilisateur pour les échecs réseau** : `pool.rs`
-  et les senders avalent tout en `eprintln!` (`Connexion sécurisée impossible`,
-  `Handshake échoué`…). Sur un binaire release strippé sans console, l'utilisateur ne
-  voit rien — ni « message non parti », ni « pair injoignable ». Relier ces échecs à la
-  bannière de notification déjà présente dans l'UI.
-- [ ] 🟠 **Pas de nettoyage d'arrêt** : `main.rs` termine par `ui::run(...)?; Ok(())` — à
-  la fermeture, `flush_storage` existe mais les tâches tokio et les connexions du pool
-  sont abandonnées brutalement. Vérifier qu'aucune écriture SQLite n'est perdue et
-  fermer proprement (le WAL aide, mais un flush explicite du pool serait plus sûr).
-- [ ] 🟠 Le `TrustStore` utilise `Mutex::lock().unwrap()` (`secure.rs:281`) dans les
-  tâches réseau : une panique côté écriture SQLite empoisonnerait ce verrou et bloquerait
-  toute nouvelle connexion. Même politique anti-empoisonnement que le point §2.
-- [ ] 🟢 Ajouter des métriques de session minimales (messages envoyés/reçus, pairs vus,
-  reconnexions, paquets jetés par `try_send`) accessibles depuis Paramètres — aide au
-  diagnostic sans logging verbeux.
-- [ ] 🟢 Timeouts explicites sur les handshakes sortants (`pool::connect`,
-  `media_stream::connect_secure`) : un pair qui accepte la TCP mais ne répond pas au
-  handshake bloque la tâche indéfiniment (le streaming média a un `DECISION_TIMEOUT`,
-  mais pas le handshake lui-même).
+- [x] 🔴 **Aucune remontée d'erreur à l'utilisateur pour les échecs réseau** —
+  **fait (08/08, R3)** : `AppEvent::SendFailed` remonte du pool jusqu'à la
+  bannière de l'UI (« X : injoignable, message non envoyé »), avec un anti-spam de
+  30 s par pair. Les refus en amont (destinataire hors ligne, file pleine, réseau
+  indisponible) étaient déjà signalés par `ui/outbound.rs`.
+- [x] 🟠 **Pas de nettoyage d'arrêt** — **fait (08/08)** : après le flush SQLite
+  d'`on_exit`, `main` appelle `rt.shutdown_timeout(2 s)` — les tâches réseau
+  finissent leurs écritures en cours au lieu d'être coupées en pleine trame, sans
+  jamais faire attendre l'utilisateur au-delà du délai borné.
+- [x] 🟠 `TrustStore` utilisait `Mutex::lock().unwrap()` — **fait (05/08, P2)** :
+  `lock_safe`, même politique anti-empoisonnement que le reste.
+- [x] 🟢 Métriques de session minimales — **fait (08/08)** : module `metrics`
+  (paquets envoyés / reçus / **jetés** / pairs vus), affiché dans Paramètres →
+  Général → Diagnostic. C'est ce compteur qui rend visibles les pertes `try_send`.
+- [x] 🟢 Timeouts explicites sur les handshakes sortants — **fait (07/08)** :
+  `CONNECT_TIMEOUT`, `HANDSHAKE_TIMEOUT`, `WRITE_TIMEOUT`,
+  `CONNECTION_IDLE_TIMEOUT` côté pool ; `HANDSHAKE_TIMEOUT` et
+  `CONNECTION_IDLE_TIMEOUT` côté serveur.
 
 ---
 
-## Synthèse des chantiers prioritaires (🔴)
+## Synthèse — ce qui reste
 
-**Sécurité — à traiter en premier :**
+**🔴 Ouverts :**
 
-| # | Chantier | Fichiers principaux |
-|---|----------|--------------------|
-| ~~S1~~ | ~~Traversée de répertoire à la réception de média~~ — ✅ **résolu (PR #28)** | `network/media_stream.rs` |
-| S2 | Vérifier `from` == pair authentifié, chat **et** média (anti-usurpation) | `network/server.rs`, `network/media_stream.rs` |
-| S3 | Première rencontre TOFU : username non lié à la clé en découverte | `discovery.rs`, `message/` |
+| # | Chantier | Pourquoi il reste ouvert |
+|---|----------|--------------------------|
+| S3 | Signature de l'annonce de découverte (première rencontre TOFU) | Changement de protocole ; documenté comme limite, parade décrite (empreinte hors-bande, passphrase) |
 
-**Robustesse & fiabilité :**
+**🟠 Ouverts, par ordre de valeur :**
 
-| # | Chantier | Fichiers principaux |
-|---|----------|--------------------|
-| R1 | Implémenter le retry réel des messages non ACKés (aujourd'hui un stub) | `ui/events.rs`, `app/receipts.rs`, `network/pool.rs` |
-| R2 | Versionner le protocole réseau | `message/`, `network/secure.rs` |
-| R3 | Remonter les échecs réseau à l'utilisateur (aujourd'hui `eprintln!` invisible) | `network/pool.rs`, `ui/` |
-| R4 | Politique mutex/panic (55 `lock().unwrap()` + `TrustStore`) | tout `ui/`, `app/mod.rs`, `network/secure.rs` |
+1. Découper `chat_panel.rs` (1 589) / `input_bar.rs` (1 133) / `ui/mod.rs`
+   (1 007) en sous-modules (§2) — **le vrai frein restant** à la maintenabilité.
+2. Sémantique hors-ligne : que faire d'un message envoyé à un pair absent (§4).
+3. Extraire la logique de `process_events` hors de l'UI (§3).
+4. Décodage paresseux des emojis (§7a) — le dernier gros poste mémoire, laissé
+   de côté faute de pouvoir valider le rendu à l'écran dans cette passe.
+5. Montée **egui/eframe 0.31 → 0.36** — voir l'encadré ci-dessous.
+6. i18n centralisée (§2), couverture de tests en CI (§8), thème clair (§12).
 
-**Performance mémoire (~92-98 Mo RSS/instance mesuré) :**
+### Montée egui 0.36 : évaluée, volontairement non appliquée
 
-| # | Chantier | Gain attendu |
-|---|----------|--------------|
-| P1 | Renderer Glow (OpenGL émulé) → wgpu (Metal natif) | baseline GPU (~42 Mo `IOAccelerator`) + pérennité macOS |
-| P2 | Décodage emoji paresseux par catégorie | ~13 Mo (6,7 GPU + 6,5 CPU) + démarrage plus rapide |
-| P3 | Allocateur mimalloc + purge sur repli tray | RAM en arrière-plan **effectivement** rendue à l'OS |
+La tentative a été faite et mesurée : **23 erreurs de compilation** sur 8
+fichiers. Le compte est trompeur — ce ne sont pas des renommages :
 
-**Dette & hygiène :**
+- `eframe::App` change de forme : `update(&mut self, ctx, frame)` disparaît au
+  profit de `ui(&mut self, ui, frame)` (+ `logic()` pour les passes sans rendu) ;
+- `TopBottomPanel`/`SidePanel` fusionnent dans un `Panel` unique qui s'affiche
+  **dans un `Ui`** et non plus depuis le `Context` : toute la racine de l'arbre
+  d'affichage change de nature, et `ctx` est passé en profondeur dans une
+  douzaine de fonctions de rendu ;
+- l'API popups/menus est refondue (`popup_below_widget`, `close_menu`,
+  `toggle_popup` supprimés) — or c'est exactement là que vivent les régressions
+  récentes du projet (barre de survol, sélecteur de réactions) ;
+- divers : `ctx.style()`/`ctx.screen_rect()` retirés, `IMEOutput` gagne des
+  champs, `raw_scroll_delta` disparaît.
 
-| # | Chantier | État |
-|---|----------|------|
-| ~~D1~~ | ~~Logging structuré à la place des 34 `eprintln!`~~ | ✅ **fait (05/08, P3)** |
-| D2 | Nettoyage dépôt (`font 2/`, gitignore, URL repo) | ✅ **fait (05/08, P1)** — `old/` conservé (archive volontaire) ; versionnage Cargo (`0.0.1`) toujours en suspens |
+Ces changements sont **sémantiques, pas syntaxiques** : ils compilent puis se
+voient à l'écran. Les valider demande de reprendre une à une la dizaine de
+surfaces de l'application (fil, barre latérale, composeur, pickers emoji/GIF,
+paramètres, modales, visionneuse). À faire dans une passe dédiée, avec
+validation visuelle — pas en même temps qu'une mise à jour de dépendances.
+
+Toutes les **autres** dépendances sont à jour, y compris sept montées majeures
+(`dirs` 6, `socket2` 0.6, `ehttp` 0.7, `rfd` 0.17, `rodio` 0.22, `resvg` 0.48,
+`objc2` 0.6 / `objc2-*` 0.3).
+
+**✅ Fermés lors des trois passes :** S2, R1, R2, R3, R4, unification des
+expéditeurs, handshake hors verrou, éviction du pool, garde-fou de taille
+générique, delta des accusés de lecture, ré-appairage TOFU, collage hors `/tmp`,
+ACL Windows de la clé, purge des sauvegardes de migration, transactions de lot
+SQLite, persistance des accusés, hook de panique, métriques de session,
+nettoyage d'arrêt, renderer wgpu, mimalloc, mémoïsation du caret, compteurs de
+non-lus dérivés, `cargo audit`/`deny` sur `dev`, MSRV, pipeline de release,
+veille de dépendances, versionnage Cargo, licence, documentation (scripts,
+tests, découverte, modèle de menace, renderer).
 
 ---
 
 *Audit établi en plusieurs passes de vérification, chaque constat recoupé avec le
-code source (métriques recomptées, chemins de fichiers et numéros de ligne
-vérifiés) et, pour la mémoire, avec des mesures réelles (`vmmap`/`ps` sur des
-instances en fonctionnement). Les affirmations infirmées par le code ont été
-retirées ou corrigées en cours de route — p. ex. WAL/`prepare_cached` déjà
-présents côté SQLite, `media_id` assaini à l'émission mais pas à la réception,
-rafraîchissement déjà court-circuité en arrière-plan.*
+code source (métriques recomptées, chemins de fichiers vérifiés) et, pour la
+mémoire, avec des mesures réelles (`vmmap`/`ps`). Les affirmations infirmées par
+le code ont été retirées ou corrigées en cours de route.*

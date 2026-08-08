@@ -1,6 +1,8 @@
 #!/bin/bash
-# Test d'intégration headless : deux pairs établissent une session Noise et
-# échangent un message authentifié sur une vraie socket TCP.
+# integration_test.sh — Test d'intégration headless : deux pairs établissent
+# une session Noise et échangent un message authentifié sur une vraie socket
+# TCP. Exécuté par la CI de `main`.
+# Usage : bash scripts/integration_test.sh  (aucun argument)
 
 set -euo pipefail
 
