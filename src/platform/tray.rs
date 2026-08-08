@@ -32,7 +32,7 @@ static PENDING: Mutex<Vec<RawEvent>> = Mutex::new(Vec::new());
 
 /// Installe les handlers globaux tray/menu : chaque événement est mis en
 /// file puis réveille l'UI. À appeler une seule fois, avant la création.
-pub(crate) fn install_event_handlers(ui_ctx: crate::notify::UiContext) {
+pub(crate) fn install_event_handlers(ui_ctx: crate::platform::notify::UiContext) {
     let wake = ui_ctx.clone();
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
         PENDING.lock_safe().push(RawEvent::Menu(event.id));

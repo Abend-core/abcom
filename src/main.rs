@@ -1,8 +1,9 @@
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
+use abcom::platform::{autostart, notify};
 use abcom::util::MutexExt;
-use abcom::{app, autostart, config, discovery, identity, message, network, notify, protocol, ui};
+use abcom::{app, config, discovery, identity, message, network, protocol, ui};
 
 /// mimalloc rend les pages à l'OS, ce que l'allocateur système ne fait pas au repli dans le tray.
 #[global_allocator]

@@ -8,8 +8,8 @@
 
 use eframe::egui;
 
-use crate::klipy::{GifFeed, GifItem, GifStatus};
 use crate::message::{ChatMessage, MediaAttachment, MediaKind};
+use crate::services::klipy::{GifFeed, GifItem, GifStatus};
 use crate::util::MutexExt;
 
 use super::{AbcomApp, GifPickerTab};
