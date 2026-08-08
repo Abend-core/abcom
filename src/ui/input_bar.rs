@@ -463,17 +463,34 @@ fn send_current_message(app: &mut AbcomApp) -> bool {
 }
 
 impl AbcomApp {
-    /// Un collage dépassant le plafond du composeur devient une pièce jointe
-    /// `.txt` (UTF-8) : écrite dans un fichier temporaire, elle suit le
-    /// pipeline média habituel (progression, acceptation, taille illimitée).
+    /// Collage trop long → pièce jointe `.txt` en 0600 dans `scratch/`, purgée après 24 h.
     fn stash_overflow_paste(&mut self, text: &str) {
+        crate::config::purge_scratch();
         let filename = format!(
             "texte-colle-{}.txt",
             chrono::Local::now().format("%Y%m%d-%H%M%S")
         );
-        let path = std::env::temp_dir().join(filename);
+        let path = match crate::config::scratch_dir() {
+            Ok(dir) => dir.join(filename),
+            Err(err) => {
+                self.last_notification = Some(format!(
+                    "{} : {err}",
+                    self.tr(
+                        "Impossible d'écrire le texte collé",
+                        "Could not write pasted text",
+                    )
+                ));
+                self.notification_time = std::time::Instant::now();
+                return;
+            }
+        };
         match std::fs::write(&path, text) {
             Ok(()) => {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+                }
                 self.composer.pending_attachments.push(path);
                 self.last_notification = Some(
                     self.tr(

@@ -93,19 +93,30 @@ impl NetworkChannels {
         match self.send_tx.try_send(request.into()) {
             Ok(()) => true,
             Err(mpsc::error::TrySendError::Full(_)) => {
+                crate::metrics::record_packet_dropped();
                 tracing::warn!("commande réseau ignorée : file pleine");
                 false
             }
             Err(mpsc::error::TrySendError::Closed(_)) => {
+                crate::metrics::record_packet_dropped();
                 tracing::warn!("commande réseau ignorée : canal fermé");
                 false
             }
         }
     }
 
+    /// Signaux non critiques : perte acceptable, mais comptée pour le diagnostic.
     fn try_send_best_effort(&self, request: impl Into<NetworkSendRequest>) {
-        if let Err(mpsc::error::TrySendError::Closed(_)) = self.send_tx.try_send(request.into()) {
-            tracing::debug!("signal réseau abandonné : canal fermé");
+        match self.send_tx.try_send(request.into()) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                crate::metrics::record_packet_dropped();
+                tracing::debug!("signal réseau abandonné : canal fermé");
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                crate::metrics::record_packet_dropped();
+                tracing::debug!("signal réseau abandonné : file pleine");
+            }
         }
     }
 }
@@ -116,6 +127,8 @@ pub struct UiRuntimeChannels {
     pub send_tx: mpsc::Sender<NetworkSendRequest>,
     pub send_media_tx: mpsc::Sender<MediaSendJob>,
     pub media_offer_rx: mpsc::Receiver<MediaStreamOffer>,
+    /// Magasin TOFU partagé : l'UI n'y touche que pour le ré-appairage explicite.
+    pub trust: Arc<crate::network::secure::TrustStore>,
 }
 
 /// Données du picker emoji : textures décodées, index de recherche par
@@ -185,6 +198,9 @@ pub(crate) struct ModalsState {
     pub(crate) rename_input: String,
     pub(crate) settings_open: bool,
     pub(crate) settings_tab: SettingsTab,
+    /// Pair dont la clé a changé (TOFU `Mismatch`) : la modale propose le
+    /// ré-appairage explicite. None = aucune alerte en attente.
+    pub(crate) key_mismatch: Option<String>,
 }
 
 /// État des médias du fil : caches de textures (éviction LRU), visionneuse
@@ -298,6 +314,11 @@ pub(crate) struct AbcomApp {
     /// Une page d'historique plus ancienne est en cours de chargement
     /// (évite les demandes répétées pendant le vol de la requête).
     pub(crate) loading_older: bool,
+    /// Magasin TOFU, pour le seul ré-appairage explicite (cf. `modals.key_mismatch`).
+    pub(crate) trust: Arc<crate::network::secure::TrustStore>,
+    /// Accusés déjà émis par destinataire : sans ce mémo, chaque ouverture rediffusait toute la fenêtre.
+    pub(crate) read_receipts_sent:
+        std::collections::HashMap<String, std::collections::HashSet<u64>>,
 }
 
 impl AbcomApp {
@@ -386,6 +407,7 @@ impl AbcomApp {
                 rename_input: String::new(),
                 settings_open: false,
                 settings_tab: SettingsTab::General,
+                key_mismatch: None,
             },
             last_typing_broadcast: std::time::Instant::now(),
             last_retry_time: std::time::Instant::now(),
@@ -420,6 +442,8 @@ impl AbcomApp {
             chat_visible_count: CHAT_WINDOW_STEP,
             chat_prepend_fix: None,
             loading_older: false,
+            trust: channels.trust,
+            read_receipts_sent: std::collections::HashMap::new(),
         }
     }
 
@@ -486,6 +510,15 @@ impl AbcomApp {
             }
             let hash = crate::app::AppState::message_hash(m);
             for (recipient, addr) in s.receipt_recipients(m) {
+                // Delta : ce destinataire a-t-il déjà reçu cet accusé ?
+                if !self
+                    .read_receipts_sent
+                    .entry(recipient.clone())
+                    .or_default()
+                    .insert(hash)
+                {
+                    continue;
+                }
                 receipts.push(ReadReceiptRequest {
                     to_peer: recipient.clone(),
                     to_addr: addr,
@@ -540,6 +573,8 @@ impl AbcomApp {
         self.emoji.textures_loaded = false;
         self.emoji.decode_rx = None;
         self.chat_cache.invalidate();
+        // Libérer ne suffit pas : sans ceci le RSS ne bouge pas.
+        release_memory_to_os();
     }
 
     /// Restaure la fenêtre depuis le tray et resynchronise l'affichage
@@ -789,7 +824,7 @@ impl eframe::App for AbcomApp {
 
     /// Flush final du stockage : attend que toutes les écritures en file
     /// soient appliquées avant la fermeture.
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    fn on_exit(&mut self) {
         self.state.lock_safe().flush_storage();
     }
 }
@@ -869,7 +904,7 @@ pub fn run(
 
     let options = eframe::NativeOptions {
         viewport,
-        renderer: eframe::Renderer::Glow,
+        renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
 
@@ -928,13 +963,23 @@ fn spawn_emoji_decoder() -> std::sync::mpsc::Receiver<Vec<(String, egui::ColorIm
     rx
 }
 
+/// Rend à l'OS les pages libérées mais retenues par l'allocateur (sans effet hors mimalloc).
+pub(crate) fn release_memory_to_os() {
+    // SAFETY : `mi_collect` est thread-safe et sans précondition ; le
+    // paramètre `force = true` demande la restitution effective des pages.
+    unsafe {
+        libmimalloc_sys::mi_collect(true);
+    }
+}
+
 /// macOS : montre/retire l'icône du Dock. Repliée dans la barre de menus,
 /// l'application passe en politique `Accessory` (plus de Dock ni de Cmd-Tab) ;
 /// à la réouverture elle redevient `Regular` et revient au premier plan.
 /// Doit être appelé sur le thread principal (c'est le cas dans `update`).
 #[cfg(target_os = "macos")]
 fn set_dock_visible(visible: bool) {
-    use objc2::ClassType;
+    // objc2 0.6 : `alloc()` vient du trait `AnyThread` (ex-`ClassType`).
+    use objc2::AnyThread;
     use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSImage};
     use objc2_foundation::NSData;
     let Some(mtm) = objc2_foundation::MainThreadMarker::new() else {
