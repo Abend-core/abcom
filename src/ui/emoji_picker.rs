@@ -186,7 +186,7 @@ pub(crate) fn show_shortcode_popup(
 ) {
     let row_h = 28.0;
     let desired_h = (shortcode_list.len() as f32 * row_h + 8.0).min(220.0);
-    let screen = ctx.screen_rect();
+    let screen = ctx.viewport_rect();
     let gap = 14.0;
     let popup_bottom = resp.rect.top() - gap;
     let available_above = (popup_bottom - (screen.top() + 4.0)).max(0.0);

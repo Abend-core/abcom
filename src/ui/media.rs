@@ -525,7 +525,7 @@ impl AbcomApp {
 
         let mut open = true;
         let mut download = false;
-        let screen = ctx.screen_rect();
+        let screen = ctx.viewport_rect();
         egui::Window::new(title)
             .open(&mut open)
             .collapsible(false)

@@ -492,6 +492,8 @@ pub fn custom_composer_input(
         ui.ctx().output_mut(|o| {
             o.mutable_text_under_cursor = true;
             o.ime = Some(egui::output::IMEOutput {
+                purpose: egui::IMEPurpose::Normal,
+                should_interrupt_composition: false,
                 rect,
                 cursor_rect: egui::Rect::from_min_max(
                     egui::pos2(cursor_x, cursor_top.max(content_rect.top())),
@@ -504,7 +506,7 @@ pub fn custom_composer_input(
         });
 
         if response.hovered() {
-            let wheel_y = ui.input(|i| i.raw_scroll_delta.y + i.smooth_scroll_delta.y);
+            let wheel_y = ui.input(|i| i.smooth_scroll_delta.y);
             if wheel_y.abs() > 0.0 && max_scroll > 0.0 {
                 *scroll_lines = (*scroll_lines - wheel_y / 32.0).clamp(0.0, max_scroll);
             }

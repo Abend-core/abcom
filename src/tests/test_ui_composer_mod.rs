@@ -114,8 +114,10 @@ fn run_composer_frames(
             events,
             ..Default::default()
         };
-        let _ = ctx.run(raw, |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
+        // epaint 0.36 panique si les deltas de textures d'une frame sont
+        // abandonnés : ici on ne peint rien, on les libère explicitement.
+        let mut output = ctx.run_ui(raw, |root| {
+            egui::CentralPanel::default().show(root, |ui| {
                 let (_, submit, _, _) = custom_composer_input(
                     ui,
                     input,
@@ -134,6 +136,7 @@ fn run_composer_frames(
                 submitted |= submit;
             });
         });
+        output.textures_delta.clear();
     }
     submitted
 }
