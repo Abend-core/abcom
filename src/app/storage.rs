@@ -26,6 +26,24 @@ pub const INITIAL_WINDOW: u32 = 500;
 pub const OLDER_PAGE: u32 = 100;
 const SCHEMA_VERSION: i64 = 1;
 
+/// Nature d'un accusé nominatif persisté.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReceiptKind {
+    /// Le message a été reçu par ce pair (ACK).
+    Delivered,
+    /// Le message a été lu par ce pair.
+    Read,
+}
+
+impl ReceiptKind {
+    fn as_sql(self) -> &'static str {
+        match self {
+            Self::Delivered => "delivered",
+            Self::Read => "read",
+        }
+    }
+}
+
 /// Commandes du thread de stockage (FIFO : l'ordre des mutations est
 /// préservé ; `Flush` répond une fois toutes les commandes précédentes
 /// appliquées).
@@ -67,6 +85,17 @@ pub enum StorageCmd {
         username: String,
         pubkey: Vec<u8>,
     },
+    /// Désépinglage explicite : ré-appairage demandé par l'utilisateur après
+    /// un changement de clé (réinstallation d'un pair).
+    DeletePeerKey {
+        username: String,
+    },
+    /// Accusé nominatif livré/lu reçu d'un pair.
+    AddReceipt {
+        hash: u64,
+        username: String,
+        kind: ReceiptKind,
+    },
     /// Charge la page précédente de l'historique ; le résultat revient à
     /// l'UI via `AppEvent::OlderMessagesLoaded`.
     LoadOlder {
@@ -94,6 +123,10 @@ pub struct LoadedState {
     pub peer_records: Vec<PeerRecord>,
     pub peer_avatars: HashMap<String, Vec<u8>>,
     pub peer_keys: HashMap<String, Vec<u8>>,
+    /// Accusés de livraison nominatifs, par hash de message.
+    pub delivered_receipts: HashMap<u64, HashSet<String>>,
+    /// Accusés de lecture nominatifs, par hash de message.
+    pub read_receipts: HashMap<u64, HashSet<String>>,
     /// Préférences persistées (clé → valeur).
     pub kv: HashMap<String, String>,
 }
@@ -145,7 +178,14 @@ impl Storage {
                 avatar   BLOB,
                 pubkey   BLOB
             );
-            CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v BLOB);",
+            CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v BLOB);
+            -- Accusés nominatifs ; la clé primaire rend l'insertion idempotente.
+            CREATE TABLE IF NOT EXISTS receipts (
+                message_hash INTEGER NOT NULL,
+                username     TEXT    NOT NULL,
+                kind         TEXT    NOT NULL,
+                PRIMARY KEY (message_hash, username, kind)
+            );",
         )?;
         let version: i64 = tx.query_row("PRAGMA user_version", [], |row| row.get(0))?;
         if version < 1 {
@@ -168,6 +208,8 @@ impl Storage {
         // chaque ouverture permet de reprendre proprement une migration dont
         // une source ou une écriture avait échoué au premier lancement.
         storage.migrate_from_json(base)?;
+        storage.purge_orphan_receipts()?;
+        purge_legacy_backups(base);
         Ok(storage)
     }
 
@@ -250,6 +292,21 @@ impl Storage {
 
     pub fn insert_message(&self, msg: &ChatMessage) -> rusqlite::Result<()> {
         Self::insert_message_on(&self.conn, msg)
+    }
+
+    /// Insertion groupée : un seul commit WAL par rafale au lieu d'un par message.
+    pub fn insert_messages(&mut self, msgs: &[ChatMessage]) -> rusqlite::Result<()> {
+        match msgs {
+            [] => Ok(()),
+            [msg] => Self::insert_message_on(&self.conn, msg),
+            _ => {
+                let tx = self.conn.transaction()?;
+                for msg in msgs {
+                    Self::insert_message_on(&tx, msg)?;
+                }
+                tx.commit()
+            }
+        }
     }
 
     pub fn delete_conversation(&self, me: &str, conv: Option<&str>) -> rusqlite::Result<()> {
@@ -355,6 +412,40 @@ impl Storage {
             "INSERT INTO peers (username, pubkey) VALUES (?1, ?2)
              ON CONFLICT(username) DO UPDATE SET pubkey = excluded.pubkey",
             params![username, pubkey],
+        )?;
+        Ok(())
+    }
+
+    /// Enregistre un accusé nominatif ; idempotent, un pair peut réémettre le sien.
+    pub fn add_receipt(
+        &self,
+        hash: u64,
+        username: &str,
+        kind: ReceiptKind,
+    ) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "INSERT OR IGNORE INTO receipts (message_hash, username, kind) VALUES (?1, ?2, ?3)",
+            params![hash as i64, username, kind.as_sql()],
+        )?;
+        Ok(())
+    }
+
+    /// Supprime les accusés dont le message a disparu, sinon la table ne fait que croître.
+    pub fn purge_orphan_receipts(&self) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "DELETE FROM receipts
+             WHERE message_hash NOT IN (SELECT hash FROM messages)",
+            [],
+        )?;
+        Ok(())
+    }
+
+    /// Retire la clé épinglée d'un pair sans toucher au reste de sa fiche
+    /// (alias, avatar) : la prochaine connexion ré-épinglera.
+    pub fn delete_peer_key(&self, username: &str) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "UPDATE peers SET pubkey = NULL WHERE username = ?1",
+            params![username],
         )?;
         Ok(())
     }
@@ -475,6 +566,29 @@ impl Storage {
             }
         }
 
+        // Accusés nominatifs : deux maps hash → ensemble de pairs.
+        let mut delivered_receipts: HashMap<u64, HashSet<String>> = HashMap::new();
+        let mut read_receipts: HashMap<u64, HashSet<String>> = HashMap::new();
+        let mut stmt = self
+            .conn
+            .prepare("SELECT message_hash, username, kind FROM receipts")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)? as u64,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (hash, username, kind) = row?;
+            let target = if kind == "read" {
+                &mut read_receipts
+            } else {
+                &mut delivered_receipts
+            };
+            target.entry(hash).or_default().insert(username);
+        }
+
         let mut stmt = self
             .conn
             .prepare("SELECT username, count FROM read_counts")?;
@@ -544,6 +658,8 @@ impl Storage {
             peer_records,
             peer_avatars,
             peer_keys,
+            delivered_receipts,
+            read_receipts,
             kv,
         })
     }
@@ -695,6 +811,40 @@ impl Storage {
     }
 }
 
+/// Délai de conservation des sauvegardes de la migration JSON → SQLite.
+pub const LEGACY_BACKUP_TTL: std::time::Duration =
+    std::time::Duration::from_secs(30 * 24 * 60 * 60);
+
+/// Plafond d'un lot : au-delà on commite pour ne pas retarder la suite de la file.
+const INSERT_BATCH_MAX: usize = 256;
+
+/// Supprime les `*.json.bak` de migration passé [`LEGACY_BACKUP_TTL`] : sinon l'historique est dupliqué à vie.
+pub fn purge_legacy_backups(base: &Path) {
+    let Ok(entries) = std::fs::read_dir(base) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if !name.contains(".json.bak") {
+            continue;
+        }
+        let expired = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .map(|modified| modified.elapsed().is_ok_and(|age| age > LEGACY_BACKUP_TTL))
+            .unwrap_or(false);
+        if expired {
+            match std::fs::remove_file(entry.path()) {
+                Ok(()) => tracing::info!("sauvegarde de migration purgée : {name}"),
+                Err(error) => tracing::warn!("purge de {name} impossible : {error}"),
+            }
+        }
+    }
+}
+
 /// Boucle du thread de stockage : applique les commandes dans l'ordre,
 /// renvoie les pages d'historique à l'UI via `event_tx` (qui la réveille).
 fn run(
@@ -702,8 +852,38 @@ fn run(
     rx: Receiver<StorageCmd>,
     event_tx: tokio::sync::mpsc::Sender<AppEvent>,
 ) {
-    while let Ok(cmd) = rx.recv() {
+    // Commande qui a interrompu un lot : à rejouer avant toute lecture, sinon l'ordre change.
+    let mut deferred: Option<StorageCmd> = None;
+    loop {
+        let cmd = match deferred.take() {
+            Some(cmd) => cmd,
+            None => match rx.recv() {
+                Ok(cmd) => cmd,
+                Err(_) => break,
+            },
+        };
+
+        // Rafale : on draine la file pour n'ouvrir qu'une transaction.
+        if let StorageCmd::InsertMessage(first) = cmd {
+            let mut batch = vec![first];
+            while batch.len() < INSERT_BATCH_MAX {
+                match rx.try_recv() {
+                    Ok(StorageCmd::InsertMessage(msg)) => batch.push(msg),
+                    Ok(other) => {
+                        deferred = Some(other);
+                        break;
+                    }
+                    Err(_) => break,
+                }
+            }
+            if let Err(e) = storage.insert_messages(&batch) {
+                tracing::error!("erreur d'écriture : {e}");
+            }
+            continue;
+        }
+
         let result = match cmd {
+            // Traité juste au-dessus.
             StorageCmd::InsertMessage(msg) => storage.insert_message(&msg),
             StorageCmd::DeleteConversation { me, conv } => {
                 storage.delete_conversation(&me, conv.as_deref())
@@ -726,6 +906,12 @@ fn run(
             StorageCmd::UpsertPeerKey { username, pubkey } => {
                 storage.upsert_peer_key(&username, &pubkey)
             }
+            StorageCmd::DeletePeerKey { username } => storage.delete_peer_key(&username),
+            StorageCmd::AddReceipt {
+                hash,
+                username,
+                kind,
+            } => storage.add_receipt(hash, &username, kind),
             StorageCmd::SetKv { k, v } => storage.set_kv(&k, &v),
             StorageCmd::LoadOlder { before_rowid } => {
                 match storage.load_older(before_rowid, OLDER_PAGE) {

@@ -54,20 +54,36 @@ impl AppState {
     }
 
     pub fn mark_message_read(&mut self, message_hash: u64, username: String) {
-        self.read_receipts
+        if self
+            .read_receipts
             .entry(message_hash)
             .or_default()
-            .insert(username);
+            .insert(username.clone())
+        {
+            self.persist(super::StorageCmd::AddReceipt {
+                hash: message_hash,
+                username,
+                kind: super::storage::ReceiptKind::Read,
+            });
+        }
         self.bump_content();
     }
 
     /// Enregistre un ACK de livraison nominatif reçu d'un pair (détail
     /// « reçu par » des salons et de « Tous »).
     pub fn mark_message_delivered_by(&mut self, message_hash: u64, username: String) {
-        self.delivered_receipts
+        if self
+            .delivered_receipts
             .entry(message_hash)
             .or_default()
-            .insert(username);
+            .insert(username.clone())
+        {
+            self.persist(super::StorageCmd::AddReceipt {
+                hash: message_hash,
+                username,
+                kind: super::storage::ReceiptKind::Delivered,
+            });
+        }
         self.bump_content();
     }
 
