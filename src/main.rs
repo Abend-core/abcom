@@ -203,7 +203,7 @@ fn main() -> anyhow::Result<()> {
 
     rt.spawn(discovery::run(
         username.clone(),
-        local_identity.public_hex(),
+        local_identity.clone(),
         event_tx.clone(),
         peer_gone_tx,
     ));

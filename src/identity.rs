@@ -77,6 +77,24 @@ impl Identity {
     pub fn public_hex(&self) -> String {
         hex(&self.public)
     }
+
+    /// Clé de signature des annonces, dérivée de la clé Noise par BLAKE2s.
+    ///
+    /// Dérivée plutôt que stockée à part : `identity.key` garde son format, et
+    /// la même identité produit toujours la même clé de signature. Le domaine
+    /// évite toute réutilisation du secret entre les deux usages.
+    pub fn signing_key(&self) -> ed25519_dalek::SigningKey {
+        use blake2::{Blake2s256, Digest};
+        let mut hasher = Blake2s256::new();
+        hasher.update(b"abcom-discovery-signature-v1");
+        hasher.update(&self.private);
+        ed25519_dalek::SigningKey::from_bytes(&hasher.finalize().into())
+    }
+
+    /// Clé publique de vérification des annonces, en hexadécimal.
+    pub fn verifying_hex(&self) -> String {
+        hex(self.signing_key().verifying_key().as_bytes())
+    }
 }
 
 /// Hexadécimal minuscule.

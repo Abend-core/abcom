@@ -55,6 +55,8 @@ resvg = { version = "0.48", optional = true }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 rusqlite = { version = "0.40.1", features = ["bundled"] }
 snow = "0.10.0"
+# Signature des annonces de découverte (clé dérivée de l'identité Noise).
+ed25519-dalek = "3"
 blake2 = "0.10.6"
 # Sons de notification : seule la lecture est utilisée (tonalités
 # synthétisées), aucun décodeur de format n'est nécessaire.
