@@ -459,3 +459,101 @@ fn prepend_older_extends_window() {
     s.prepend_older_messages(Vec::new(), None);
     assert_eq!(s.content_generation, generation);
 }
+
+#[test]
+fn batched_insert_keeps_order_and_content() {
+    let dir = tmp_dir("batch");
+    let mut storage = Storage::open(&dir).unwrap();
+    let batch: Vec<ChatMessage> = (0..5)
+        .map(|i| msg("alice", None, &format!("m{i}"), i))
+        .collect();
+    storage.insert_messages(&batch).unwrap();
+    // Un lot vide et un lot d'un seul élément empruntent les chemins courts.
+    storage.insert_messages(&[]).unwrap();
+    storage
+        .insert_messages(&[msg("bob", None, "seul", 9)])
+        .unwrap();
+
+    let loaded = storage.load_all(INITIAL_WINDOW).unwrap();
+    let contents: Vec<&str> = loaded.messages.iter().map(|m| m.content.as_str()).collect();
+    assert_eq!(contents, ["m0", "m1", "m2", "m3", "m4", "seul"]);
+}
+
+#[test]
+fn legacy_backups_are_purged_only_once_expired() {
+    let dir = tmp_dir("purge-bak");
+    let fresh = dir.join("messages.json.bak");
+    let dated = dir.join("messages.json.bak.1700000000");
+    let unrelated = dir.join("abcom.db");
+    std::fs::write(&fresh, b"[]").unwrap();
+    std::fs::write(&dated, b"[]").unwrap();
+    std::fs::write(&unrelated, b"").unwrap();
+
+    // Fraîchement écrits : la purge ne doit rien toucher.
+    super::purge_legacy_backups(&dir);
+    assert!(fresh.exists());
+    assert!(dated.exists());
+
+    // Antidatés au-delà du délai de conservation.
+    let old = std::time::SystemTime::now()
+        - super::LEGACY_BACKUP_TTL
+        - std::time::Duration::from_secs(60);
+    for path in [&fresh, &dated] {
+        let file = std::fs::File::options().write(true).open(path).unwrap();
+        file.set_modified(old).unwrap();
+    }
+    super::purge_legacy_backups(&dir);
+    assert!(!fresh.exists());
+    assert!(!dated.exists());
+    assert!(unrelated.exists());
+}
+
+#[test]
+fn receipts_survive_a_restart() {
+    use super::ReceiptKind;
+    let dir = tmp_dir("receipts");
+    let message = msg("alice", Some("#projet"), "coucou", 1);
+    let hash = AppState::message_hash(&message);
+    {
+        let storage = Storage::open(&dir).unwrap();
+        storage.insert_message(&message).unwrap();
+        storage
+            .add_receipt(hash, "bob", ReceiptKind::Delivered)
+            .unwrap();
+        storage.add_receipt(hash, "bob", ReceiptKind::Read).unwrap();
+        // Idempotent : un accusé réémis ne crée pas de doublon.
+        storage.add_receipt(hash, "bob", ReceiptKind::Read).unwrap();
+        storage
+            .add_receipt(hash, "carol", ReceiptKind::Delivered)
+            .unwrap();
+    }
+
+    let storage = Storage::open(&dir).unwrap();
+    let loaded = storage.load_all(INITIAL_WINDOW).unwrap();
+    let delivered = loaded.delivered_receipts.get(&hash).unwrap();
+    assert_eq!(delivered.len(), 2);
+    assert!(delivered.contains("bob") && delivered.contains("carol"));
+    assert_eq!(loaded.read_receipts.get(&hash).unwrap().len(), 1);
+}
+
+#[test]
+fn orphan_receipts_are_purged_at_open() {
+    use super::ReceiptKind;
+    let dir = tmp_dir("receipts-orphan");
+    let message = msg("alice", None, "ephemere", 1);
+    let hash = AppState::message_hash(&message);
+    {
+        let storage = Storage::open(&dir).unwrap();
+        storage.insert_message(&message).unwrap();
+        storage.add_receipt(hash, "bob", ReceiptKind::Read).unwrap();
+        // Le message disparaît : son accusé n'a plus de cible.
+        storage.delete_conversation("me", None).unwrap();
+    }
+
+    let storage = Storage::open(&dir).unwrap();
+    assert!(storage
+        .load_all(INITIAL_WINDOW)
+        .unwrap()
+        .read_receipts
+        .is_empty());
+}

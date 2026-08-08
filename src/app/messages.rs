@@ -49,18 +49,7 @@ impl AppState {
     /// Marque une conversation comme lue. `conv` est un nom de pair
     /// (conversation privée) ou une clé de salon `#nom` (groupe).
     pub fn mark_conversation_read(&mut self, conv: &str) {
-        let me = self.my_username.as_str();
-        let count = if conv.starts_with('#') {
-            self.messages
-                .iter()
-                .filter(|m| m.to_user.as_deref() == Some(conv) && m.from != me)
-                .count()
-        } else {
-            self.messages
-                .iter()
-                .filter(|m| m.from == conv && m.to_user.as_deref() == Some(me))
-                .count()
-        };
+        let count = self.incoming_message_count(conv);
         self.read_counts.insert(conv.to_string(), count);
         self.persist(super::StorageCmd::SetReadCount {
             username: conv.to_string(),
@@ -101,20 +90,39 @@ impl AppState {
         if self.selected_conversation.as_deref() == Some(conv) {
             return 0;
         }
-        let me = self.my_username.as_str();
-        let total = if conv.starts_with('#') {
-            self.messages
-                .iter()
-                .filter(|m| m.to_user.as_deref() == Some(conv) && m.from != me)
-                .count()
-        } else {
-            self.messages
-                .iter()
-                .filter(|m| m.from == conv && m.to_user.as_deref() == Some(me))
-                .count()
-        };
+        let total = self.incoming_message_count(conv);
         let read = *self.read_counts.get(conv).unwrap_or(&0);
         total.saturating_sub(read)
+    }
+
+    /// Clé d'un message entrant : le salon, ou l'expéditeur ; `None` pour les nôtres et « Tous ».
+    fn incoming_key(&self, msg: &ChatMessage) -> Option<String> {
+        let to = msg.to_user.as_deref()?;
+        if msg.from == self.my_username {
+            return None;
+        }
+        if to.starts_with('#') {
+            Some(to.to_string())
+        } else if to == self.my_username {
+            Some(msg.from.clone())
+        } else {
+            None
+        }
+    }
+
+    /// Total entrant d'une conversation : un seul parcours du ring-buffer par génération.
+    fn incoming_message_count(&self, conv: &str) -> usize {
+        let mut cache = self.incoming_counts.borrow_mut();
+        if cache.0 != self.content_generation {
+            cache.1.clear();
+            for msg in &self.messages {
+                if let Some(key) = self.incoming_key(msg) {
+                    *cache.1.entry(key).or_insert(0) += 1;
+                }
+            }
+            cache.0 = self.content_generation;
+        }
+        cache.1.get(conv).copied().unwrap_or(0)
     }
 
     pub fn clear_conversation_history(&mut self) {

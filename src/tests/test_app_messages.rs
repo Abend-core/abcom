@@ -118,3 +118,51 @@ fn test_message_cap_at_500() {
     assert_eq!(s.messages.len(), 401);
     assert_eq!(s.messages.last().unwrap().content, "overflow");
 }
+
+#[test]
+fn unread_cache_follows_content_generation() {
+    let dir = std::env::temp_dir().join(format!(
+        "abcom-unread-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut s = AppState::new_with_base("me", &dir);
+
+    let mut incoming = ChatMessage {
+        from: "alice".into(),
+        content: "1".into(),
+        timestamp: "12:00".into(),
+        timestamp_epoch: Some(1),
+        to_user: Some("me".into()),
+        media: None,
+        reply_to: None,
+        nonce: None,
+    };
+    s.add_message(incoming.clone());
+    assert_eq!(s.unread_count("alice"), 1);
+
+    // Le cache dérivé doit suivre chaque nouveau message…
+    incoming.content = "2".into();
+    incoming.timestamp_epoch = Some(2);
+    s.add_message(incoming.clone());
+    assert_eq!(s.unread_count("alice"), 2);
+
+    // …nos propres messages ne comptent pas…
+    s.add_message(ChatMessage {
+        from: "me".into(),
+        content: "reponse".into(),
+        timestamp: "12:01".into(),
+        timestamp_epoch: Some(3),
+        to_user: Some("alice".into()),
+        media: None,
+        reply_to: None,
+        nonce: None,
+    });
+    assert_eq!(s.unread_count("alice"), 2);
+
+    // …et marquer lu remet le compteur à zéro.
+    s.mark_conversation_read("alice");
+    assert_eq!(s.unread_count("alice"), 0);
+}
