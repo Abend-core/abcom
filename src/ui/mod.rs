@@ -10,6 +10,7 @@ use crate::message::{
     AppEvent, MediaAttachment, MediaProgress, MediaSendJob, MediaStreamOffer, NetworkSendRequest,
     ReadReceipt, ReadReceiptRequest,
 };
+use crate::platform::tray;
 use crate::util::MutexExt;
 
 mod avatar;
@@ -29,7 +30,6 @@ mod sidebar;
 mod snapshot;
 mod sound;
 mod theme;
-pub(crate) mod tray;
 
 /// Nombre de messages affichés au départ et pas de chargement du fenêtrage
 /// façon Discord (le fil charge 100 messages de plus en remontant).
@@ -186,11 +186,11 @@ pub(crate) struct GifPickerState {
     /// Texte courant de la barre de recherche du sélecteur.
     pub(crate) query: String,
     /// Feed GIF — tendances et recherche Klipy /gifs/*.
-    pub(crate) feed: crate::klipy::GifFeed,
+    pub(crate) feed: crate::services::klipy::GifFeed,
     /// Feed Mèmes — tendances et recherche Klipy /static-memes/*.
-    pub(crate) meme_feed: crate::klipy::GifFeed,
+    pub(crate) meme_feed: crate::services::klipy::GifFeed,
     /// Feed Stickers — tendances et recherche Klipy /stickers/*.
-    pub(crate) sticker_feed: crate::klipy::GifFeed,
+    pub(crate) sticker_feed: crate::services::klipy::GifFeed,
     /// Dernière frappe dans la recherche (anti-rebond avant requête).
     pub(crate) last_input: std::time::Instant,
     /// Le picker était ouvert à la frame précédente (détection de la
@@ -411,9 +411,15 @@ impl AbcomApp {
                 show: false,
                 tab: GifPickerTab::Gif,
                 query: String::new(),
-                feed: crate::klipy::GifFeed::new(crate::klipy::ContentKind::Gif),
-                meme_feed: crate::klipy::GifFeed::new(crate::klipy::ContentKind::Meme),
-                sticker_feed: crate::klipy::GifFeed::new(crate::klipy::ContentKind::Sticker),
+                feed: crate::services::klipy::GifFeed::new(
+                    crate::services::klipy::ContentKind::Gif,
+                ),
+                meme_feed: crate::services::klipy::GifFeed::new(
+                    crate::services::klipy::ContentKind::Meme,
+                ),
+                sticker_feed: crate::services::klipy::GifFeed::new(
+                    crate::services::klipy::ContentKind::Sticker,
+                ),
                 last_input: std::time::Instant::now(),
                 was_open: false,
             },
@@ -919,7 +925,7 @@ fn app_icon_data() -> Option<egui::IconData> {
 /// Point d'entrée de l'interface graphique.
 pub fn run(
     state: Arc<Mutex<AppState>>,
-    ui_ctx: crate::notify::UiContext,
+    ui_ctx: crate::platform::notify::UiContext,
     identity_fingerprint: String,
     psk_active: bool,
     channels: UiRuntimeChannels,

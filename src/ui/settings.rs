@@ -252,8 +252,9 @@ impl AbcomApp {
                                         "Launch Abcom at login",
                                     );
                                     if ui.checkbox(&mut self.autostart_enabled, label).changed() {
-                                        match crate::autostart::set_enabled(self.autostart_enabled)
-                                        {
+                                        match crate::platform::autostart::set_enabled(
+                                            self.autostart_enabled,
+                                        ) {
                                             Ok(()) => {
                                                 let v =
                                                     if self.autostart_enabled { "1" } else { "0" };
