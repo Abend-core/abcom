@@ -12,6 +12,9 @@
 >
 > Compagnon de [`AUDIT.md`](AUDIT.md) (dette de code) : ce document-ci ne parle
 > que de l'écart entre ce que nos dépendances offrent et ce qu'on en tire.
+>
+> **Complété le 8 août 2026 (2ᵉ passe)** par une remontée d'historique complète
+> sur les dépendances lourdes — voir [§7](#7-remontée-dhistorique-sur-les-dépendances-lourdes).
 
 ## Verdict en une ligne
 
@@ -44,6 +47,17 @@ qui coûtent aujourd'hui de la latence, de la batterie et de la sécurité.
 | D18 | Pas de journal fichier (`tracing-appender`) | 🟢 diagnostic | faible |
 | D19 | `notify-rust` : actions dans les notifications | 🟢 UX | faible |
 | D20 | Accessibilité AccessKit : aucun `widget_info` sur les boutons peints | 🟢 a11y | moyen |
+| D21 | `Options::reduce_texture_memory` (egui 0.28) jamais activé | 🟠 mémoire | trivial |
+| D22 | `PRAGMA optimize` absent (statistiques du planificateur périmées) | 🟠 perf | trivial |
+| D23 | Schéma SQLite non `STRICT` | 🟠 robustesse | faible |
+| D24 | FTS5 « contentless-delete » : recherche sans dupliquer le contenu | 🟠 fonctionnalité | moyen |
+| D25 | Colonne `media` en JSON texte : opérateurs `->>` et JSONB inexploités | 🟢 perf | faible |
+| D26 | `RETURNING` inexploité | 🟢 simplicité | trivial |
+| D27 | `ImageReader::into_dimensions()` : rejeter sans décoder | 🔴 sécurité | trivial |
+| D28 | `ViewportBuilder` : 4 options sur 32 (pas de taille minimale ni de position) | 🟠 UX | trivial |
+| D29 | Conflit connu winit/COM sous Windows entre glisser-déposer et `rfd` | 🟠 plateforme | à tester |
+| D30 | `rusqlite` : `trace_v2`, intégration chrono, `prepare_cached` sur 2 requêtes / 20 | 🟢 diagnostic | faible |
+| D31 | `TcpSocket` : régler la socket avant connexion | 🟢 perf | trivial |
 
 ---
 
@@ -345,21 +359,203 @@ manque.
 
 ---
 
+## 7. Remontée d'historique sur les dépendances lourdes
+
+La première passe ne remontait que de quatre versions. Celle-ci reprend
+l'historique **depuis l'origine** des dépendances qui pèsent le plus, mesurées
+sur trois axes : lignes de source vendorée, items publics exposés, et symboles
+qu'on touche réellement.
+
+### Ce que « lourd » veut dire, chiffré
+
+| Dépendance | Lignes | API publique | Ce qu'on touche | Couverture |
+|---|---|---|---|---|
+| **SQLite 3.53.2** (via `libsqlite3-sys`) | **269 376** (C) | tout le SQL | ~20 appels | quasi nulle |
+| **tokio** 1.53.1 | 99 903 | 1 221 items | 33 symboles | ~3 % |
+| **winit** 0.30.13 (via eframe) | 57 414 | 2 000 items | indirect | — |
+| **egui** 0.36.1 | 51 714 | 1 903 items | 60 symboles | ~3 % |
+| **wgpu** 30.0.0 (via eframe) | 37 737 | 1 788 items | 0 direct | — |
+| **image** 0.25.10 | 37 680 | 584 items | 9 symboles | ~1,5 % |
+| **chrono** 0.4.45 | 33 951 | 447 items | formatage seul | faible |
+| **tracing-subscriber** 0.3.23 | 24 251 | 325 items | `fmt` + `EnvFilter` | faible |
+| **rusqlite** 0.40.2 | 21 972 | 476 items | 20 appels | faible |
+| **epaint / zip / serde_json** | 15,4 k / 15,7 k / 18,4 k | — | — | — |
+
+`eframe` tire à lui seul **404 crates transitives** : c'est l'essentiel de notre
+arbre de dépendances.
+
+**Le constat qui recadre tout : SQLite est notre dépendance la plus lourde et
+de très loin la moins exploitée.** 269 000 lignes de C compilées dans le
+binaire, pilotées par une vingtaine d'appels. La première passe regardait
+`rusqlite`, la fine couche Rust, au lieu du moteur qu'elle enveloppe.
+
+### D21 — `Options::reduce_texture_memory` (egui 0.28, jamais activé) 🟠
+
+**Vérifié** : `egui-0.36.1/src/memory/mod.rs:322`, valeur par défaut `false`,
+**0 occurrence** chez nous.
+
+Quand il vaut `true`, egui **libère la copie CPU des images une fois téléversées
+en GPU**. Notre application est un cas d'usage direct : textures de médias,
+avatars, et les 323 emojis désormais décodés à la demande gardent chacun leur
+`ColorImage` côté CPU pour rien.
+
+C'est disponible depuis la 0.28 — bien avant nos montées de version — et c'est
+un booléen. Le compromis documenté (impossible de re-sérialiser les images ou de
+rendre sans GPU) ne nous concerne pas.
+
+### D22 — SQLite : `PRAGMA optimize` (3.20, généralisé en 3.46) 🟠
+
+Nous posons `journal_mode` et `synchronous`, et nous avons ajouté un `VACUUM`
+manuel. Il manque `PRAGMA optimize`, dont le rôle est de tenir à jour les
+statistiques du planificateur de requêtes. Recommandation de l'amont : l'exécuter
+à la fermeture de chaque connexion de longue durée — exactement notre cas, le
+thread de stockage vit aussi longtemps que l'application.
+
+Sans lui, le planificateur choisit ses plans sur des statistiques périmées, ce
+qui compte d'autant plus une fois l'index de D10 en place.
+
+### D23 — SQLite : tables `STRICT` (3.37) 🟠
+
+Notre schéma est en typage souple : rien n'empêche d'écrire une chaîne dans
+`ts_epoch`, et nos hash `u64` transitent en `i64` par transtypage. Les tables
+`STRICT` font rejeter l'écriture par le moteur au lieu de la convertir
+silencieusement.
+
+Sur une base locale alimentée par des paquets réseau, c'est un filet de sécurité
+qui coûte un mot-clé par table — à faire lors d'une migration de schéma, pas à
+chaud.
+
+### D24 — SQLite : FTS5 « contentless-delete » (3.43) 🟠
+
+Complète **D11**. L'objection naturelle à un index plein texte est qu'il
+duplique tout le contenu des messages sur le disque. Le mode
+`contentless_delete=1` maintient un index interrogeable **sans stocker le texte
+une seconde fois**, tout en supportant la suppression — ce qui nous est
+indispensable puisqu'on efface des conversations et qu'on purge un ring-buffer.
+
+C'est ce qui rend la recherche réellement acceptable pour nous, et c'est
+disponible depuis fin 2023.
+
+### D25 — SQLite : opérateurs JSON `->`/`->>` (3.38) et JSONB (3.45) 🟢
+
+**Vérifié** : notre colonne `media` est un `TEXT` contenant du JSON produit par
+`serde_json::to_string`. Toute lecture d'un champ impose donc de désérialiser
+l'objet entier côté Rust.
+
+Les opérateurs `->>` permettent d'interroger directement (`WHERE media ->> 'id'
+= ?`), et JSONB stocke la même donnée sous forme binaire, plus compacte et plus
+rapide à parcourir. Notre requête `delete_by_media_id` gagnerait à en profiter.
+
+Gain modeste au volume actuel : je le classe 🟢 et je le signale surtout parce
+que la voie « JSON dans une colonne texte » est un choix qu'on n'a jamais
+réévalué depuis la migration.
+
+### D26 — SQLite : `RETURNING` (3.35) 🟢
+
+Récupère les valeurs d'une ligne insérée ou modifiée dans la même requête. Nos
+insertions de messages qui ont besoin du rowid font aujourd'hui un second
+aller-retour. Marginal à notre échelle, mentionné pour complétude.
+
+### D27 — `image` : lire les dimensions sans décoder (0.22) 🔴
+
+**Vérifié** : `ImageReader::into_dimensions()` existe
+(`image-0.25.10/src/io/image_reader_type.rs:302`).
+
+C'est la **bonne** façon de corriger **D2**. Plutôt que de décoder puis espérer
+que le plafond d'allocation nous sauve, on lit d'abord l'en-tête, on rejette si
+les dimensions sont déraisonnables, et on ne décode qu'ensuite. Le coût est
+celui de la lecture d'un en-tête.
+
+Disponible depuis la 0.22, soit trois versions majeures avant celle qu'on
+utilise.
+
+### D28 — `ViewportBuilder` : 4 options sur 32 utilisées 🟠
+
+**Vérifié** : `egui-0.36.1/src/viewport.rs` expose 32 méthodes `with_*`. Nous en
+utilisons quatre — `with_title`, `with_inner_size`, `with_icon`, `with_bytes`.
+
+Les deux manques qui se voient à l'usage :
+
+- **`with_min_inner_size`** : rien n'empêche de réduire la fenêtre à une taille
+  où l'interface n'a plus de sens (notre sidebar seule fait 220 px).
+- **`with_position`** : couplé à la feature `persistence` d'eframe, c'est la
+  restauration de la position de fenêtre entre deux lancements.
+
+Également disponibles et à considérer : `with_always_on_top`, `with_window_level`,
+`with_taskbar`, `with_transparent`.
+
+### D29 — `with_drag_and_drop(false)` sous Windows 🟠
+
+Point subtil relevé dans la doc d'egui, qui renvoie à celle de winit : le
+glisser-déposer OLE de winit **entre en conflit sous Windows avec les boîtes de
+dialogue de fichiers basées sur COM** — c'est-à-dire `rfd`, que nous utilisons.
+
+Nous n'avons jamais testé `scripts/install-windows.ps1` ni le sélecteur de
+fichiers sur cette plateforme (item ouvert §11 de l'audit). À vérifier en même
+temps que D7 (activer le glisser-déposer) et D12 (passer `rfd` en asynchrone) :
+les trois se tiennent.
+
+### D30 — `rusqlite` : intégration date-heure et `trace_v2` 🟢
+
+L'historique 0.30 → 0.40, que je n'avais pas pu lire à la première passe (le
+`Changelog.md` du dépôt s'arrête à 2018), a été récupéré via le flux des
+releases :
+
+- **0.33** : liaisons sûres pour `sqlite3_trace_v2` — profilage SQL réel, à
+  rapprocher de la feature `trace` déjà citée ;
+- **0.39** : prise en charge de `chrono`, `jiff` et `time`, variantes horodatage
+  Unix comprises. Nous stockons un `ts_epoch INTEGER` et reformatons en Rust à
+  chaque affichage ;
+- **0.38** : le cache d'instructions préparées est devenu une feature optionnelle
+  — nous l'avons par le jeu des défauts, mais nous n'appelons `prepare_cached`
+  qu'à **2 endroits** sur une vingtaine de requêtes ;
+- **0.40** : correction d'une **injection SQL dans la gestion des noms de
+  SAVEPOINT**. Nous sommes en 0.40.2, donc couverts — mais c'est une bonne
+  raison de ne pas laisser cette dépendance vieillir.
+
+### D31 — `tokio::net::TcpSocket` pour régler la socket avant connexion 🟢
+
+Complète **D1**. `TcpStream::connect` ne laisse rien régler avant l'établissement
+de la connexion. `TcpSocket` (présent depuis le début de la série 1.x) donne
+accès à `set_recv_buffer_size`, `set_send_buffer_size`, `set_linger`,
+`set_reuseaddr` avant le `connect`.
+
+À traiter dans le même passage que `set_nodelay`, puisqu'il s'agit du même
+fichier et du même sujet.
+
+### Ce que j'ai regardé et écarté
+
+Pour être clair sur le périmètre, voici ce que j'ai parcouru sans rien en tirer
+qui mérite un constat :
+
+| Dépendance | Historique parcouru | Verdict |
+|---|---|---|
+| **tokio** `sync`/`net`/`io` | sections « Added » de toute la série 1.x | Rien au-delà de D16 et D31. L'essentiel des gains est interne et nous en bénéficions sans rien faire |
+| **wgpu**, **winit** | survol | Pilotés uniquement à travers eframe : la surface actionnable se résume à D3 et D28 |
+| **chrono** | série 0.4 | Nous n'utilisons que le formatage, et c'est le bon usage ici |
+| **serde / serde_json** | séries complètes | Désérialisation empruntée et `RawValue` sans intérêt à nos tailles de paquets |
+| **zip** | 0.5 → 8.x | Rien de plus que D17 ; `zstd` reste une option si les dossiers deviennent lourds |
+| **snow** | 0.1 → 0.10 | Rien au-delà de D15 (`prologue`) ; le crate est petit et nous en utilisons l'essentiel |
+| **SQLite avant 3.20** | non parcouru | Décision assumée : notre usage est du SQL de base, l'historique ancien n'apporterait rien |
+
+---
+
 ## Ordre d'attaque conseillé
 
 **Immédiat, effort trivial, gain net :**
 
-1. **D1** `set_nodelay(true)` — latence de chaque message.
-2. **D2** bornes de dimensions au décodage d'images — sécurité.
+1. **D1 + D31** `set_nodelay(true)` et réglages de socket — latence de chaque message.
+2. **D2 + D27** rejeter sur les dimensions **avant** de décoder — sécurité.
 3. **D3** `PowerPreference::LowPower` — batterie.
-4. **D10** index `(to_user, id)` + **D9** pragmas — perf de tout l'historique.
-5. **D17** feature zip.
+4. **D10 + D9 + D22** index `(to_user, id)`, pragmas et `PRAGMA optimize` — perf de tout l'historique.
+5. **D21** `reduce_texture_memory` — un booléen, libère les copies CPU des images.
+6. **D17** feature zip, **D28** taille minimale de fenêtre.
 
 **Ensuite, à vraie valeur :**
 
 6. **D20 + D13** : libellés AccessKit puis `egui_kittest`. Dans cet ordre, parce
    que le second interroge l'arbre produit par le premier.
-7. **D11** recherche FTS5 — le manque fonctionnel le plus visible.
+7. **D11 + D24** recherche FTS5 en mode contentless-delete — le manque fonctionnel le plus visible, sans dupliquer l'historique sur le disque.
 8. **D4, D5, D6, D7, D12** : remplacer nos réimplémentations par les API d'egui
    et rfd. Chacune supprime du code au lieu d'en ajouter.
 
@@ -368,7 +564,9 @@ manque.
 9. **D8** virtualisation du fil : `show_viewport` plutôt que `show_rows`, nos
    lignes n'ayant pas une hauteur uniforme. Vrai gain, vraie complexité.
 10. **D15** prologue Noise, **D16** API tokio, **D14/D18** spans et journal
-    fichier.
+    fichier, **D23** tables `STRICT` à la prochaine migration de schéma.
+11. **D29** à vérifier lors du premier vrai test sous Windows, en même temps que
+    D7 et D12 — les trois se tiennent.
 
 ---
 
