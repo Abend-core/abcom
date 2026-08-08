@@ -181,7 +181,12 @@ impl ConnectionPool {
     async fn connect(&self, expected_peer: &str, addr: SocketAddr) -> Option<ConnSender> {
         let mut stream = match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(addr)).await
         {
-            Ok(Ok(stream)) => stream,
+            Ok(Ok(stream)) => {
+                // Notre trafic est fait de petits paquets : Nagle les retiendrait
+                // jusqu'à 40 ms chacun, sur un LAN à moins d'une milliseconde.
+                let _ = stream.set_nodelay(true);
+                stream
+            }
             Ok(Err(e)) => {
                 tracing::warn!("connexion échouée vers {addr}: {e}");
                 return None;

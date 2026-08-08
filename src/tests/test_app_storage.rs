@@ -614,3 +614,29 @@ fn compaction_keeps_the_data_intact() {
     assert!(bytes > 0);
     assert_eq!(storage.load_all(INITIAL_WINDOW).unwrap().messages.len(), 1);
 }
+
+#[test]
+fn schema_indexes_cover_conversation_queries() {
+    let dir = tmp_dir("indexes");
+    let storage = Storage::open(&dir).unwrap();
+    let indexes: Vec<String> = storage
+        .conn
+        .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'messages'")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<rusqlite::Result<_>>()
+        .unwrap();
+    assert!(indexes.iter().any(|i| i == "idx_messages_conv"));
+
+    // Le planificateur doit s'en servir plutôt que de balayer la table.
+    let plan: String = storage
+        .conn
+        .query_row(
+            "EXPLAIN QUERY PLAN SELECT id FROM messages WHERE to_user = '#projet' ORDER BY id",
+            [],
+            |row| row.get(3),
+        )
+        .unwrap();
+    assert!(plan.contains("idx_messages_conv"), "plan obtenu : {plan}");
+}

@@ -164,6 +164,13 @@ impl Storage {
         let mut conn = Connection::open(&db_path)?;
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "NORMAL")?;
+        // Attendre plutôt que renvoyer SQLITE_BUSY si une autre connexion écrit.
+        conn.pragma_update(None, "busy_timeout", 5_000)?;
+        // 64 Mo de cache et lecture par mmap : notre chemin chaud est la
+        // pagination de l'historique, faite de lectures répétées.
+        conn.pragma_update(None, "cache_size", -64_000)?;
+        conn.pragma_update(None, "mmap_size", 268_435_456)?;
+        conn.pragma_update(None, "temp_store", "MEMORY")?;
         let tx = conn.transaction()?;
         tx.execute_batch(
             "CREATE TABLE IF NOT EXISTS messages (
@@ -178,6 +185,9 @@ impl Storage {
                 reply_to  INTEGER
             );
             CREATE INDEX IF NOT EXISTS idx_messages_hash ON messages(hash);
+            -- Toutes les requêtes de conversation filtrent sur `to_user` : sans
+            -- cet index, chacune parcourt la table entière.
+            CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(to_user, id);
             CREATE TABLE IF NOT EXISTS reactions (
                 message_hash INTEGER NOT NULL,
                 emoji        TEXT    NOT NULL,
@@ -440,6 +450,16 @@ impl Storage {
             params![username, pubkey],
         )?;
         Ok(())
+    }
+
+    /// Rafraîchit les statistiques du planificateur de requêtes.
+    ///
+    /// Recommandation de l'amont pour une connexion de longue durée — le thread
+    /// de stockage vit aussi longtemps que l'application. Sans cela, les plans
+    /// sont choisis sur des statistiques périmées, ce qui compte d'autant plus
+    /// avec l'index de conversation.
+    pub fn optimize(&self) -> rusqlite::Result<()> {
+        self.conn.execute_batch("PRAGMA optimize;")
     }
 
     /// Compacte la base et réindexe : le fichier ne récupère jamais seul
@@ -1081,6 +1101,12 @@ fn run(
         if let Err(e) = result {
             tracing::error!("erreur d'écriture : {e}");
         }
+    }
+
+    // Canal fermé : l'application s'arrête, on laisse le planificateur des
+    // statistiques à jour pour le prochain démarrage.
+    if let Err(e) = storage.optimize() {
+        tracing::warn!("PRAGMA optimize : {e}");
     }
 }
 

@@ -962,7 +962,9 @@ pub fn run(
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Abcom")
-        .with_inner_size([860.0, 600.0]);
+        .with_inner_size([860.0, 600.0])
+        // En dessous, la barre latérale seule occupe toute la fenêtre.
+        .with_min_inner_size([560.0, 360.0]);
 
     if let Some(icon) = app_icon_data() {
         viewport = viewport.with_icon(icon);
@@ -971,6 +973,9 @@ pub fn run(
     let options = eframe::NativeOptions {
         viewport,
         renderer: eframe::Renderer::Wgpu,
+        // Le défaut d'egui-wgpu est `HighPerformance`, ce qui réveille le GPU
+        // dédié d'un portable pour peindre du texte et des rectangles.
+        wgpu_options: low_power_wgpu(),
         ..Default::default()
     };
 
@@ -985,6 +990,9 @@ pub fn run(
             // Loaders d'images egui_extras : HTTP (récupération depuis le CDN
             // Klipy) + décodage GIF/WebP animés pour les vignettes et le fil.
             egui_extras::install_image_loaders(&cc.egui_ctx);
+            // Libère la copie CPU des images une fois téléversées en GPU.
+            cc.egui_ctx
+                .options_mut(|options| options.reduce_texture_memory = true);
             Ok(Box::new(AbcomApp::new(
                 state,
                 identity_fingerprint,
@@ -1000,6 +1008,16 @@ pub fn run(
     })?;
 
     Ok(())
+}
+
+/// Configuration wgpu privilégiant le GPU intégré : le défaut d'egui-wgpu est
+/// `HighPerformance`, ce qui réveille la carte dédiée pour une interface 2D.
+fn low_power_wgpu() -> eframe::egui_wgpu::WgpuConfiguration {
+    let mut options = eframe::egui_wgpu::WgpuConfiguration::default();
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_setup {
+        setup.power_preference = eframe::wgpu::PowerPreference::LowPower;
+    }
+    options
 }
 
 /// Rend à l'OS les pages libérées mais retenues par l'allocateur (sans effet hors mimalloc).

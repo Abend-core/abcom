@@ -44,7 +44,10 @@ pub(crate) fn load_normalized_avatar(path: &Path) -> anyhow::Result<Vec<u8>> {
             anyhow::bail!("support SVG non compilé (feature `avatar-svg`)")
         }
     } else {
-        image::open(path)?
+        // Même borne que pour les images reçues : un fichier choisi peut aussi
+        // être une bombe de décompression.
+        crate::util::decode_image_bounded(&std::fs::read(path)?)
+            .ok_or_else(|| anyhow::anyhow!("image illisible ou trop grande"))?
     };
 
     // `resize_to_fill` couvre puis recadre au centre : pas de déformation.
@@ -145,7 +148,7 @@ impl AbcomApp {
         }
 
         let bytes = self.state.lock_safe().avatar_bytes(username)?;
-        let image = image::load_from_memory(&bytes).ok()?;
+        let image = crate::util::decode_image_bounded(&bytes)?;
         let rgba = image.to_rgba8();
         let (width, height) = rgba.dimensions();
         let color_image = egui::ColorImage::from_rgba_unmultiplied(

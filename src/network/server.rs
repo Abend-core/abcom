@@ -37,6 +37,9 @@ pub async fn run_server_on(listener: TcpListener, ctx: Arc<NetContext>) {
     loop {
         match listener.accept().await {
             Ok((stream, _addr)) => {
+                // Cf. pool.rs : les accusés et indicateurs de frappe repartent
+                // par cette socket, Nagle y ajouterait un délai perceptible.
+                let _ = stream.set_nodelay(true);
                 let Ok(permit) = connection_limit.clone().try_acquire_owned() else {
                     tracing::warn!("connexion entrante refusée : limite atteinte");
                     continue;
