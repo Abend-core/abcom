@@ -825,7 +825,7 @@ impl AbcomApp {
                                         }
 
                                         let emoji_btn =
-                                            if let Some((_, tex)) = self.emoji.textures.first() {
+                                            if let Some(tex) = self.emoji.textures.get(ui.ctx(), 0) {
                                                 icon_button(
                                                     ui,
                                                     self.tr("Emojis", "Emoji"),

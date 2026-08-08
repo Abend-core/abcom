@@ -8,7 +8,7 @@ use super::AbcomApp;
 pub(crate) fn show_emoji_grid(
     ui: &mut egui::Ui,
     category: &mut usize,
-    textures: &[(String, egui::TextureHandle)],
+    textures: &super::EmojiTextures,
     mut on_pick: impl FnMut(&str),
 ) {
     // Catégories
@@ -30,7 +30,8 @@ pub(crate) fn show_emoji_grid(
     ui.separator();
 
     let (_, start, end) = crate::emoji_registry::EMOJI_CATEGORIES[*category];
-    let slice = &textures[start..end.min(textures.len())];
+    let total = crate::emoji_registry::EMOJI_DATA.len();
+    let slice = &crate::emoji_registry::EMOJI_DATA[start..end.min(total)];
 
     egui::ScrollArea::vertical()
         .max_height(270.0)
@@ -40,7 +41,7 @@ pub(crate) fn show_emoji_grid(
             egui::Grid::new("emoji_grid")
                 .spacing([3.0, 3.0])
                 .show(ui, |ui| {
-                    for (idx, (ch, texture)) in slice.iter().enumerate() {
+                    for (offset, (ch, _)) in slice.iter().enumerate() {
                         let (cell_rect, cell_resp) =
                             ui.allocate_exact_size(egui::vec2(36.0, 36.0), egui::Sense::click());
                         if cell_resp.hovered() {
@@ -50,16 +51,24 @@ pub(crate) fn show_emoji_grid(
                                 ui.visuals().widgets.hovered.bg_fill,
                             );
                         }
-                        ui.painter().image(
-                            texture.id(),
-                            cell_rect.shrink(1.0),
-                            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-                            egui::Color32::WHITE,
-                        );
-                        if cell_resp.on_hover_text(ch.as_str()).clicked() {
+                        // Décodage à la demande : seule la catégorie ouverte coûte quelque chose.
+                        if ui.is_rect_visible(cell_rect) {
+                            if let Some(texture) = textures.get(ui.ctx(), start + offset) {
+                                ui.painter().image(
+                                    texture.id(),
+                                    cell_rect.shrink(1.0),
+                                    egui::Rect::from_min_max(
+                                        egui::pos2(0.0, 0.0),
+                                        egui::pos2(1.0, 1.0),
+                                    ),
+                                    egui::Color32::WHITE,
+                                );
+                            }
+                        }
+                        if cell_resp.on_hover_text(*ch).clicked() {
                             on_pick(ch);
                         }
-                        if (idx + 1) % 8 == 0 {
+                        if (offset + 1) % 8 == 0 {
                             ui.end_row();
                         }
                     }
@@ -180,7 +189,7 @@ pub(crate) fn show_shortcode_popup(
     resp: &egui::Response,
     shortcode_list: &[(String, String)],
     emoji_map: &std::collections::HashMap<String, usize>,
-    emoji_textures: &[(String, egui::TextureHandle)],
+    emoji_textures: &super::EmojiTextures,
     shortcode_selected: usize,
     clicked_shortcode: &mut Option<String>,
 ) {
@@ -227,7 +236,7 @@ pub(crate) fn show_shortcode_popup(
                             let mut x = row_rect.left() + 8.0;
                             let y = row_rect.center().y;
                             if let Some(&tex_idx) = emoji_map.get(ch) {
-                                if let Some((_, tex)) = emoji_textures.get(tex_idx) {
+                                if let Some(tex) = emoji_textures.get(ui.ctx(), tex_idx) {
                                     let img_rect = egui::Rect::from_center_size(
                                         egui::pos2(x + 9.0, y),
                                         egui::vec2(18.0, 18.0),
@@ -291,7 +300,7 @@ pub(crate) fn render_inline(
     ui: &mut egui::Ui,
     text: &str,
     emoji_map: &std::collections::HashMap<String, usize>,
-    textures: &[(String, egui::TextureHandle)],
+    textures: &super::EmojiTextures,
     emoji_size: f32,
 ) {
     let chars: Vec<char> = text.chars().collect();
@@ -305,8 +314,8 @@ pub(crate) fn render_inline(
                 ui.label(&acc);
                 acc.clear();
             }
-            if let Some((_, tex)) = textures.get(idx) {
-                ui.add(egui::Image::new(tex).fit_to_exact_size(size));
+            if let Some(tex) = textures.get(ui.ctx(), idx) {
+                ui.add(egui::Image::new(&tex).fit_to_exact_size(size));
             }
             i += len;
             matched = true;

@@ -275,7 +275,7 @@ fn render_message_body(
     expanded: bool,
     language: UiLanguage,
     emoji_map: &std::collections::HashMap<String, usize>,
-    emoji_textures: &[(String, egui::TextureHandle)],
+    emoji_textures: &super::EmojiTextures,
     media_textures: &std::collections::HashMap<String, Option<egui::TextureHandle>>,
     media_progress: &std::collections::HashMap<String, crate::message::MediaProgress>,
 ) -> (Option<super::media::MediaAction>, bool) {
@@ -358,11 +358,11 @@ fn paint_emoji_texture(
     rect: egui::Rect,
     emoji: &str,
     emoji_map: &std::collections::HashMap<String, usize>,
-    emoji_textures: &[(String, egui::TextureHandle)],
+    emoji_textures: &super::EmojiTextures,
 ) {
-    if let Some((_, texture)) = emoji_map
+    if let Some(texture) = emoji_map
         .get(emoji)
-        .and_then(|&idx| emoji_textures.get(idx))
+        .and_then(|idx| emoji_textures.get(ui.ctx(), *idx))
     {
         ui.painter().image(
             texture.id(),
@@ -381,7 +381,7 @@ fn render_reaction_pills(
     reactions: &[ReactionEntry],
     my_username: &str,
     emoji_map: &std::collections::HashMap<String, usize>,
-    emoji_textures: &[(String, egui::TextureHandle)],
+    emoji_textures: &super::EmojiTextures,
 ) -> Option<String> {
     if reactions.is_empty() {
         return None;
@@ -591,21 +591,15 @@ impl AbcomApp {
         reply_label: &str,
         add_reaction_label: &str,
     ) -> HoverToolbarResult {
-        // Lookup indexé via `emoji_map` (pas de recherche linéaire dans les
-        // 323 textures à chaque frame de survol).
-        let textures: Vec<(String, egui::TextureHandle)> = self
+        // Seuls les emojis connus du registre : la texture est décodée au premier rendu.
+        let emojis: Vec<String> = self
             .recent_reaction_emojis
             .iter()
-            .filter_map(|e| {
-                self.emoji
-                    .map
-                    .get(e)
-                    .and_then(|&idx| self.emoji.textures.get(idx))
-                    .cloned()
-            })
+            .filter(|e| self.emoji.map.contains_key(*e))
+            .cloned()
             .collect();
 
-        let toolbar_w = HOVER_BTN_SIZE * (textures.len() as f32 + 2.0) + 6.0;
+        let toolbar_w = HOVER_BTN_SIZE * (emojis.len() as f32 + 2.0) + 6.0;
         let toolbar_h = HOVER_BTN_SIZE + 10.0;
         let anchor = egui::pos2(
             row_rect.right() - toolbar_w - 12.0,
@@ -626,7 +620,7 @@ impl AbcomApp {
                 .show(ui, |ui| {
                     ui.horizontal(|ui| {
                         ui.spacing_mut().item_spacing.x = 2.0;
-                        for (ch, _) in &textures {
+                        for ch in &emojis {
                             let (rect, resp) = ui.allocate_exact_size(
                                 egui::vec2(HOVER_BTN_SIZE, HOVER_BTN_SIZE),
                                 egui::Sense::click(),
