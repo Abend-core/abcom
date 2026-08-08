@@ -2,7 +2,7 @@ use super::{sound::play_notification_sound, AbcomApp};
 use crate::app::AppState;
 use crate::message::{
     AppEvent, AvatarRequest, ChatMessage, GroupAction, GroupEvent, MessageAck, MessageAckRequest,
-    ReadReceipt, ReadReceiptRequest, SendGroupRequest,
+    ReadReceipt, ReadReceiptRequest, SendGroupRequest, SendRequest,
 };
 use crate::protocol::media_requires_ack;
 use crate::util::MutexExt;
@@ -150,6 +150,31 @@ impl AbcomApp {
                             event,
                         });
                     }
+                    // Messages écrits pendant son absence : réémis maintenant.
+                    let queued = s.take_outbox_for(&username);
+                    if !queued.is_empty() {
+                        let requests: Vec<_> = queued
+                            .into_iter()
+                            .map(|(hash, message)| {
+                                (
+                                    hash,
+                                    SendRequest {
+                                        to_peer: username.clone(),
+                                        to_addr: addr,
+                                        message,
+                                    },
+                                )
+                            })
+                            .collect();
+                        drop(s);
+                        for (hash, request) in requests {
+                            if self.net.try_send(request.clone()) {
+                                self.state.lock_safe().mark_message_sent(hash, request);
+                            }
+                        }
+                        s = self.state.lock_safe();
+                    }
+
                     // Première découverte (depuis le dernier envoi) : on partage
                     // notre avatar pour qu'il s'affiche chez ce pair.
                     if !self.avatar_sent_to.contains(&username) {

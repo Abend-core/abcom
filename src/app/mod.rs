@@ -58,6 +58,8 @@ pub struct AppState {
     /// Émetteur vers le thread de stockage SQLite (`None` en tests isolés :
     /// les mutations restent purement en mémoire).
     storage: Option<std::sync::mpsc::Sender<StorageCmd>>,
+    /// Messages en attente d'un destinataire hors ligne, par hash (persistés).
+    pub outbox: HashMap<u64, (String, ChatMessage)>,
     /// Messages entrants par conversation, dérivé une fois par génération (évite un O(n·m) par frame).
     incoming_counts: std::cell::RefCell<(u64, HashMap<String, usize>)>,
     /// rowid du plus ancien message chargé en mémoire (pagination) ;
@@ -98,6 +100,7 @@ impl AppState {
             // Relus depuis la base : coches et détail « … » survivent au redémarrage.
             read_receipts: loaded.read_receipts,
             delivered_receipts: loaded.delivered_receipts,
+            outbox: loaded.outbox,
             pending_messages: HashMap::new(),
             failed_messages: HashMap::new(),
             peer_records: loaded.peer_records,
@@ -134,6 +137,7 @@ impl AppState {
             read_counts: HashMap::new(),
             read_receipts: HashMap::new(),
             delivered_receipts: HashMap::new(),
+            outbox: HashMap::new(),
             pending_messages: HashMap::new(),
             failed_messages: HashMap::new(),
             peer_records: Vec::new(),
