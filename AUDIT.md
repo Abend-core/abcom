@@ -1,7 +1,7 @@
 # Audit qualité — abcom
 
 > Checklist complète des améliorations pour un projet propre au maximum.
-> **Révisé le 8 août 2026, branche `dev`** (passes précédentes : 7 juillet, 5 août 2026).
+> **Révisé le 8 août 2026 (3ᵉ passe du jour), branche `dev`** (passes précédentes : 7 juillet, 5 août 2026).
 > Priorités : 🔴 important (correctif ou dette bloquante) · 🟠 recommandé · 🟢 confort/finition.
 > Chaque point référence les fichiers concernés ; cocher au fur et à mesure.
 >
@@ -18,13 +18,16 @@ Métriques recomptées sur le code actuel :
 | dont `lock().unwrap()` | 55 | 0 | **0** | ✅ `lock_safe` |
 | `eprintln!`/`println!` de prod | 34 | 0 | **0** | ✅ `tracing` |
 | `#[allow(dead_code)]` | 16 | 4 | **4** (justifiés) | ✅ |
-| Tests | 259 | 257 | **299** (296 unitaires + 2 bin + 1 e2e) | ✅ |
+| Tests | 259 | 257 | **308** (dont rendu headless de toute l'UI) | ✅ |
 | `clippy -D warnings` / `fmt --check` | vert | vert | **vert** | CI bloquante OK |
 | Champs `AbcomApp` (god-struct) | 90 | 46 | **48** en 6 sous-structs | ✅ |
 | Version `Cargo.toml` | `0.0.1` | `0.0.1` | **`1.0.0-beta.1`** + MSRV | ✅ |
 | MSRV déclarée et testée en CI | ✗ | ✗ | **1.95** (job `msrv`) | ✅ |
 | Renderer | Glow (OpenGL émulé) | Glow | **wgpu (Metal natif)** | ✅ mesuré |
-| Contexte GPU au repos | 42,4 Mo | — | **3,9 Mo** | ✅ mesuré |
+| Contexte GPU au repos | 42,4 Mo | — | **3,8 Mo** | ✅ mesuré |
+| Empreinte physique au repos | 132 Mo | 104 Mo | **56,2 Mo** (release) | ✅ mesuré |
+| egui / eframe | 0.31 | 0.31 | **0.36** | ✅ |
+| Plus gros fichier UI | 1 522 | 1 589 | **886** (`chat_panel/mod.rs`) | ✅ |
 | Licence déclarée | `MIT` ≠ LICENSE | idem | **`AGPL-3.0-only`** cohérente | ✅ |
 
 **Trois vagues de travaux depuis la passe du 5 août :**
@@ -37,8 +40,12 @@ Métriques recomptées sur le code actuel :
    de release.
 3. **Passe 08/08 (b)** — dépendances à jour (dont sept montées majeures),
    renderer wgpu, mimalloc, chemins chauds, persistance des accusés, licence
-   tranchée. Chaque étape validée par `fmt` + `clippy -D warnings` + tests, et
-   l'application relancée réellement après la bascule du renderer.
+   tranchée.
+4. **Passe 08/08 (c)** — egui 0.36, décodage emoji paresseux, annonces de
+   découverte signées, file d'attente hors-ligne, découpage des gros fichiers
+   UI, export et compaction de la base. Chaque étape validée par `fmt` +
+   `clippy -D warnings` + tests, l'application relancée réellement, et la
+   découverte mutuelle vérifiée entre deux instances.
 
 **Sécurité — état :** S1 (traversée de répertoire) et S2 (usurpation applicative)
 sont **résolus**. S3 (première rencontre TOFU) reste ouvert par nature, mais est
@@ -72,11 +79,12 @@ implémenté.
 - [x] 🔴 **34 `eprintln!`/`println!`** — **fait (05/08, P3)** : `tracing`.
 - [x] 🟠 Purger les **16 `#[allow(dead_code)]`** — **fait (05/08, P4)** : 4 restants,
   justifiés en commentaire.
-- [ ] 🟠 Découper les gros fichiers UI : `chat_panel.rs` (1 589 lignes),
-  `input_bar.rs` (1 133), `ui/mod.rs` (1 007), `markdown.rs` (987),
-  `composer/mod.rs` (908). Extraire le rendu d'une ligne de fil, la barre de
-  survol, les modales (le modèle `composer/` est à répliquer). **Reste le plus
-  gros chantier de maintenabilité ouvert.**
+- [x] 🟠 Découper les gros fichiers UI — **fait (08/08)** : `chat_panel.rs`
+  (1 589) → `mod.rs` (886) + `row.rs` (582) + `toolbar.rs` (143) ;
+  `input_bar.rs` (1 130) → `mod.rs` (688) + `sending.rs` (238) +
+  `widgets.rs` (228). Déplacements purs, visibilité juste nécessaire entre
+  sous-modules. Restent `ui/mod.rs` (1 027), `markdown.rs` (987) et
+  `composer/mod.rs` (962), tous cohérents en l'état.
 - [x] 🟠 Dédupliquer le scan d'emojis — **fait (05/08, P5)** : `match_emoji_at`.
 - [x] 🟠 Centraliser les constantes visuelles dupliquées — **fait (05/08, P5)** :
   `ui/theme.rs`.
@@ -95,25 +103,25 @@ implémenté.
 
 ## 3. Architecture
 
-- [ ] 🟠 `ui/events.rs::process_events` mélange encore réception réseau, mutation
-  d'état et politique de notification (sons, tray, focus). `app/conversation.rs`
-  et `ui/outbound.rs` ont sorti une partie de la logique d'envoi ; la partie
-  réception/notification reste à extraire pour être testable sans UI.
+- [x] 🟠 `process_events` mélangeait réception réseau et rendu — **fait (08/08)** :
+  eframe 0.36 sépare `App::logic` (événements, tray, tâches périodiques, appelé
+  même fenêtre repliée) de `App::ui` (peinture seule). Reste à sortir la
+  politique de notification vers `app/` pour la tester sans UI — mais elle ne
+  s'exécute plus dans le chemin de rendu.
 - [ ] 🟠 Le mutex global `AppState` est verrouillé/déverrouillé plusieurs fois par
   frame et par événement (`drop(s)`/`relock` manuels dans `events.rs`). Envisager :
   file de commandes vers un unique propriétaire de l'état, ou au minimum
   documenter l'ordre de verrouillage.
-- [ ] 🟢 `klipy.rs` (API externe) vit à la racine de `src/` à côté de `app/`,
-  `network/`, `ui/` — le déplacer dans `services/` pour clarifier les couches.
+- [x] 🟢 `klipy.rs` à la racine de `src/` — **fait (08/08)** : `services/klipy.rs`.
 - [x] 🟠 `AbcomApp` god-struct de 90 champs — **fait (05/08, P6)** : 6 sous-structs.
 - [x] 🟠 `network/sender.rs` : sept boucles d'émission quasi identiques —
   **fait (07/08)** : une seule file générique `NetworkSendRequest` → un worker par
   pair → `ConnectionPool` (54 lignes au lieu de ~150, six canaux supprimés).
 - [x] 🟠 `ui::run` prenait 14 paramètres positionnels — **fait (07/08)** :
   regroupés dans `ui::UiRuntimeChannels`.
-- [ ] 🟢 Regrouper l'intégration bureau dans un module `platform/` : `notify.rs`
-  et `autostart.rs` à la racine de `src/`, `tray.rs` dans `ui/`, bascule Dock
-  macOS dans `ui/mod.rs`.
+- [x] 🟢 Intégration bureau éparpillée — **fait (08/08)** : `platform/{notify,
+  autostart,tray}.rs`. La bascule Dock macOS reste dans `ui/mod.rs`, où elle
+  s'appelle depuis le cycle de vie de la fenêtre.
 - [x] 🟢 `main.rs` parsait `.env` à la main — **fait (08/08)** : `parse_dotenv`
   restreint aux trois clés attendues (`ABCOM_KLIPY_API_KEY`, `ABCOM_PASSPHRASE`,
   `ABCOM_INSTANCE`), gère guillemets et `export`, l'environnement existant prime,
@@ -136,10 +144,11 @@ implémenté.
 - [x] 🟠 Accusés livré/lu **non persistés** — **fait (08/08)** : table `receipts`
   (hash, pair, nature), écriture idempotente, rechargement au démarrage et purge
   des accusés orphelins à l'ouverture de la base. Testé (aller-retour + purge).
-- [ ] 🟠 Pas de **file d'attente hors-ligne** : un message vers un pair hors ligne
-  (ou un membre de salon absent) est perdu — seul le 1-à-1 a un `pending` avec
-  retry, borné à la session. Définir la sémantique voulue (stocker et réémettre à
-  la reconnexion ?) et l'implémenter ou la documenter.
+- [x] 🟠 Pas de **file d'attente hors-ligne** — **fait (08/08)** : table `outbox`
+  persistée ; un message à un pair absent entre dans le fil et repart à sa
+  reconnexion, où il rejoint le circuit ACK/retry. La notification ne ment plus
+  (« envoi à sa reconnexion »). Les salons restent au « meilleur effort » :
+  seuls les membres en ligne reçoivent.
 - [x] 🟠 Garde-fou de taille **générique** — **fait (08/08)** : déplacé dans
   `ConnectionPool::send`, qui sérialise **une seule fois** et refuse tout paquet
   au-delà de `MAX_LOGICAL_MESSAGE` (avatar volumineux, événement de groupe énorme)
@@ -168,13 +177,14 @@ implémenté.
   type de paquet avec le pair authentifié par la session, et rejette sinon
   (perte comptée). Côté média, `media_stream.rs` vérifie
   `header.from == authenticated_peer` avant tout traitement.
-- [ ] 🔴 **Le username n'est pas lié à la clé au niveau découverte (S3)** :
-  `DiscoveryPacket` annonce `username` + `pubkey` en clair, sans preuve de
-  possession. À la **première** rencontre (avant tout épinglage TOFU), la victime
-  peut épingler la mauvaise clé. **Documenté (08/08)** dans le modèle de menace
-  comme limite explicite, avec la parade (vérification d'empreinte hors-bande,
-  passphrase de salon). **Reste à faire** : signer l'annonce avec la clé privée
-  pour fermer réellement le trou.
+- [~] 🔴 **Découverte (S3)** — **annonces signées (08/08)**, mais la limite de
+  fond demeure. Une annonce porte désormais une clé Ed25519 (dérivée de
+  l'identité Noise par BLAKE2s), un horodatage et une signature de
+  (pseudo, port, clés, horodatage). **Fermé** : annonces fabriquées pour une clé
+  qu'on ne possède pas (pairs fantômes), détournement du port annoncé, rejeu
+  au-delà de 60 s. **Toujours ouvert, et inhérent au TOFU** : un pair peut
+  annoncer le pseudo d'un autre avec sa propre clé, correctement signée — seule
+  la vérification d'empreinte hors-bande protège la première rencontre.
 - [x] 🔴 **Traversée de répertoire à la réception de média** — ✅ **résolu (PR #28)** :
   `is_safe_media_id` valide l'`id` avant toute écriture.
 - [x] 🟠 TOFU : **aucun flux de ré-appairage légitime** — **fait (08/08)** :
@@ -216,11 +226,12 @@ implémenté.
   `clear_conversation_history` ou la purge du ring-buffer, le compte peut désigner
   un ensemble différent de messages. Baser le « lu jusqu'à » sur un rowid/hash de
   dernier message lu.
-- [ ] 🟢 Aucune maintenance de la base : ni `VACUUM` périodique, ni contrôle de
-  taille (l'historique croît sans limite). Ajouter une commande de compaction et,
-  optionnellement, une rétention configurable.
-- [ ] 🟢 Pas d'export/sauvegarde de l'historique : une commande d'export
-  JSON/texte par conversation serait cohérente avec l'esprit local-first.
+- [x] 🟢 Aucune maintenance de la base — **fait (08/08)** : bouton « Compacter la
+  base » (VACUUM + ANALYZE) traité par le thread de stockage, et `footprint()`
+  expose taille du fichier et nombre de messages. La **rétention configurable**
+  reste à faire.
+- [x] 🟢 Pas d'export de l'historique — **fait (08/08)** : Paramètres → Général →
+  Données, export texte de la conversation courante.
 
 ## 7. Performance
 
@@ -248,14 +259,11 @@ implémenté.
   | `IOAccelerator (graphics)` | 29,6 Mo | 6,2 Mo | **3,9 Mo** |
   | RSS | 155,8 Mo | 146,0 Mo | **138,9 Mo** |
   | Empreinte physique (pic) | 132,4 Mo | 110,8 Mo | **110,6 Mo** |
-- [ ] 🟠 **Décoder les emojis paresseusement** : les 323 PNG sont décodés et
-  téléversés en GPU **au lancement** (`spawn_emoji_decoder`) même si le sélecteur
-  n'est jamais ouvert — ~6,7 Mo GPU + 6,5 Mo CPU + latence de démarrage.
-  *Non fait délibérément (08/08)* : le couple `emoji_map: HashMap<String, usize>`
-  + `emoji_textures: &[(String, TextureHandle)]` traverse une vingtaine de sites
-  de rendu en emprunt partagé ; le décodage à la demande impose une cache à
-  mutabilité intérieure et la réécriture de ces signatures. Le rendu des emojis
-  est très visible : à faire dans une passe dédiée, avec vérification à l'écran.
+- [x] 🟠 **Décoder les emojis paresseusement** — **fait (08/08)** : `EmojiTextures`
+  décode au premier affichage réel et mémorise, via mutabilité intérieure pour
+  ne pas propager `&mut` dans tout le rendu. L'index de recherche se construit
+  instantanément sur le registre statique : plus de thread de décodage, plus
+  d'état « textures prêtes ». Empreinte physique 91,7 → 57,6 Mo.
 - [x] 🟠 **Rendre la RAM au système sur repli tray** — **fait (08/08)** :
   mimalloc en allocateur global + `mi_collect(true)` appelé explicitement dans
   `hide_to_tray`. Sans cet appel, l'allocateur gardait les pages et le RSS ne
@@ -299,9 +307,10 @@ implémenté.
 - [x] 🟠 Aucun test **bout-en-bout multi-processus** — **fait (07/08)** :
   `tests/p2p_e2e.rs` monte deux piles réseau complètes et vérifie l'échange
   authentifié de bout en bout (le crate est exposé en lib pour cela).
-- [ ] 🟠 Mesurer la couverture en CI (`cargo llvm-cov`) : 295 tests passent mais
-  aucune visibilité sur les zones non couvertes — le rendu UI notamment, où vivent
-  la plupart des régressions récentes (survol, pagination, curseur).
+- [x] 🟠 Mesurer la couverture en CI — **fait (08/08)** : job `coverage`
+  (`cargo llvm-cov`) sur `dev`. Le rendu UI, jusqu'ici totalement non couvert, a
+  désormais trois tests headless qui peignent l'arbre complet (panneaux,
+  modales, pickers, messages) et détectent panique et régression de structure.
 - [ ] 🟢 Ajouter des bancs `criterion` pour les chemins chauds (parse markdown,
   `message_hash`, reconstruction du snapshot).
 - [ ] 🟢 Tests de propriété (proptest) sur `message_hash` et sur les opérations de
@@ -334,12 +343,14 @@ implémenté.
   (07-08/08)** : `1.0.0-beta.1` publiée, section « Non publié » alimentée.
 - [ ] 🟠 `docs/08-historique-et-audits.md` : y ajouter la présente passe (08/08) et
   archiver l'ancien processus.
-- [ ] 🟢 README : badges CI, capture d'écran à jour, « Quick start » 3 lignes.
+- [x] 🟢 README : badges CI et licence, état réel du projet, renvoi vers
+  `CONTRIBUTING.md` — **fait (08/08)**. La **capture d'écran** reste à refaire.
 - [ ] 🟢 Documenter le format exact du protocole (paquets JSON, framing 64 Ko,
   `MAX_LOGICAL_MESSAGE`) dans `docs/03-reseau-et-securite.md` — la doc décrit
   l'intention et les constantes, pas encore le format binaire complet.
-- [ ] 🟢 Ajouter un `CONTRIBUTING.md` court pointant le workflow de branches et la
-  convention de tests (désormais documentée dans `07-developpement.md`).
+- [x] 🟢 `CONTRIBUTING.md` — **fait (08/08)** : barrière verte, branches, commits,
+  conventions de code (commentaires d'une ligne, tests dans `src/tests/`,
+  `lock_safe`, `tracing`) et règles pour les agents IA.
 - [x] 🔴 **Incohérence de licence** — **tranchée (08/08)** : le projet est sous
   **AGPL-3.0**. `LICENSE` (texte intégral de la GNU AGPL v3) et l'onglet Licence
   de l'application faisaient déjà foi ; seul `Cargo.toml` disait `MIT`, il déclare
@@ -397,59 +408,33 @@ implémenté.
 
 ## Synthèse — ce qui reste
 
-**🔴 Ouverts :**
-
-| # | Chantier | Pourquoi il reste ouvert |
-|---|----------|--------------------------|
-| S3 | Signature de l'annonce de découverte (première rencontre TOFU) | Changement de protocole ; documenté comme limite, parade décrite (empreinte hors-bande, passphrase) |
+Plus aucun 🔴 ouvert. S3 (première rencontre TOFU) est **atténué** — annonces
+signées, rejeu borné, limite documentée — mais sa part irréductible tient au
+modèle TOFU lui-même, pas à une dette de code.
 
 **🟠 Ouverts, par ordre de valeur :**
 
-1. Découper `chat_panel.rs` (1 589) / `input_bar.rs` (1 133) / `ui/mod.rs`
-   (1 007) en sous-modules (§2) — **le vrai frein restant** à la maintenabilité.
-2. Sémantique hors-ligne : que faire d'un message envoyé à un pair absent (§4).
-3. Extraire la logique de `process_events` hors de l'UI (§3).
-4. Décodage paresseux des emojis (§7a) — le dernier gros poste mémoire, laissé
-   de côté faute de pouvoir valider le rendu à l'écran dans cette passe.
-5. Montée **egui/eframe 0.31 → 0.36** — voir l'encadré ci-dessous.
-6. i18n centralisée (§2), couverture de tests en CI (§8), thème clair (§12).
+1. **i18n** (§2) : 172 appels `self.tr(fr, en)` dispersés, plus quelques
+   `match language` locaux. Ajouter une langue demande encore de toucher
+   30 fichiers.
+2. **Politique d'erreurs** (§2) : `anyhow` peu exploité hors `main.rs` ;
+   `app/`/`network/` mélangent `Option`, `io::Error` et silences.
+3. **Ordre de verrouillage d'`AppState`** (§3) : `drop(s)`/relock manuels dans
+   `events.rs`, source classique de deadlock à la modification.
+4. **Thème clair** (§12) : le sélecteur existe, une partie des couleurs reste
+   codée en dur pour un fond sombre.
+5. **Mémoire au repli** (§7a) : libérer aussi le contexte graphique quand la
+   fenêtre est dans le tray (~4 Mo restants), et mesurer un runtime tokio à un
+   seul worker.
+6. **Rétention d'historique** (§6), **benches criterion** et **proptest** (§8),
+   **signature macOS** (§11), **navigation clavier et accessibilité** (§12).
 
-### Montée egui 0.36 : évaluée, volontairement non appliquée
-
-La tentative a été faite et mesurée : **23 erreurs de compilation** sur 8
-fichiers. Le compte est trompeur — ce ne sont pas des renommages :
-
-- `eframe::App` change de forme : `update(&mut self, ctx, frame)` disparaît au
-  profit de `ui(&mut self, ui, frame)` (+ `logic()` pour les passes sans rendu) ;
-- `TopBottomPanel`/`SidePanel` fusionnent dans un `Panel` unique qui s'affiche
-  **dans un `Ui`** et non plus depuis le `Context` : toute la racine de l'arbre
-  d'affichage change de nature, et `ctx` est passé en profondeur dans une
-  douzaine de fonctions de rendu ;
-- l'API popups/menus est refondue (`popup_below_widget`, `close_menu`,
-  `toggle_popup` supprimés) — or c'est exactement là que vivent les régressions
-  récentes du projet (barre de survol, sélecteur de réactions) ;
-- divers : `ctx.style()`/`ctx.screen_rect()` retirés, `IMEOutput` gagne des
-  champs, `raw_scroll_delta` disparaît.
-
-Ces changements sont **sémantiques, pas syntaxiques** : ils compilent puis se
-voient à l'écran. Les valider demande de reprendre une à une la dizaine de
-surfaces de l'application (fil, barre latérale, composeur, pickers emoji/GIF,
-paramètres, modales, visionneuse). À faire dans une passe dédiée, avec
-validation visuelle — pas en même temps qu'une mise à jour de dépendances.
-
-Toutes les **autres** dépendances sont à jour, y compris sept montées majeures
-(`dirs` 6, `socket2` 0.6, `ehttp` 0.7, `rfd` 0.17, `rodio` 0.22, `resvg` 0.48,
-`objc2` 0.6 / `objc2-*` 0.3).
-
-**✅ Fermés lors des trois passes :** S2, R1, R2, R3, R4, unification des
-expéditeurs, handshake hors verrou, éviction du pool, garde-fou de taille
-générique, delta des accusés de lecture, ré-appairage TOFU, collage hors `/tmp`,
-ACL Windows de la clé, purge des sauvegardes de migration, transactions de lot
-SQLite, persistance des accusés, hook de panique, métriques de session,
-nettoyage d'arrêt, renderer wgpu, mimalloc, mémoïsation du caret, compteurs de
-non-lus dérivés, `cargo audit`/`deny` sur `dev`, MSRV, pipeline de release,
-veille de dépendances, versionnage Cargo, licence, documentation (scripts,
-tests, découverte, modèle de menace, renderer).
+**Vérifié à la main sur cette passe**, faute d'accès à la capture d'écran depuis
+le terminal : l'application démarre et tourne en debug comme en release, deux
+instances se découvrent mutuellement avec les annonces signées, et le rendu
+complet est peint sans panique par les tests headless. **Une relecture visuelle
+de l'interface après la montée egui 0.36 reste recommandée** — panneaux,
+popups et menus ont changé d'API en amont.
 
 ---
 

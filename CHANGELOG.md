@@ -8,6 +8,9 @@ Format basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/), versi
 ## [Non publié]
 
 ### Ajouté
+- **Messages hors ligne** : un message écrit à un pair absent reste dans le fil et part automatiquement à sa reconnexion, au lieu d'être refusé — la file est persistée, un redémarrage ne perd rien
+- **Annonces de découverte signées** (Ed25519 dérivé de l'identité Noise) avec horodatage : plus personne ne peut injecter de pairs fantômes sur le LAN ni rejouer une annonce capturée
+- **Export d'une conversation** en texte et **compaction de la base** (Paramètres → Général → Données)
 - Ré-appairage explicite après un changement de clé d'identité : l'alerte propose « Faire confiance à la nouvelle clé » (la connexion reste refusée tant que l'utilisateur n'a pas tranché) — jusqu'ici, un pair réinstallé était bloqué sans recours
 - Compteurs de session dans Paramètres → Général → Diagnostic : paquets envoyés, reçus, **jetés**, pairs vus — les pertes réseau silencieuses deviennent visibles
 - Bannière « X : injoignable, message non envoyé » quand aucune connexion sécurisée ne peut être établie (auparavant, l'échec n'existait que dans les logs, invisibles sur un binaire release)
@@ -25,6 +28,8 @@ Format basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/), versi
 - Le fichier `.env` injectait n'importe quelle variable dans l'environnement : seules les trois clés attendues sont lues, guillemets gérés, et l'environnement existant a la priorité
 
 ### Performance
+- **egui/eframe 0.36** : la logique (événements réseau, tray, tâches périodiques) est séparée du rendu, et tourne désormais aussi quand la fenêtre est repliée
+- **Emojis décodés à la demande** au lieu du démarrage : empreinte physique au repos 91,7 → 57,6 Mo, et lancement plus rapide
 - **Renderer wgpu (Metal natif sur macOS) à la place d'OpenGL** : contexte GPU ramené de 29,6 à 6,2 Mo, RSS de 155,8 à 146,0 Mo, pic d'empreinte de 132,4 à 110,8 Mo (mesures A/B au repos). `glow` n'est plus lié du tout
 - **mimalloc en allocateur global**, avec restitution explicite des pages au système lors du repli dans la barre de menus : le RSS descend enfin quand l'application ne fait plus que veiller le réseau (138,9 Mo contre 146,0 Mo)
 - Les positions du curseur du composeur étaient recalculées à chaque frame — deux fois quand la barre de défilement apparaît — en itérant toute la saisie : elles sont désormais mémoïsées par (texte, largeur, densité de pixels)
@@ -32,6 +37,8 @@ Format basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/), versi
 - Une rafale de messages (import, salon actif, retour en ligne) provoquait un commit SQLite par message : les insertions en attente sont regroupées dans une seule transaction
 
 ### Modifié
+- `chat_panel.rs` (1 589 lignes) et `input_bar.rs` (1 130) découpés en sous-modules ; `klipy` passe dans `services/`, `notify`/`autostart`/`tray` dans `platform/`
+- Trois tests peignent désormais toute l'interface sans fenêtre (panneaux, modales, pickers) : les régressions de structure sont attrapées en CI
 - **Licence clarifiée** : `Cargo.toml` déclarait `MIT` alors que `LICENSE` et l'application affichent la GNU AGPL v3. Ce n'était pas une double licence mais une incohérence — le projet est sous **AGPL-3.0**
 - Dépendances mises à jour : `dirs` 6, `socket2` 0.6, `ehttp` 0.7, `rfd` 0.17, `rodio` 0.22, `resvg` 0.48, `objc2` 0.6 / `objc2-*` 0.3, plus toutes les montées compatibles semver
 - Les accusés de livraison et de lecture sont **persistés** : les coches et le détail « … » survivent au redémarrage au lieu de repartir de zéro

@@ -73,3 +73,16 @@ Chaque fichier ou image transféré est stocké sous un identifiant unique dans 
 - puis applique un **plafond de 2 Go** en supprimant les fichiers les plus anciens (mtime) au-delà.
 
 Les GIF Klipy ne sont jamais stockés : ils voyagent par URL et chaque pair les charge depuis le CDN.
+
+## Tables ajoutées le 8 août 2026
+
+| Table | Contenu | Cycle de vie |
+|---|---|---|
+| `receipts` | Accusés nominatifs livré/lu (`message_hash`, `username`, `kind`) | Insertion idempotente ; les accusés orphelins sont purgés à l'ouverture de la base |
+| `outbox` | Messages en attente d'un destinataire hors ligne (`hash`, `to_peer`, `message`) | Vidée pair par pair à leur reconnexion |
+
+**Maintenance.** Paramètres → Général → Données propose la compaction
+(`VACUUM` + `ANALYZE`) — la base ne rend jamais seule l'espace des
+conversations effacées — et l'export texte de la conversation courante. Les
+sauvegardes `*.json.bak` de la migration JSON → SQLite sont supprimées au-delà
+de 30 jours.
