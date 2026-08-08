@@ -1,0 +1,45 @@
+# Configuration cargo-deny — contrôle des licences et de l'arbre de
+# dépendances, en complément de `cargo audit` (vulnérabilités connues).
+#
+# Exécuté par la CI (`ci-dev.yml`, `ci-main.yml`) : `cargo deny check`.
+
+[graph]
+all-features = true
+
+[advisories]
+# `cargo audit` couvre déjà la base RUSTSEC ; on garde le check ici pour que
+# `cargo deny check` seul soit suffisant en local.
+yanked = "warn"
+
+[licenses]
+# Licences acceptées. `AGPL-3.0-only` est celle d'abcom lui-même (cf. LICENSE) :
+# cargo-deny inspecte aussi la crate racine, il faut donc l'autoriser ici — ce
+# n'est pas une invitation à embarquer d'autres dépendances AGPL.
+allow = [
+    "AGPL-3.0-only",
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "MPL-2.0",
+    "CC0-1.0",
+    "OFL-1.1",
+    "BSL-1.0",
+    "Unlicense",
+]
+confidence-threshold = 0.9
+
+[bans]
+# Plusieurs versions d'une même crate gonflent le binaire et la compilation :
+# on le signale sans bloquer (l'écosystème egui/winit en traîne quelques-unes).
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
