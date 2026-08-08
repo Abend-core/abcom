@@ -1,5 +1,5 @@
-# install-windows.ps1
-# Crée une installation Windows de l’application Abcom et des raccourcis.
+# install-windows.ps1 — Crée une installation Windows d'Abcom et ses raccourcis.
+# Usage : .\scripts\install-windows.ps1 [-Username <nom>] [-ForceBuild]
 
 param(
     [string]$Username = "User",

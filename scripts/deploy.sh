@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# deploy.sh - Prépare Abcom pour test multi-machine
+# deploy.sh — Prépare un binaire Abcom pour un test multi-machines.
+# Usage : scripts/deploy.sh [chemin/vers/binaire]  (défaut : target/release/abcom)
 
 set -e
 

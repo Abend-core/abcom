@@ -5,7 +5,45 @@ Format basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/), versi
 
 ---
 
-## [Non publié] — dev
+## [Non publié]
+
+### Ajouté
+- Ré-appairage explicite après un changement de clé d'identité : l'alerte propose « Faire confiance à la nouvelle clé » (la connexion reste refusée tant que l'utilisateur n'a pas tranché) — jusqu'ici, un pair réinstallé était bloqué sans recours
+- Compteurs de session dans Paramètres → Général → Diagnostic : paquets envoyés, reçus, **jetés**, pairs vus — les pertes réseau silencieuses deviennent visibles
+- Bannière « X : injoignable, message non envoyé » quand aucune connexion sécurisée ne peut être établie (auparavant, l'échec n'existait que dans les logs, invisibles sur un binaire release)
+- Rapport de crash : la cause d'une panique est écrite dans `last-panic.txt` du répertoire de données avant l'arrêt
+- Pipeline de release (tag `v*`) : binaires Linux/macOS/Windows et `SHA256SUMS` attachés à une GitHub Release ; veille mensuelle `cargo outdated` + `cargo audit`
+- MSRV déclarée (`rust-version = "1.95"`) et vérifiée en CI ; `cargo audit` et `cargo deny` désormais exécutés sur `dev` comme sur `main`
+
+### Corrigé
+- Un avatar ou un événement de groupe volumineux pouvait dépasser la taille logique maximale et faire couper la connexion par le destinataire : la vérification est maintenant générique à tout paquet, à la source
+- Les connexions vers des pairs disparus n'étaient jamais libérées : balayage périodique et libération immédiate quand la découverte déclare un pair expiré
+- Chaque ouverture de conversation réémettait un accusé de lecture pour toute la fenêtre de messages (jusqu'à 2 000 × N membres) : seul le delta est envoyé, et le mémo d'un pair est réinitialisé à sa déconnexion
+- Le texte collé trop long était écrit dans `/tmp` (lisible par les autres comptes de la machine) et jamais nettoyé : il va dans `<données>/scratch/` en 0600, purgé après 24 h
+- `identity.key` n'était protégé que sous Unix : l'ACL Windows est désormais restreinte au propriétaire
+- Les sauvegardes `*.json.bak` de la migration JSON → SQLite restaient indéfiniment : purgées après 30 jours
+- Le fichier `.env` injectait n'importe quelle variable dans l'environnement : seules les trois clés attendues sont lues, guillemets gérés, et l'environnement existant a la priorité
+
+### Performance
+- **Renderer wgpu (Metal natif sur macOS) à la place d'OpenGL** : contexte GPU ramené de 29,6 à 6,2 Mo, RSS de 155,8 à 146,0 Mo, pic d'empreinte de 132,4 à 110,8 Mo (mesures A/B au repos). `glow` n'est plus lié du tout
+- **mimalloc en allocateur global**, avec restitution explicite des pages au système lors du repli dans la barre de menus : le RSS descend enfin quand l'application ne fait plus que veiller le réseau (138,9 Mo contre 146,0 Mo)
+- Les positions du curseur du composeur étaient recalculées à chaque frame — deux fois quand la barre de défilement apparaît — en itérant toute la saisie : elles sont désormais mémoïsées par (texte, largeur, densité de pixels)
+- Le nombre de non-lus re-parcourait tout l'historique en mémoire pour chaque conversation à chaque rafraîchissement de la barre latérale : un seul parcours par changement de contenu suffit maintenant
+- Une rafale de messages (import, salon actif, retour en ligne) provoquait un commit SQLite par message : les insertions en attente sont regroupées dans une seule transaction
+
+### Modifié
+- **Licence clarifiée** : `Cargo.toml` déclarait `MIT` alors que `LICENSE` et l'application affichent la GNU AGPL v3. Ce n'était pas une double licence mais une incohérence — le projet est sous **AGPL-3.0**
+- Dépendances mises à jour : `dirs` 6, `socket2` 0.6, `ehttp` 0.7, `rfd` 0.17, `rodio` 0.22, `resvg` 0.48, `objc2` 0.6 / `objc2-*` 0.3, plus toutes les montées compatibles semver
+- Les accusés de livraison et de lecture sont **persistés** : les coches et le détail « … » survivent au redémarrage au lieu de repartir de zéro
+- Fermeture plus propre : après le flush SQLite, les tâches réseau disposent d'un délai borné de 2 s pour terminer leurs écritures en cours au lieu d'être abandonnées
+
+---
+
+## [1.0.0-beta.1] — 2026-08-07
+
+> Première bêta publiée du projet. Tout le développement listé ci-dessous (et
+> dans la phase alpha plus bas) faisait partie du travail interne sur `dev`,
+> jamais publié ni tagué individuellement — voir README.
 
 ### Ajouté
 - Raccourcis clavier usuels dans la zone de saisie : Entrée/Maj+Entrée insèrent une nouvelle ligne, Cmd/Ctrl+Entrée envoie le message, Option/Ctrl+⌫ et Option/Ctrl+Suppr suppriment un mot, Cmd+⌫ efface jusqu'au début de ligne, Option/Ctrl+←/→ et Cmd+←/→ déplacent le curseur par mot ou en bout de ligne, Cmd/Ctrl+C/X copient et coupent la sélection — documentés dans `docs/05-fonctionnalites.md`
@@ -50,10 +88,11 @@ Format basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/), versi
 
 ---
 
-## Prototype initial — avril 2026 (non publié)
+## Phase alpha — avril 2026 (non publiée)
 
-> Première version fonctionnelle mais rudimentaire — chat P2P local sur LAN.
-> Jamais taguée : aucune release n'a encore été publiée (voir le README).
+> Prototype initial, première version fonctionnelle mais rudimentaire — chat
+> P2P local sur LAN. Jamais taguée individuellement : c'est le point de départ
+> de la phase alpha qui a mené à `1.0.0-beta.1`.
 
 ### Ajouté
 - Chat en réseau local : découverte UDP broadcast, une connexion TCP par paquet
