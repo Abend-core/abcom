@@ -55,13 +55,6 @@ pub(crate) enum UiLanguage {
     English,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ThemePreference {
-    System,
-    Light,
-    Dark,
-}
-
 /// Onglet actif de la fenêtre Paramètres.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SettingsTab {
@@ -296,8 +289,9 @@ pub(crate) struct AbcomApp {
     /// 0 = none, 1 = pick files, 2 = pick folder (deferred to next frame to avoid AppKit conflict)
     pub(crate) pending_picker: u8,
     pub(crate) ui_language: UiLanguage,
-    pub(crate) theme_preference: ThemePreference,
-    pub(crate) system_dark_mode: Option<bool>,
+    /// Préférence de thème : egui suit le système et détecte ses changements
+    /// en cours d'exécution, ce que notre détection au démarrage ne faisait pas.
+    pub(crate) theme_preference: egui::ThemePreference,
     /// Textures d'avatars, indexées par nom d'utilisateur (cache de rendu).
     pub(crate) avatar_textures: std::collections::HashMap<String, egui::TextureHandle>,
     /// Pairs auxquels notre avatar a déjà été envoyé (évite les répétitions).
@@ -330,9 +324,6 @@ pub(crate) struct AbcomApp {
     /// `process_events`) : impose un repaint de repli court pour faire
     /// expirer l'indicateur même sans nouvel événement réseau.
     pub(crate) typing_active: bool,
-    /// Dernier mode sombre effectivement appliqué à egui (évite de
-    /// reconstruire les `Visuals` à chaque frame).
-    pub(crate) applied_dark_mode: Option<bool>,
     /// Cache dérivé du fil (lignes pré-calculées, markdown memoïsé).
     pub(crate) chat_cache: snapshot::ChatCache,
     /// Cache dérivé de la barre latérale et de la barre de saisie.
@@ -456,8 +447,7 @@ impl AbcomApp {
             muted_conversations: std::collections::HashSet::new(),
             pending_picker: 0,
             ui_language: UiLanguage::French,
-            theme_preference: ThemePreference::System,
-            system_dark_mode: None,
+            theme_preference: egui::ThemePreference::System,
             avatar_textures: std::collections::HashMap::new(),
             avatar_sent_to: std::collections::HashSet::new(),
             pending_avatar_pick: false,
@@ -473,7 +463,6 @@ impl AbcomApp {
             highlight_message: None,
             expanded_messages: std::collections::HashSet::new(),
             typing_active: false,
-            applied_dark_mode: None,
             tray: None,
             tray_init_failed: false,
             window_hidden: false,
@@ -731,7 +720,7 @@ impl eframe::App for AbcomApp {
             return;
         }
 
-        self.apply_theme_preference(ctx);
+        ctx.set_theme(self.theme_preference);
 
         // Rafraîchit les caches dérivés si l'état a changé (génération) —
         // sinon la frame se rend sans reprendre le verrou ni rien re-dériver.
@@ -805,6 +794,26 @@ impl eframe::App for AbcomApp {
                 }
                 _ => {}
             }
+        }
+
+        // Fichiers déposés dans la fenêtre : egui les expose, il ne restait
+        // qu'à les brancher sur le pipeline de pièces jointes existant.
+        let dropped: Vec<PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .map(|f| f.path().to_path_buf())
+                .collect()
+        });
+        if !dropped.is_empty() {
+            let added = self.tr("Fichiers ajoutés", "Files added");
+            for path in dropped {
+                if !self.composer.pending_attachments.contains(&path) {
+                    self.composer.pending_attachments.push(path);
+                }
+            }
+            self.last_notification = Some(added.to_string());
+            self.notification_time = std::time::Instant::now();
         }
 
         // Export de conversation : même report que les autres sélecteurs natifs.
@@ -965,6 +974,13 @@ pub fn run(
         .with_inner_size([860.0, 600.0])
         // En dessous, la barre latérale seule occupe toute la fenêtre.
         .with_min_inner_size([560.0, 360.0]);
+
+    // Windows : le glisser-déposer OLE de winit entre en conflit avec les
+    // boîtes de dialogue COM de rfd. À revoir si rfd passe en asynchrone.
+    #[cfg(windows)]
+    {
+        viewport = viewport.with_drag_and_drop(false);
+    }
 
     if let Some(icon) = app_icon_data() {
         viewport = viewport.with_icon(icon);

@@ -3,7 +3,7 @@ use eframe::egui;
 use crate::util::MutexExt;
 
 use super::avatar::show_avatar;
-use super::{AbcomApp, SettingsTab, ThemePreference, UiLanguage};
+use super::{AbcomApp, SettingsTab, UiLanguage};
 
 /// Diamètre de l'aperçu d'avatar dans l'onglet Profil.
 const PROFILE_AVATAR_SIZE: f32 = 96.0;
@@ -11,30 +11,6 @@ const PROFILE_AVATAR_SIZE: f32 = 96.0;
 const LICENSE_TEXT: &str = include_str!("../../LICENSE");
 
 impl AbcomApp {
-    pub(crate) fn apply_theme_preference(&mut self, ctx: &egui::Context) {
-        let initial_dark_mode = self
-            .system_dark_mode
-            .get_or_insert_with(|| ctx.theme() == egui::Theme::Dark);
-
-        let dark_mode = match self.theme_preference {
-            ThemePreference::System => *initial_dark_mode,
-            ThemePreference::Light => false,
-            ThemePreference::Dark => true,
-        };
-
-        // `set_visuals` reconstruit tout le style : ne l'appliquer qu'au
-        // changement effectif, pas à chaque frame.
-        if self.applied_dark_mode == Some(dark_mode) {
-            return;
-        }
-        self.applied_dark_mode = Some(dark_mode);
-        ctx.set_visuals(if dark_mode {
-            egui::Visuals::dark()
-        } else {
-            egui::Visuals::light()
-        });
-    }
-
     /// Fenêtre Paramètres : regroupe langue, thème, crédits et licence.
     /// Ouverte depuis l'icône engrenage en bas de la barre latérale, elle
     /// remplace l'ancien bandeau supérieur. Un bandeau d'onglets permet de
@@ -211,17 +187,17 @@ impl AbcomApp {
                                 ui.horizontal(|ui| {
                                     ui.radio_value(
                                         &mut self.theme_preference,
-                                        ThemePreference::System,
+                                        egui::ThemePreference::System,
                                         theme_system_label,
                                     );
                                     ui.radio_value(
                                         &mut self.theme_preference,
-                                        ThemePreference::Light,
+                                        egui::ThemePreference::Light,
                                         theme_light_label,
                                     );
                                     ui.radio_value(
                                         &mut self.theme_preference,
-                                        ThemePreference::Dark,
+                                        egui::ThemePreference::Dark,
                                         theme_dark_label,
                                     );
                                 });
