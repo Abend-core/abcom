@@ -291,25 +291,29 @@ impl AbcomApp {
                 let trust_lbl = self.tr("Faire confiance à la nouvelle clé", "Trust the new key");
                 let keep_lbl = self.tr("Garder l'ancienne clé", "Keep the current key");
 
-                let mut open = true;
-                let mut do_trust = false;
-                let mut do_keep = false;
-                egui::Window::new(format!("⚠️ {title}"))
-                    .open(&mut open)
-                    .resizable(false)
-                    .collapsible(false)
-                    .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-                    .show(ctx, |ui| {
-                        ui.set_max_width(360.0);
-                        ui.label(egui::RichText::new(&peer).strong());
-                        ui.add_space(6.0);
-                        ui.label(explain);
-                        ui.add_space(10.0);
-                        ui.horizontal(|ui| {
-                            do_trust = ui.button(trust_lbl).clicked();
-                            do_keep = ui.button(keep_lbl).clicked();
-                        });
-                    });
+                // `Modal` plutôt que `Window` : voile de fond et focus piégé —
+                // cette alerte ne doit pas pouvoir être ignorée par inadvertance.
+                let modal = egui::Modal::new(egui::Id::new("key_mismatch")).show(ctx, |ui| {
+                    ui.set_max_width(360.0);
+                    ui.heading(format!("⚠️ {title}"));
+                    ui.add_space(6.0);
+                    ui.label(egui::RichText::new(&peer).strong());
+                    ui.add_space(6.0);
+                    ui.label(explain);
+                    ui.add_space(10.0);
+                    ui.horizontal(|ui| {
+                        (
+                            ui.button(trust_lbl).clicked(),
+                            ui.button(keep_lbl).clicked(),
+                        )
+                    })
+                    .inner
+                });
+                let (do_trust, do_keep) = modal.inner;
+                // Clic hors modale ou Échap : on garde la clé actuelle, jamais
+                // le contraire — refuser est toujours le choix sûr.
+                let dismissed = modal.backdrop_response.clicked()
+                    || ui.input(|i| i.key_pressed(egui::Key::Escape));
 
                 if do_trust {
                     // Désépinglage : la prochaine connexion ré-épingle la clé
@@ -324,7 +328,7 @@ impl AbcomApp {
                     );
                     self.notification_time = std::time::Instant::now();
                     self.modals.key_mismatch = None;
-                } else if do_keep || !open {
+                } else if do_keep || dismissed {
                     self.modals.key_mismatch = None;
                 }
             }
