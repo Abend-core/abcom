@@ -320,3 +320,33 @@ fn retry_limit_marks_message_as_failed() {
     assert!(!s.is_message_pending(hash));
     assert!(s.is_message_failed(hash));
 }
+
+#[test]
+fn offline_messages_wait_for_the_peer_to_return() {
+    let mut s = AppState::new_with_base("moi", &std::env::temp_dir());
+    let msg = ChatMessage {
+        from: "moi".into(),
+        content: "tu me liras plus tard".into(),
+        timestamp: "12:00".into(),
+        timestamp_epoch: Some(1),
+        to_user: Some("alice".into()),
+        media: None,
+        reply_to: None,
+        nonce: None,
+    };
+    let hash = AppState::message_hash(&msg);
+
+    s.queue_offline(msg.clone(), "alice".into());
+    assert!(s.is_queued_offline(hash));
+    // Le retour d'un autre pair ne vide pas la file d'alice.
+    assert!(s.take_outbox_for("bob").is_empty());
+    assert!(s.is_queued_offline(hash));
+
+    let ready = s.take_outbox_for("alice");
+    assert_eq!(ready.len(), 1);
+    assert_eq!(ready[0].0, hash);
+    assert_eq!(ready[0].1.content, "tu me liras plus tard");
+    // Une fois remis, le message ne repart pas une seconde fois.
+    assert!(!s.is_queued_offline(hash));
+    assert!(s.take_outbox_for("alice").is_empty());
+}

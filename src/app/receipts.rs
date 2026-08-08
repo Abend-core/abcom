@@ -142,6 +142,41 @@ impl AppState {
             .unwrap_or(0)
     }
 
+    /// Met un message de côté jusqu'au retour en ligne du destinataire.
+    pub fn queue_offline(&mut self, message: ChatMessage, to_peer: String) {
+        let hash = Self::message_hash(&message);
+        self.persist(super::StorageCmd::EnqueueOutbox {
+            hash,
+            to_peer: to_peer.clone(),
+            message: message.clone(),
+        });
+        self.outbox.insert(hash, (to_peer, message));
+        self.bump_content();
+    }
+
+    /// Retire et renvoie les messages en attente pour un pair qui revient en ligne.
+    pub fn take_outbox_for(&mut self, peer: &str) -> Vec<(u64, ChatMessage)> {
+        let ready: Vec<u64> = self
+            .outbox
+            .iter()
+            .filter(|(_, (to, _))| to == peer)
+            .map(|(hash, _)| *hash)
+            .collect();
+        ready
+            .into_iter()
+            .filter_map(|hash| {
+                let (_, message) = self.outbox.remove(&hash)?;
+                self.persist(super::StorageCmd::DequeueOutbox { hash });
+                Some((hash, message))
+            })
+            .collect()
+    }
+
+    /// Le message attend-il encore le retour en ligne de son destinataire ?
+    pub fn is_queued_offline(&self, message_hash: u64) -> bool {
+        self.outbox.contains_key(&message_hash)
+    }
+
     /// Marque un message comme envoyé (en attente d'ACK)
     pub fn mark_message_sent(&mut self, message_hash: u64, request: SendRequest) {
         self.failed_messages.remove(&message_hash);

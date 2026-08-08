@@ -557,3 +557,23 @@ fn orphan_receipts_are_purged_at_open() {
         .read_receipts
         .is_empty());
 }
+
+#[test]
+fn outbox_survives_a_restart() {
+    let dir = tmp_dir("outbox");
+    let message = msg("moi", Some("alice"), "à la reconnexion", 1);
+    let hash = AppState::message_hash(&message);
+    {
+        let storage = Storage::open(&dir).unwrap();
+        storage.enqueue_outbox(hash, "alice", &message).unwrap();
+    }
+
+    let storage = Storage::open(&dir).unwrap();
+    let loaded = storage.load_all(INITIAL_WINDOW).unwrap();
+    let (peer, queued) = loaded.outbox.get(&hash).unwrap();
+    assert_eq!(peer, "alice");
+    assert_eq!(queued.content, "à la reconnexion");
+
+    storage.dequeue_outbox(hash).unwrap();
+    assert!(storage.load_all(INITIAL_WINDOW).unwrap().outbox.is_empty());
+}

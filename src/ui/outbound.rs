@@ -52,12 +52,20 @@ impl AbcomApp {
                 state.selected_transfer_targets(),
             )
         };
-        if matches!(conversation, ConversationId::Peer(_)) && targets.is_empty() {
-            self.set_enqueue_error(
-                "Destinataire hors ligne, message conservé",
-                "Recipient offline, message kept",
-            );
-            return false;
+        // Destinataire hors ligne : le message part dans le fil et dans la
+        // file d'attente persistée, réémise à sa reconnexion.
+        if let ConversationId::Peer(peer) = &conversation {
+            if targets.is_empty() {
+                let mut state = self.state.lock_safe();
+                state.add_message(message.clone());
+                state.queue_offline(message, peer.clone());
+                drop(state);
+                self.set_enqueue_error(
+                    "Destinataire hors ligne : envoi à sa reconnexion",
+                    "Recipient offline: will be sent when they reconnect",
+                );
+                return true;
+            }
         }
         let requests = match queue_chat_requests(&self.net.send_tx, &targets, &message) {
             Ok(requests) => requests,

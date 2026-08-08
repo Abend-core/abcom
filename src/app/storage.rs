@@ -90,6 +90,16 @@ pub enum StorageCmd {
     DeletePeerKey {
         username: String,
     },
+    /// Message mis de côté pour un destinataire hors ligne.
+    EnqueueOutbox {
+        hash: u64,
+        to_peer: String,
+        message: ChatMessage,
+    },
+    /// Message de la file hors-ligne effectivement remis.
+    DequeueOutbox {
+        hash: u64,
+    },
     /// Accusé nominatif livré/lu reçu d'un pair.
     AddReceipt {
         hash: u64,
@@ -123,6 +133,8 @@ pub struct LoadedState {
     pub peer_records: Vec<PeerRecord>,
     pub peer_avatars: HashMap<String, Vec<u8>>,
     pub peer_keys: HashMap<String, Vec<u8>>,
+    /// Messages en attente d'un destinataire hors ligne, par hash.
+    pub outbox: HashMap<u64, (String, ChatMessage)>,
     /// Accusés de livraison nominatifs, par hash de message.
     pub delivered_receipts: HashMap<u64, HashSet<String>>,
     /// Accusés de lecture nominatifs, par hash de message.
@@ -180,6 +192,12 @@ impl Storage {
             );
             CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v BLOB);
             -- Accusés nominatifs ; la clé primaire rend l'insertion idempotente.
+            -- Messages en attente d'un destinataire hors ligne.
+            CREATE TABLE IF NOT EXISTS outbox (
+                hash    INTEGER PRIMARY KEY,
+                to_peer TEXT    NOT NULL,
+                message TEXT    NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS receipts (
                 message_hash INTEGER NOT NULL,
                 username     TEXT    NOT NULL,
@@ -416,6 +434,27 @@ impl Storage {
         Ok(())
     }
 
+    /// Met un message de côté pour un destinataire hors ligne.
+    pub fn enqueue_outbox(
+        &self,
+        hash: u64,
+        to_peer: &str,
+        message: &ChatMessage,
+    ) -> rusqlite::Result<()> {
+        let payload = serde_json::to_string(message).map_err(Self::serde_to_sql)?;
+        self.conn.execute(
+            "INSERT OR REPLACE INTO outbox (hash, to_peer, message) VALUES (?1, ?2, ?3)",
+            params![hash as i64, to_peer, payload],
+        )?;
+        Ok(())
+    }
+
+    pub fn dequeue_outbox(&self, hash: u64) -> rusqlite::Result<()> {
+        self.conn
+            .execute("DELETE FROM outbox WHERE hash = ?1", params![hash as i64])?;
+        Ok(())
+    }
+
     /// Enregistre un accusé nominatif ; idempotent, un pair peut réémettre le sien.
     pub fn add_receipt(
         &self,
@@ -566,6 +605,24 @@ impl Storage {
             }
         }
 
+        let mut outbox: HashMap<u64, (String, ChatMessage)> = HashMap::new();
+        let mut stmt = self
+            .conn
+            .prepare("SELECT hash, to_peer, message FROM outbox")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, i64>(0)? as u64,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+            ))
+        })?;
+        for row in rows {
+            let (hash, to_peer, payload) = row?;
+            let message: ChatMessage =
+                serde_json::from_str(&payload).map_err(|e| Self::serde_from_sql(2, e))?;
+            outbox.insert(hash, (to_peer, message));
+        }
+
         // Accusés nominatifs : deux maps hash → ensemble de pairs.
         let mut delivered_receipts: HashMap<u64, HashSet<String>> = HashMap::new();
         let mut read_receipts: HashMap<u64, HashSet<String>> = HashMap::new();
@@ -658,6 +715,7 @@ impl Storage {
             peer_records,
             peer_avatars,
             peer_keys,
+            outbox,
             delivered_receipts,
             read_receipts,
             kv,
@@ -907,6 +965,12 @@ fn run(
                 storage.upsert_peer_key(&username, &pubkey)
             }
             StorageCmd::DeletePeerKey { username } => storage.delete_peer_key(&username),
+            StorageCmd::EnqueueOutbox {
+                hash,
+                to_peer,
+                message,
+            } => storage.enqueue_outbox(hash, &to_peer, &message),
+            StorageCmd::DequeueOutbox { hash } => storage.dequeue_outbox(hash),
             StorageCmd::AddReceipt {
                 hash,
                 username,
