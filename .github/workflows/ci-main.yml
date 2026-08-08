@@ -13,7 +13,7 @@ env:
 
 jobs:
   full-check:
-    name: Format · Lint · Build · Tests · Intégration · Audit sécurité
+    name: Format · Lint · Build · Tests · Intégration
     runs-on: ubuntu-latest
 
     steps:
@@ -52,10 +52,24 @@ jobs:
       - name: Tests d'intégration
         run: bash scripts/integration_test.sh
 
-      - name: Audit sécurité dépendances
-        run: |
-          cargo install cargo-audit --version 0.21.2 --locked --quiet
-          cargo audit
+  supply-chain:
+    name: Audit dépendances (vulnérabilités · licences)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Binaires pré-compilés au lieu d'un `cargo install` non caché.
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny
+
+      - name: Vulnérabilités connues (RUSTSEC)
+        run: cargo audit
+
+      - name: Licences et sources des dépendances
+        run: cargo deny check licenses sources bans
 
   platform-check:
     name: Check ${{ matrix.os }}

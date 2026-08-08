@@ -49,6 +49,47 @@ jobs:
       - name: Tests unitaires
         run: cargo test --all-features --locked
 
+  supply-chain:
+    name: Audit dépendances (vulnérabilités · licences)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # Binaires pré-compilés : plus de `cargo install` de plusieurs minutes
+      # à chaque exécution (l'ancienne CI `main` réinstallait cargo-audit sans
+      # cache à chaque run).
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-audit,cargo-deny
+
+      - name: Vulnérabilités connues (RUSTSEC)
+        run: cargo audit
+
+      - name: Licences et sources des dépendances
+        run: cargo deny check licenses sources bans
+
+  msrv:
+    name: MSRV (rust-version de Cargo.toml)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dépendances système
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxkbcommon-dev libgtk-3-dev libayatana-appindicator3-dev libxdo-dev
+
+      - name: Lire la MSRV déclarée
+        id: msrv
+        run: echo "version=$(grep '^rust-version' Cargo.toml | cut -d'"' -f2)" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ steps.msrv.outputs.version }}
+
+      - name: Compile avec la MSRV déclarée
+        run: cargo check --all-targets --all-features --locked
+
   platform-check:
     name: Check ${{ matrix.os }}
     runs-on: ${{ matrix.os }}
