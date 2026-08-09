@@ -76,6 +76,7 @@ impl Drop for ActivePeerGuard {
     }
 }
 
+#[tracing::instrument(skip_all)]
 async fn handle_incoming_tracked(
     mut stream: TcpStream,
     ctx: Arc<NetContext>,

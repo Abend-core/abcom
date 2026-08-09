@@ -67,7 +67,10 @@ tray-icon = "0.24.1"
 notify-rust = "4.18.0"
 auto-launch = "0.6.0"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
+# Journal fichier : sur un binaire release sans console, le hook de panique
+# donne la cause d'un crash mais rien de ce qui l'a précédé.
+tracing-appender = "0.2"
 # HWND natif (via eframe::Frame) pour replier la fenêtre dans le tray sous
 # Windows sans la détruire (déplacement hors écran + style « outil »).
 raw-window-handle = "0.6"
@@ -78,6 +81,11 @@ raw-window-handle = "0.6"
 mimalloc = "0.1"
 # Accès direct à `mi_collect` : rendre les pages à l'OS au repli dans le tray.
 libmimalloc-sys = { version = "0.1", features = ["extended"] }
+
+[dev-dependencies]
+# Test d'interface réel : pilote les widgets via AccessKit (clics, frappe).
+egui_kittest = "0.36"
+egui = "0.36"
 
 [features]
 default = []

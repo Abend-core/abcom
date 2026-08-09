@@ -1130,18 +1130,16 @@ pub fn run(
 /// `consume_shortcut` réserve la combinaison pour nous et empêche qu'un autre
 /// widget la traite dans la même frame — ce que notre filtrage manuel de
 /// touches, cantonné au composeur, ne savait pas faire.
-pub(crate) mod shortcuts {
+pub mod shortcuts {
     use eframe::egui::{Key, KeyboardShortcut, Modifiers};
 
-    pub(crate) const SETTINGS: KeyboardShortcut =
-        KeyboardShortcut::new(Modifiers::COMMAND, Key::Comma);
-    pub(crate) const NEXT_CONVERSATION: KeyboardShortcut =
+    pub const SETTINGS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Comma);
+    pub const NEXT_CONVERSATION: KeyboardShortcut =
         KeyboardShortcut::new(Modifiers::CTRL, Key::Tab);
-    pub(crate) const PREV_CONVERSATION: KeyboardShortcut =
+    pub const PREV_CONVERSATION: KeyboardShortcut =
         KeyboardShortcut::new(Modifiers::CTRL.plus(Modifiers::SHIFT), Key::Tab);
-    pub(crate) const SEARCH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::F);
-    pub(crate) const CLOSE_OVERLAY: KeyboardShortcut =
-        KeyboardShortcut::new(Modifiers::NONE, Key::Escape);
+    pub const SEARCH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::F);
+    pub const CLOSE_OVERLAY: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::Escape);
 }
 
 /// Configuration wgpu privilégiant le GPU intégré : le défaut d'egui-wgpu est

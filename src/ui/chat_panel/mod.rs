@@ -858,7 +858,17 @@ fn show_receipt(ui: &mut egui::Ui, delivered: bool, read: bool, failed: bool) {
     }
     let double = delivered || read;
     let w = if double { 17.0_f32 } else { 9.0_f32 };
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 12.0), egui::Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(w, 12.0), egui::Sense::hover());
+    // Les coches sont peintes : sans libellé, l'état de livraison n'existe
+    // pas pour un lecteur d'écran.
+    let state = if read {
+        "Lu"
+    } else if delivered {
+        "Reçu"
+    } else {
+        "Envoyé"
+    };
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, state));
     if !ui.is_rect_visible(rect) {
         return;
     }

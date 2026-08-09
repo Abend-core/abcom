@@ -56,6 +56,41 @@ fn load_dotenv(path: &str) {
     }
 }
 
+/// Journalisation : console **et** fichier tournant dans le répertoire de données.
+fn init_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
+    use tracing_subscriber::layer::SubscriberExt as _;
+    use tracing_subscriber::util::SubscriberInitExt as _;
+    use tracing_subscriber::Layer as _;
+
+    let filter = || {
+        tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| "abcom=info".into())
+    };
+
+    // Le fichier est un supplément : si le répertoire n'est pas accessible,
+    // on garde la console plutôt que de perdre toute journalisation.
+    let dir = config::data_dir().join("logs");
+    let file = std::fs::create_dir_all(&dir).ok().map(|()| {
+        let (writer, guard) =
+            tracing_appender::non_blocking(tracing_appender::rolling::daily(&dir, "abcom.log"));
+        let layer = tracing_subscriber::fmt::layer()
+            .with_ansi(false)
+            .with_writer(writer)
+            .with_filter(filter());
+        (layer, guard)
+    });
+    let (file_layer, guard) = match file {
+        Some((layer, guard)) => (Some(layer), Some(guard)),
+        None => (None, None),
+    };
+
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer().with_filter(filter()))
+        .with(file_layer)
+        .init();
+    guard
+}
+
 /// Écrit la cause d'une panique sur disque : en release (strippé, sans console) rien ne s'affiche.
 fn install_panic_hook() {
     let previous = std::panic::take_hook();
@@ -75,14 +110,10 @@ fn install_panic_hook() {
 }
 
 fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "abcom=info".into()),
-        )
-        .init();
-
     load_dotenv(".env");
+    // Le garde doit vivre aussi longtemps que le processus, sinon les
+    // dernières lignes ne sont jamais écrites sur disque.
+    let _log_guard = init_logging();
     install_panic_hook();
 
     let username = std::env::args().nth(1).unwrap_or_else(|| {

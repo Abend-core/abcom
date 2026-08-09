@@ -72,9 +72,16 @@ async fn read_frame(stream: &mut TcpStream) -> std::io::Result<Vec<u8>> {
 
 // ── Handshake ────────────────────────────────────────────────────────────
 
+/// Contexte haché dans le handshake : une version différente fait échouer la
+/// poignée de main avant même d'établir la session.
+fn prologue() -> Vec<u8> {
+    format!("abcom-v{}", crate::protocol::PROTOCOL_VERSION).into_bytes()
+}
+
 fn builder<'a>(
     identity: &'a Identity,
     psk: Option<&'a [u8]>,
+    prologue: &'a [u8],
 ) -> Result<Builder<'a>, std::io::Error> {
     let pattern = if psk.is_some() {
         NOISE_PATTERN_PSK
@@ -83,6 +90,8 @@ fn builder<'a>(
     };
     let params = pattern.parse().map_err(to_io)?;
     let mut b = Builder::new(params)
+        .prologue(prologue)
+        .map_err(to_io)?
         .local_private_key(&identity.private)
         .map_err(to_io)?;
     if let Some(psk) = psk {
@@ -102,7 +111,10 @@ pub async fn handshake_initiator(
     identity: &Identity,
     psk: Option<&[u8]>,
 ) -> std::io::Result<(TransportState, Vec<u8>)> {
-    let mut hs = builder(identity, psk)?.build_initiator().map_err(to_io)?;
+    let prologue = prologue();
+    let mut hs = builder(identity, psk, &prologue)?
+        .build_initiator()
+        .map_err(to_io)?;
     let mut buf = vec![0u8; MAX_NOISE_MESSAGE];
 
     // -> e
@@ -129,7 +141,10 @@ pub async fn handshake_responder(
     identity: &Identity,
     psk: Option<&[u8]>,
 ) -> std::io::Result<(TransportState, Vec<u8>)> {
-    let mut hs = builder(identity, psk)?.build_responder().map_err(to_io)?;
+    let prologue = prologue();
+    let mut hs = builder(identity, psk, &prologue)?
+        .build_responder()
+        .map_err(to_io)?;
     let mut buf = vec![0u8; MAX_NOISE_MESSAGE];
     let mut payload = vec![0u8; MAX_NOISE_MESSAGE];
 

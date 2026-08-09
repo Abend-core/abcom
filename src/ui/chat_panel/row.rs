@@ -235,6 +235,9 @@ pub(super) fn show_receipt_detail_button(
 ) {
     let popup_id = ui.make_persistent_id(("receipt_popup", row_hash));
     let btn = ui.small_button("...");
+    btn.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Détail des accusés")
+    });
     egui::Popup::from_toggle_button_response(&btn)
         .id(popup_id)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
