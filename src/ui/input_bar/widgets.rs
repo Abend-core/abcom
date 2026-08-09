@@ -124,6 +124,8 @@ pub(super) fn icon_button(
                 .corner_radius(egui::CornerRadius::same(10)),
         )
         .on_hover_text(tooltip);
+    // Bouton sans texte : l'infobulle sert de libellé accessible.
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, tooltip));
     paint(
         ui.painter(),
         response.rect.shrink2(egui::vec2(7.0, 7.0)),
@@ -135,6 +137,7 @@ pub(super) fn icon_button(
 /// Petite croix peinte pour retirer une pièce jointe (glyphe « ✕ » non rendu de
 /// façon fiable par la police). Renvoie `true` au clic.
 pub(super) fn chip_remove_button(ui: &mut egui::Ui) -> bool {
+    let accessible_label = "Retirer la pièce jointe";
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::click());
     if ui.is_rect_visible(rect) {
         let color = if resp.hovered() {
@@ -149,6 +152,11 @@ pub(super) fn chip_remove_button(ui: &mut egui::Ui) -> bool {
         p.line_segment([c + egui::vec2(-d, -d), c + egui::vec2(d, d)], stroke);
         p.line_segment([c + egui::vec2(d, -d), c + egui::vec2(-d, d)], stroke);
     }
+    // Sans ceci, un bouton entièrement peint est invisible pour un lecteur
+    // d'écran — et introuvable pour les tests pilotés par AccessKit.
+    resp.widget_info(|| {
+        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, accessible_label)
+    });
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
         .clicked()
 }

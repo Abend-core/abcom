@@ -178,6 +178,7 @@ impl ConnectionPool {
 
     /// Établit une connexion chiffrée : handshake Noise XX, échange des
     /// usernames, vérification TOFU, puis tâche d'écriture dédiée.
+    #[tracing::instrument(skip(self), fields(peer = expected_peer, %addr))]
     async fn connect(&self, expected_peer: &str, addr: SocketAddr) -> Option<ConnSender> {
         let mut stream = match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(addr)).await
         {

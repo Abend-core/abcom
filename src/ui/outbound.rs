@@ -27,15 +27,13 @@ fn queue_chat_requests(
             message: message.clone(),
         })
         .collect();
-    let mut permits = Vec::with_capacity(requests.len());
-    for _ in &requests {
-        let permit = tx.try_reserve().map_err(|error| match error {
+    let permits = tx
+        .try_reserve_many(requests.len())
+        .map_err(|error| match error {
             mpsc::error::TrySendError::Full(_) => QueueError::Full,
             mpsc::error::TrySendError::Closed(_) => QueueError::Closed,
         })?;
-        permits.push(permit);
-    }
-    for (permit, request) in permits.into_iter().zip(requests.iter().cloned()) {
+    for (permit, request) in permits.zip(requests.iter().cloned()) {
         permit.send(request.into());
     }
     Ok(requests)
