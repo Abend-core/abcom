@@ -244,6 +244,11 @@ impl AppState {
 
     /// Flush synchrone du stockage (fermeture de l'application) : attend que
     /// toutes les commandes en file soient écrites.
+    /// Lance une recherche plein texte ; le résultat arrive par `AppEvent`.
+    pub fn search_history(&self, query: String) {
+        self.persist(StorageCmd::Search { query });
+    }
+
     /// Compacte la base : l'espace des conversations effacées n'est pas rendu seul.
     pub fn compact_storage(&self) {
         self.persist(StorageCmd::Compact);

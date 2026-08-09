@@ -25,6 +25,7 @@ mod markdown;
 mod media;
 mod outbound;
 mod reactions;
+mod search;
 mod settings;
 mod sidebar;
 mod snapshot;
@@ -204,6 +205,18 @@ pub(crate) struct ComposerState {
     pub(crate) pending_attachments: Vec<PathBuf>,
 }
 
+/// Recherche plein texte dans l'historique (Cmd/Ctrl+F).
+#[derive(Default)]
+pub(crate) struct SearchState {
+    pub(crate) open: bool,
+    pub(crate) query: String,
+    /// Le champ doit prendre le focus au prochain rendu.
+    pub(crate) focus_requested: bool,
+    /// Requête déjà envoyée au stockage (évite de la relancer par frame).
+    pub(crate) submitted: String,
+    pub(crate) results: Vec<crate::message::ChatMessage>,
+}
+
 /// État des modales et panneaux superposés : création/gestion de salon,
 /// renommage de contact, paramètres, liste des participants.
 pub(crate) struct ModalsState {
@@ -336,6 +349,7 @@ pub(crate) struct AbcomApp {
     /// Une page d'historique plus ancienne est en cours de chargement
     /// (évite les demandes répétées pendant le vol de la requête).
     pub(crate) loading_older: bool,
+    pub(crate) search: SearchState,
     /// Magasin TOFU, pour le seul ré-appairage explicite (cf. `modals.key_mismatch`).
     pub(crate) trust: Arc<crate::network::secure::TrustStore>,
     /// Accusés déjà émis par destinataire : sans ce mémo, chaque ouverture rediffusait toute la fenêtre.
@@ -474,6 +488,7 @@ impl AbcomApp {
             chat_visible_count: CHAT_WINDOW_STEP,
             chat_prepend_fix: None,
             loading_older: false,
+            search: SearchState::default(),
             trust: channels.trust,
             read_receipts_sent: std::collections::HashMap::new(),
         }
@@ -518,6 +533,84 @@ impl AbcomApp {
         // ReadReceipts différés pour tous les messages reçus dans cette
         // conversation (privée, salon #… ou « Tous »).
         self.send_read_receipts_for_conversation(new_conversation);
+    }
+
+    /// Applique les raccourcis globaux. Appelé avant le rendu des panneaux
+    /// pour que la combinaison soit consommée avant qu'un widget la voie.
+    pub(crate) fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        if ctx.input_mut(|i| i.consume_shortcut(&shortcuts::SETTINGS)) {
+            self.modals.settings_open = !self.modals.settings_open;
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&shortcuts::SEARCH)) {
+            self.search.open = true;
+            self.search.focus_requested = true;
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&shortcuts::CLOSE_OVERLAY)) {
+            self.close_topmost_overlay();
+        }
+
+        let step = if ctx.input_mut(|i| i.consume_shortcut(&shortcuts::NEXT_CONVERSATION)) {
+            1
+        } else if ctx.input_mut(|i| i.consume_shortcut(&shortcuts::PREV_CONVERSATION)) {
+            -1
+        } else {
+            0
+        };
+        if step != 0 {
+            self.cycle_conversation(step);
+        }
+    }
+
+    /// Ferme la surcouche visible la plus haute, dans l'ordre où l'utilisateur
+    /// s'attend à les voir disparaître.
+    fn close_topmost_overlay(&mut self) {
+        if self.media.viewer.take().is_some() {
+            return;
+        }
+        for open in [
+            &mut self.gif_picker.show,
+            &mut self.show_emoji_picker,
+            &mut self.modals.settings_open,
+            &mut self.modals.group_modal_open,
+            &mut self.search.open,
+        ] {
+            if *open {
+                *open = false;
+                return;
+            }
+        }
+        self.modals.rename_target = None;
+        self.modals.group_manage_target = None;
+    }
+
+    /// Passe à la conversation suivante ou précédente de la barre latérale.
+    fn cycle_conversation(&mut self, step: isize) {
+        // Même ordre que la sidebar : « Tous », puis les pairs, puis les salons.
+        let mut keys: Vec<Option<String>> = vec![None];
+        keys.extend(
+            self.sidebar_cache
+                .peers
+                .iter()
+                .map(|peer| Some(peer.username.clone())),
+        );
+        keys.extend(
+            self.sidebar_cache
+                .groups
+                .iter()
+                .map(|group| Some(format!("#{}", group.name))),
+        );
+        if keys.len() < 2 {
+            return;
+        }
+
+        let current = self.state.lock_safe().selected_conversation.clone();
+        let index = keys.iter().position(|k| *k == current).unwrap_or(0) as isize;
+        let next = (index + step).rem_euclid(keys.len() as isize) as usize;
+        let target = keys[next].clone();
+        self.switch_conversation(target.clone());
+        if let Some(conv) = target {
+            self.state.lock_safe().mark_conversation_read(&conv);
+        }
     }
 
     /// Envoie un ReadReceipt pour chaque message reçu d'un autre pair dans la
@@ -868,6 +961,11 @@ impl eframe::App for AbcomApp {
             }
         }
 
+        // Avant les panneaux : une combinaison consommée ici ne sera pas
+        // réinterprétée par un widget dans la même frame.
+        self.handle_shortcuts(ctx);
+        self.submit_search();
+
         // Ordre imposé par egui : panneaux latéraux, puis bas, puis central.
         self.show_sidebar_panel(root);
         let (emoji_btn_clicked, gif_btn_clicked) = self.show_input_bar(root);
@@ -880,6 +978,7 @@ impl eframe::App for AbcomApp {
         self.show_reaction_emoji_picker(ctx);
         self.render_settings(ctx);
         self.show_media_viewer(ctx);
+        self.show_search(ctx);
 
         // Repaint de repli : les événements réseau réveillent déjà l'UI
         // (cf. notify.rs), il ne reste à couvrir que les états transitoires
@@ -1024,6 +1123,25 @@ pub fn run(
     })?;
 
     Ok(())
+}
+
+/// Raccourcis globaux de l'application, déclarés en un seul endroit.
+///
+/// `consume_shortcut` réserve la combinaison pour nous et empêche qu'un autre
+/// widget la traite dans la même frame — ce que notre filtrage manuel de
+/// touches, cantonné au composeur, ne savait pas faire.
+pub(crate) mod shortcuts {
+    use eframe::egui::{Key, KeyboardShortcut, Modifiers};
+
+    pub(crate) const SETTINGS: KeyboardShortcut =
+        KeyboardShortcut::new(Modifiers::COMMAND, Key::Comma);
+    pub(crate) const NEXT_CONVERSATION: KeyboardShortcut =
+        KeyboardShortcut::new(Modifiers::CTRL, Key::Tab);
+    pub(crate) const PREV_CONVERSATION: KeyboardShortcut =
+        KeyboardShortcut::new(Modifiers::CTRL.plus(Modifiers::SHIFT), Key::Tab);
+    pub(crate) const SEARCH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::F);
+    pub(crate) const CLOSE_OVERLAY: KeyboardShortcut =
+        KeyboardShortcut::new(Modifiers::NONE, Key::Escape);
 }
 
 /// Configuration wgpu privilégiant le GPU intégré : le défaut d'egui-wgpu est

@@ -22,6 +22,8 @@ use crate::message::{AppEvent, ChatMessage, Group, PeerRecord, ReactionEntry};
 
 /// Fenêtre de messages chargée en mémoire au démarrage.
 pub const INITIAL_WINDOW: u32 = 500;
+/// Nombre maximal de résultats de recherche renvoyés à l'UI.
+pub const SEARCH_LIMIT: u32 = 200;
 /// Taille d'une page de chargement d'historique (scroll vers le haut).
 pub const OLDER_PAGE: u32 = 100;
 const SCHEMA_VERSION: i64 = 1;
@@ -102,6 +104,10 @@ pub enum StorageCmd {
     },
     /// Compaction de la base (VACUUM + ANALYZE), à la demande de l'utilisateur.
     Compact,
+    /// Recherche plein texte ; le résultat revient par `AppEvent::SearchResults`.
+    Search {
+        query: String,
+    },
     /// Export texte d'une conversation vers un fichier choisi par l'utilisateur.
     ExportConversation {
         me: String,
@@ -209,6 +215,21 @@ impl Storage {
                 pubkey   BLOB
             );
             CREATE TABLE IF NOT EXISTS kv (k TEXT PRIMARY KEY, v BLOB);
+            -- Index plein texte. `content=''` n'y stocke pas une seconde copie
+            -- des messages, `contentless_delete=1` autorise quand même la
+            -- suppression — indispensable, on efface des conversations.
+            CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts
+                USING fts5(content, content='', contentless_delete=1);
+            CREATE TRIGGER IF NOT EXISTS messages_fts_insert AFTER INSERT ON messages BEGIN
+                INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
+            END;
+            CREATE TRIGGER IF NOT EXISTS messages_fts_delete AFTER DELETE ON messages BEGIN
+                DELETE FROM messages_fts WHERE rowid = old.id;
+            END;
+            CREATE TRIGGER IF NOT EXISTS messages_fts_update AFTER UPDATE OF content ON messages BEGIN
+                DELETE FROM messages_fts WHERE rowid = old.id;
+                INSERT INTO messages_fts(rowid, content) VALUES (new.id, new.content);
+            END;
             -- Accusés nominatifs ; la clé primaire rend l'insertion idempotente.
             -- Messages en attente d'un destinataire hors ligne.
             CREATE TABLE IF NOT EXISTS outbox (
@@ -240,6 +261,7 @@ impl Storage {
         tx.commit()?;
 
         let mut storage = Self { conn };
+        storage.backfill_search_index()?;
         // Les sources déjà importées ont été renommées en `.bak`. Réessayer à
         // chaque ouverture permet de reprendre proprement une migration dont
         // une source ou une écriture avait échoué au premier lancement.
@@ -450,6 +472,44 @@ impl Storage {
             params![username, pubkey],
         )?;
         Ok(())
+    }
+
+    /// Remplit l'index plein texte pour les messages antérieurs à sa création.
+    fn backfill_search_index(&mut self) -> rusqlite::Result<()> {
+        let indexed: i64 = self
+            .conn
+            .query_row("SELECT count(*) FROM messages_fts", [], |row| row.get(0))?;
+        if indexed > 0 {
+            return Ok(());
+        }
+        let total: i64 = self
+            .conn
+            .query_row("SELECT count(*) FROM messages", [], |row| row.get(0))?;
+        if total == 0 {
+            return Ok(());
+        }
+        self.conn.execute(
+            "INSERT INTO messages_fts(rowid, content) SELECT id, content FROM messages",
+            [],
+        )?;
+        tracing::info!("index de recherche construit sur {total} message(s)");
+        Ok(())
+    }
+
+    /// Recherche plein texte dans l'historique, du plus récent au plus ancien.
+    pub fn search(&self, query: &str, limit: u32) -> rusqlite::Result<Vec<ChatMessage>> {
+        let Some(expression) = fts_expression(query) else {
+            return Ok(Vec::new());
+        };
+        let sql = format!(
+            "SELECT {} FROM messages
+             WHERE id IN (SELECT rowid FROM messages_fts WHERE messages_fts MATCH ?1)
+             ORDER BY id DESC LIMIT ?2",
+            Self::MSG_COLS
+        );
+        let mut stmt = self.conn.prepare_cached(&sql)?;
+        let rows = stmt.query_map(params![expression, limit], Self::row_to_message)?;
+        rows.map(|row| row.map(|(_, message)| message)).collect()
     }
 
     /// Rafraîchit les statistiques du planificateur de requêtes.
@@ -959,6 +1019,27 @@ impl Storage {
     }
 }
 
+/// Traduit une saisie utilisateur en expression FTS5 sûre.
+///
+/// La syntaxe FTS5 a ses propres opérateurs : une saisie brute peut être
+/// invalide (guillemet non fermé) et faire échouer la requête. On cite donc
+/// chaque terme, ce qui les traite littéralement, et le dernier reçoit un `*`
+/// pour la recherche au fil de la frappe.
+fn fts_expression(query: &str) -> Option<String> {
+    let terms: Vec<String> = query
+        .split_whitespace()
+        .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
+        .collect();
+    let (last, head) = terms.split_last()?;
+    let mut expression = head.join(" ");
+    if !expression.is_empty() {
+        expression.push(' ');
+    }
+    expression.push_str(last);
+    expression.push('*');
+    Some(expression)
+}
+
 /// Délai de conservation des sauvegardes de la migration JSON → SQLite.
 pub const LEGACY_BACKUP_TTL: std::time::Duration =
     std::time::Duration::from_secs(30 * 24 * 60 * 60);
@@ -1062,6 +1143,13 @@ fn run(
             } => storage.enqueue_outbox(hash, &to_peer, &message),
             StorageCmd::DequeueOutbox { hash } => storage.dequeue_outbox(hash),
             StorageCmd::Compact => storage.compact(),
+            StorageCmd::Search { query } => match storage.search(&query, SEARCH_LIMIT) {
+                Ok(messages) => {
+                    let _ = event_tx.blocking_send(AppEvent::SearchResults { query, messages });
+                    Ok(())
+                }
+                Err(error) => Err(error),
+            },
             StorageCmd::ExportConversation { me, conv, path } => {
                 match storage.export_conversation(&me, conv.as_deref()) {
                     Ok(text) => {

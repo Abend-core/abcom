@@ -49,6 +49,11 @@ pub enum AppEvent {
     KeyChanged {
         username: String,
     },
+    /// Résultats d'une recherche plein texte dans l'historique.
+    SearchResults {
+        query: String,
+        messages: Vec<ChatMessage>,
+    },
     /// Aucune connexion sécurisée n'a pu être établie vers ce pair : le
     /// paquet est perdu. Remonté à l'UI (bannière) car sur un binaire release
     /// sans console, l'utilisateur n'a aucun autre signal.
