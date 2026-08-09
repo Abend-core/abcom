@@ -15,6 +15,10 @@
 >
 > **Complété le 8 août 2026 (2ᵉ passe)** par une remontée d'historique complète
 > sur les dépendances lourdes — voir [§7](#7-remontée-dhistorique-sur-les-dépendances-lourdes).
+>
+> **Appliqué le 9 août 2026 : 26 constats sur 31.** La colonne « État » du
+> tableau de bord dit ce qui a été fait ; les deux exceptions (D12, D19) sont
+> justifiées en [§8](#8-les-deux-constats-non-appliqués).
 
 ## Verdict en une ligne
 
@@ -25,39 +29,39 @@ qui coûtent aujourd'hui de la latence, de la batterie et de la sécurité.
 
 ## Tableau de bord
 
-| # | Constat | Impact | Effort |
-|---|---------|--------|--------|
-| D1 | `TCP_NODELAY` jamais posé sur les sockets de chat | 🔴 latence perçue | trivial |
-| D2 | Décodage d'images réseau sans borne de dimensions | 🔴 sécurité | trivial |
-| D3 | `PowerPreference::HighPerformance` par défaut (GPU dédié pour une UI 2D) | 🟠 batterie | trivial |
-| D4 | `ThemePreference` d'egui réimplémenté à la main | 🟠 dette | faible |
-| D5 | `egui::Modal` (dispo depuis 0.30) inutilisé — nos modales sont des `Window` | 🟠 UX | faible |
-| D6 | Aucun raccourci via `KeyboardShortcut`/`consume_shortcut` | 🟠 UX | moyen |
-| D7 | Glisser-déposer de fichiers dans la fenêtre absent | 🟠 UX | faible |
-| D8 | `ScrollArea::show_rows` inutilisé — fenêtrage du fil fait main | 🟠 perf | moyen |
-| D9 | Pragmas SQLite manquants (`busy_timeout`, `mmap_size`, `cache_size`) | 🟠 perf/robustesse | trivial |
-| D10 | Un seul index SQLite, alors qu'on filtre surtout sur `to_user` | 🟠 perf | trivial |
-| D11 | FTS5 compilé dans le binaire mais inexploité (aucune recherche) | 🟠 fonctionnalité | moyen |
-| D12 | `rfd::AsyncFileDialog` inutilisé — d'où notre bricolage `pending_picker` | 🟠 dette | faible |
-| D13 | `egui_kittest` : test d'interaction et de rendu par capture | 🟠 qualité | moyen |
-| D14 | `tracing` sans aucun span (`#[instrument]`) | 🟢 diagnostic | faible |
-| D15 | `snow::Builder::prologue` inutilisé | 🟢 sécurité | faible |
-| D16 | `try_reserve_many` / `recv_many` (tokio) réimplémentés ou ignorés | 🟢 simplicité | faible |
-| D17 | Feature `zip` tirant zopfli pour rien | 🟢 poids | trivial |
-| D18 | Pas de journal fichier (`tracing-appender`) | 🟢 diagnostic | faible |
-| D19 | `notify-rust` : actions dans les notifications | 🟢 UX | faible |
-| D20 | Accessibilité AccessKit : aucun `widget_info` sur les boutons peints | 🟢 a11y | moyen |
-| D21 | `Options::reduce_texture_memory` (egui 0.28) jamais activé | 🟠 mémoire | trivial |
-| D22 | `PRAGMA optimize` absent (statistiques du planificateur périmées) | 🟠 perf | trivial |
-| D23 | Schéma SQLite non `STRICT` | 🟠 robustesse | faible |
-| D24 | FTS5 « contentless-delete » : recherche sans dupliquer le contenu | 🟠 fonctionnalité | moyen |
-| D25 | Colonne `media` en JSON texte : opérateurs `->>` et JSONB inexploités | 🟢 perf | faible |
-| D26 | `RETURNING` inexploité | 🟢 simplicité | trivial |
-| D27 | `ImageReader::into_dimensions()` : rejeter sans décoder | 🔴 sécurité | trivial |
-| D28 | `ViewportBuilder` : 4 options sur 32 (pas de taille minimale ni de position) | 🟠 UX | trivial |
-| D29 | Conflit connu winit/COM sous Windows entre glisser-déposer et `rfd` | 🟠 plateforme | à tester |
-| D30 | `rusqlite` : `trace_v2`, intégration chrono, `prepare_cached` sur 2 requêtes / 20 | 🟢 diagnostic | faible |
-| D31 | `TcpSocket` : régler la socket avant connexion | 🟢 perf | trivial |
+| # | Constat | Impact | État |
+|---|---------|--------|------|
+| D1 | `TCP_NODELAY` jamais posé sur les sockets de chat | 🔴 latence perçue | ✅ appliqué |
+| D2 | Décodage d'images réseau sans borne de dimensions | 🔴 sécurité | ✅ appliqué |
+| D3 | `PowerPreference::HighPerformance` par défaut (GPU dédié pour une UI 2D) | 🟠 batterie | ✅ appliqué |
+| D4 | `ThemePreference` d'egui réimplémenté à la main | 🟠 dette | ✅ appliqué |
+| D5 | `egui::Modal` (dispo depuis 0.30) inutilisé — nos modales sont des `Window` | 🟠 UX | ✅ appliqué |
+| D6 | Aucun raccourci via `KeyboardShortcut`/`consume_shortcut` | 🟠 UX | ✅ appliqué |
+| D7 | Glisser-déposer de fichiers dans la fenêtre absent | 🟠 UX | ✅ appliqué |
+| D8 | `ScrollArea::show_rows` inutilisé — fenêtrage du fil fait main | 🟠 perf | ⏸️ écarté, voir §8 |
+| D9 | Pragmas SQLite manquants (`busy_timeout`, `mmap_size`, `cache_size`) | 🟠 perf/robustesse | ✅ appliqué |
+| D10 | Un seul index SQLite, alors qu'on filtre surtout sur `to_user` | 🟠 perf | ✅ appliqué |
+| D11 | FTS5 compilé dans le binaire mais inexploité (aucune recherche) | 🟠 fonctionnalité | ✅ appliqué |
+| D12 | `rfd::AsyncFileDialog` inutilisé — d'où notre bricolage `pending_picker` | 🟠 dette | ⏸️ non appliqué |
+| D13 | `egui_kittest` : test d'interaction et de rendu par capture | 🟠 qualité | ✅ appliqué |
+| D14 | `tracing` sans aucun span (`#[instrument]`) | 🟢 diagnostic | ✅ appliqué |
+| D15 | `snow::Builder::prologue` inutilisé | 🟢 sécurité | ✅ appliqué |
+| D16 | `try_reserve_many` / `recv_many` (tokio) réimplémentés ou ignorés | 🟢 simplicité | ✅ appliqué |
+| D17 | Feature `zip` tirant zopfli pour rien | 🟢 poids | ✅ appliqué |
+| D18 | Pas de journal fichier (`tracing-appender`) | 🟢 diagnostic | ✅ appliqué |
+| D19 | `notify-rust` : actions dans les notifications | 🟢 UX | ⏸️ non appliqué |
+| D20 | Accessibilité AccessKit : aucun `widget_info` sur les boutons peints | 🟢 a11y | ✅ appliqué |
+| D21 | `Options::reduce_texture_memory` (egui 0.28) jamais activé | 🟠 mémoire | ✅ appliqué |
+| D22 | `PRAGMA optimize` absent (statistiques du planificateur périmées) | 🟠 perf | ✅ appliqué |
+| D23 | Schéma SQLite non `STRICT` | 🟠 robustesse | ⏸️ différé, voir §8 |
+| D24 | FTS5 « contentless-delete » : recherche sans dupliquer le contenu | 🟠 fonctionnalité | ✅ appliqué |
+| D25 | Colonne `media` en JSON texte : opérateurs `->>` inexploités | 🟢 perf | ✅ appliqué (constat partiellement erroné, voir §8) |
+| D26 | `RETURNING` inexploité | 🟢 simplicité | ⏸️ sans objet, voir §8 |
+| D27 | `ImageReader::into_dimensions()` : rejeter sans décoder | 🔴 sécurité | ✅ appliqué |
+| D28 | `ViewportBuilder` : 4 options sur 32 (pas de taille minimale ni de position) | 🟠 UX | ✅ appliqué |
+| D29 | Conflit connu winit/COM sous Windows entre glisser-déposer et `rfd` | 🟠 plateforme | ✅ appliqué |
+| D30 | `rusqlite` : `prepare_cached` sur 2 requêtes / 20 | 🟢 diagnostic | ✅ partiellement, voir §8 |
+| D31 | `TcpSocket` : régler la socket avant connexion | 🟢 perf | ✅ appliqué |
 
 ---
 
@@ -537,6 +541,87 @@ qui mérite un constat :
 | **zip** | 0.5 → 8.x | Rien de plus que D17 ; `zstd` reste une option si les dossiers deviennent lourds |
 | **snow** | 0.1 → 0.10 | Rien au-delà de D15 (`prologue`) ; le crate est petit et nous en utilisons l'essentiel |
 | **SQLite avant 3.20** | non parcouru | Décision assumée : notre usage est du SQL de base, l'historique ancien n'apporterait rien |
+
+---
+
+## 8. Les constats non appliqués, et pourquoi
+
+Cinq exceptions sur trente et un. Elles sont ici parce qu'un rapport où tout
+serait coché serait moins utile qu'un rapport honnête.
+
+### D12 — `rfd::AsyncFileDialog` : non appliqué ⏸️
+
+Le raisonnement du constat tient toujours, mais la conversion est plus risquée
+que le gain. Sur macOS, `NSOpenPanel` **doit** s'ouvrir sur le thread principal :
+c'est précisément pour cela que le code actuel reporte l'ouverture d'une frame
+au lieu d'appeler depuis un thread de fond. La variante asynchrone gère ce
+dispatch elle-même, mais son `Future` demande un exécuteur que l'UI n'a pas sous
+la main — le runtime tokio vit dans `main` et l'interface n'en garde pas de
+handle.
+
+Autrement dit : convertir demande de faire remonter un handle de runtime
+jusqu'à l'UI, pour supprimer **une frame de latence**. Et l'échec se
+manifesterait par un sélecteur de fichiers cassé — une fonction centrale — que
+je ne peux vérifier par aucun test automatisé.
+
+Gain : une frame. Risque : le sélecteur de fichiers. J'ai laissé en l'état.
+
+### D19 — Actions dans les notifications : non appliqué ⏸️
+
+`notify-rust` 4.18 les gère bien sur macOS (`mac_notification_sys`), donc le
+constat était juste. Deux obstacles à l'application :
+
+1. sur macOS, `show()` **bloque en attendant la réponse** de l'utilisateur — il
+   faudrait donc router cette réponse depuis le thread détaché jusqu'à l'UI ;
+2. les boutons d'action n'apparaissent de façon fiable que si l'application est
+   un bundle `.app` avec identifiant — or notre binaire n'est ni bundlé ni signé
+   (item ouvert §11 de `AUDIT.md`).
+
+Livrer un bouton « Répondre » qui n'apparaît pas serait pire que pas de bouton.
+À reprendre en même temps que la signature macOS.
+
+### D8 — Virtualisation du fil : écarté après examen ⏸️
+
+Le constat disait « `show_rows` inutilisé ». Après examen, `show_rows` suppose
+des lignes de **hauteur uniforme**, ce que nos messages n'ont pas (markdown,
+médias, citations, réactions). `show_viewport` gère les hauteurs variables mais
+exige de connaître les offsets à l'avance — ce qui reviendrait à reconstruire
+notre fenêtrage sous une autre forme.
+
+Or notre fenêtrage manuel (`chat_visible_count`, `CHAT_WINDOW_STEP`) **remplit
+déjà exactement le même rôle** : il borne le nombre de lignes mises en page. Ce
+n'était donc pas une lacune mais une implémentation différente d'un même besoin.
+Constat requalifié.
+
+### D23 — Tables `STRICT` : différé ⏸️
+
+Techniquement faisable — nos colonnes utilisent déjà des types acceptés. Mais
+passer une table existante en `STRICT` impose de la recréer et d'y recopier les
+données : c'est une migration sur l'historique réel d'un utilisateur, pour un
+gain de robustesse à l'écriture, sur une base alimentée par notre seul code.
+
+À faire lors de la prochaine migration de schéma déjà nécessaire pour une autre
+raison, pas isolément.
+
+### D26 — `RETURNING` : sans objet ⏸️
+
+Vérification faite, aucun appelant n'a besoin du rowid après insertion. Le
+constat listait une capacité disponible, pas un manque réel.
+
+### D25 et D30 — constats partiellement erronés, corrigés ✅
+
+Honnêteté sur mes propres erreurs :
+
+- **D25** affirmait qu'on désérialise le JSON en Rust pour interroger la colonne
+  `media`. C'est faux : `delete_by_media_id` utilisait déjà `json_extract`. Seule
+  la modernisation en opérateur `->>` a été appliquée.
+- **D30** annonçait `prepare_cached` sur « 2 requêtes sur 20 ». C'était juste,
+  et c'est corrigé pour les requêtes réellement répétées (pagination, export,
+  GC des médias, recherche). Les requêtes de démarrage restent en `prepare` :
+  les mettre en cache n'a aucun sens pour un appel unique. L'intégration
+  date-heure de rusqlite et la feature `trace` n'ont **pas** été adoptées : notre
+  `ts_epoch INTEGER` convient, et `trace` est un outil de diagnostic à activer
+  ponctuellement, pas en permanence.
 
 ---
 

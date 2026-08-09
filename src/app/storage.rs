@@ -403,7 +403,7 @@ impl Storage {
         // Le média est stocké en JSON : filtre sur l'id exact.
         self.conn.execute(
             "DELETE FROM messages
-             WHERE media IS NOT NULL AND json_extract(media, '$.id') = ?1",
+             WHERE media IS NOT NULL AND media ->> 'id' = ?1",
             params![media_id],
         )?;
         Ok(())
@@ -670,7 +670,7 @@ impl Storage {
     /// Derniers `limit` messages (ordre chronologique) + rowid du plus ancien
     /// chargé (None si toute la base tient dans la fenêtre).
     pub fn load_recent(&self, limit: u32) -> rusqlite::Result<(Vec<ChatMessage>, Option<i64>)> {
-        let mut stmt = self.conn.prepare(&format!(
+        let mut stmt = self.conn.prepare_cached(&format!(
             "SELECT {} FROM messages ORDER BY id DESC LIMIT ?1",
             Self::MSG_COLS
         ))?;
@@ -695,7 +695,7 @@ impl Storage {
         before_rowid: i64,
         limit: u32,
     ) -> rusqlite::Result<(Vec<ChatMessage>, Option<i64>)> {
-        let mut stmt = self.conn.prepare(&format!(
+        let mut stmt = self.conn.prepare_cached(&format!(
             "SELECT {} FROM messages WHERE id < ?1 ORDER BY id DESC LIMIT ?2",
             Self::MSG_COLS
         ))?;
@@ -718,7 +718,7 @@ impl Storage {
     pub fn all_media_ids(&self) -> rusqlite::Result<HashSet<String>> {
         let mut stmt = self
             .conn
-            .prepare("SELECT json_extract(media, '$.id') FROM messages WHERE media IS NOT NULL")?;
+            .prepare_cached("SELECT media ->> 'id' FROM messages WHERE media IS NOT NULL")?;
         let ids = stmt
             .query_map([], |r| r.get::<_, Option<String>>(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?
