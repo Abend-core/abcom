@@ -231,6 +231,13 @@ impl AbcomApp {
                         play_notification_sound();
                     }
                 }
+                AppEvent::SearchResults { query, messages } => {
+                    // Résultat d'une frappe plus ancienne : la requête a changé
+                    // entre-temps, on ignore.
+                    if query == self.search.submitted {
+                        self.search.results = messages;
+                    }
+                }
                 AppEvent::SendFailed { username } => {
                     // Sans ceci, l'échec disparaît dans les logs d'un binaire sans console.
                     let label = self.tr(

@@ -56,6 +56,7 @@ fn render(app: &mut AbcomApp, frames: usize) {
             app.show_reaction_emoji_picker(&ctx);
             app.render_settings(&ctx);
             app.show_media_viewer(&ctx);
+            app.show_search(&ctx);
         });
         // epaint panique si les deltas de textures d'une frame sont abandonnés.
         output.textures_delta.clear();
@@ -100,5 +101,7 @@ fn renders_every_modal_and_picker_open() {
     app.show_emoji_picker = true;
     app.gif_picker.show = true;
     app.last_notification = Some("coucou".into());
+    app.search.open = true;
+    app.search.query = "bureau".into();
     render(&mut app, 3);
 }

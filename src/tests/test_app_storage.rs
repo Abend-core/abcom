@@ -640,3 +640,60 @@ fn schema_indexes_cover_conversation_queries() {
         .unwrap();
     assert!(plan.contains("idx_messages_conv"), "plan obtenu : {plan}");
 }
+
+#[test]
+fn full_text_search_finds_and_forgets() {
+    let dir = tmp_dir("fts");
+    let storage = Storage::open(&dir).unwrap();
+    storage
+        .insert_message(&msg(
+            "alice",
+            Some("moi"),
+            "rendez-vous demain au bureau",
+            1,
+        ))
+        .unwrap();
+    storage
+        .insert_message(&msg("bob", Some("moi"), "rien à voir", 2))
+        .unwrap();
+
+    let hits = storage.search("bureau", 50).unwrap();
+    assert_eq!(hits.len(), 1);
+    assert!(hits[0].content.contains("bureau"));
+
+    // Recherche par préfixe, au fil de la frappe.
+    assert_eq!(storage.search("bur", 50).unwrap().len(), 1);
+    // Plusieurs termes = ET implicite.
+    assert_eq!(storage.search("rendez bureau", 50).unwrap().len(), 1);
+    assert_eq!(storage.search("bureau introuvable", 50).unwrap().len(), 0);
+
+    // Une saisie syntaxiquement hostile pour FTS5 ne doit pas faire échouer
+    // la requête, juste ne rien trouver.
+    assert!(storage.search("\"guillemet ouvert", 50).is_ok());
+    assert!(storage.search("*", 50).is_ok());
+
+    // Conversation effacée : l'index doit oublier, sinon il fuiterait du
+    // contenu supprimé dans les résultats.
+    storage.delete_conversation("moi", Some("alice")).unwrap();
+    assert!(storage.search("bureau", 50).unwrap().is_empty());
+}
+
+#[test]
+fn search_index_is_backfilled_for_existing_history() {
+    let dir = tmp_dir("fts-backfill");
+    {
+        // Base créée puis index supprimé : simule une base antérieure à FTS5.
+        let storage = Storage::open(&dir).unwrap();
+        storage
+            .insert_message(&msg("alice", None, "message historique", 1))
+            .unwrap();
+        storage
+            .conn
+            .execute_batch("DROP TRIGGER messages_fts_insert; DELETE FROM messages_fts;")
+            .unwrap();
+        assert!(storage.search("historique", 50).unwrap().is_empty());
+    }
+
+    let storage = Storage::open(&dir).unwrap();
+    assert_eq!(storage.search("historique", 50).unwrap().len(), 1);
+}
