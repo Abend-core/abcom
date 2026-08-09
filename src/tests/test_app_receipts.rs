@@ -340,15 +340,22 @@ fn offline_messages_wait_for_the_peer_to_return() {
 
     s.queue_offline(msg.clone(), "alice".into());
     assert!(s.is_queued_offline(hash));
-    // Le retour d'un autre pair ne vide pas la file d'alice.
-    assert!(s.take_outbox_for("bob").is_empty());
-    assert!(s.is_queued_offline(hash));
+    // Le retour d'un autre pair ne concerne pas la file d'alice.
+    assert!(s.outbox_for("bob").is_empty());
 
-    let ready = s.take_outbox_for("alice");
+    let ready = s.outbox_for("alice");
     assert_eq!(ready.len(), 1);
     assert_eq!(ready[0].0, hash);
     assert_eq!(ready[0].1.content, "tu me liras plus tard");
-    // Une fois remis, le message ne repart pas une seconde fois.
+
+    // Consulter la file ne la vide pas : sans émission réussie, le message
+    // doit rester en attente — c'est ce qui le protège d'une fermeture ou
+    // d'un échec d'envoi au moment de la reconnexion.
+    assert!(s.is_queued_offline(hash));
+    assert_eq!(s.outbox_for("alice").len(), 1);
+
+    // Émission acquise : le message sort de la file et n'y revient pas.
+    s.drop_from_outbox(hash);
     assert!(!s.is_queued_offline(hash));
-    assert!(s.take_outbox_for("alice").is_empty());
+    assert!(s.outbox_for("alice").is_empty());
 }

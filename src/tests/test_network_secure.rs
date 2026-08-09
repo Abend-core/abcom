@@ -158,7 +158,7 @@ fn trust_store_loads_preexisting_pins() {
 }
 
 #[test]
-fn forgetting_a_key_restores_tofu() {
+fn repinning_accepts_only_the_validated_key() {
     let store = TrustStore::new(Default::default(), None);
     let key_a = [1u8; 32];
     let key_b = [2u8; 32];
@@ -166,13 +166,13 @@ fn forgetting_a_key_restores_tofu() {
     assert_eq!(store.verify_and_pin("bob", &key_a), Trust::Pinned);
     assert_eq!(store.verify_and_pin("bob", &key_b), Trust::Mismatch);
 
-    // Ré-appairage explicite : la nouvelle clé est acceptée une fois, puis
-    // ré-épinglée comme n'importe quelle première rencontre.
-    assert!(store.forget("bob"));
-    assert_eq!(store.verify_and_pin("bob", &key_b), Trust::Pinned);
+    // Ré-appairage explicite : c'est la clé validée qui est épinglée, pas la
+    // prochaine venue — une autre machine ne peut pas s'y glisser.
+    store.repin("bob", &key_b);
     assert_eq!(store.verify_and_pin("bob", &key_b), Trust::Match);
     assert_eq!(store.verify_and_pin("bob", &key_a), Trust::Mismatch);
 
-    // Oublier un pair inconnu ne fait rien et le signale.
-    assert!(!store.forget("carol"));
+    // Une clé tierce présentée juste après le ré-appairage est refusée : il
+    // n'existe aucune fenêtre pendant laquelle n'importe qui serait épinglé.
+    assert_eq!(store.verify_and_pin("bob", &[3u8; 32]), Trust::Mismatch);
 }

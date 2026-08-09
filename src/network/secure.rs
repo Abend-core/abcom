@@ -327,20 +327,23 @@ impl TrustStore {
         }
     }
 
-    /// Désépingle un pair pour que la prochaine connexion ré-épingle (seul ré-appairage légitime).
+    /// Épingle **la clé exacte** que l'utilisateur vient d'accepter.
     ///
-    /// Toujours déclenché par l'utilisateur : accepter revient à refaire confiance à l'aveugle.
-    pub fn forget(&self, username: &str) -> bool {
-        let removed = self.keys.lock_safe().remove(username).is_some();
-        if removed {
-            if let Some(tx) = &self.storage_tx {
-                let _ = tx.send(StorageCmd::DeletePeerKey {
-                    username: username.to_string(),
-                });
-            }
-            tracing::warn!("clé épinglée oubliée pour « {username} » (ré-appairage demandé)");
+    /// Seul ré-appairage légitime, et toujours déclenché par l'utilisateur.
+    /// On remplace l'épinglage au lieu de simplement l'oublier : un
+    /// désépinglage rouvrirait une fenêtre où n'importe quelle machine du
+    /// réseau pourrait se faire épingler à la place du pair légitime.
+    pub fn repin(&self, username: &str, key: &[u8]) {
+        self.keys
+            .lock_safe()
+            .insert(username.to_string(), key.to_vec());
+        if let Some(tx) = &self.storage_tx {
+            let _ = tx.send(StorageCmd::UpsertPeerKey {
+                username: username.to_string(),
+                pubkey: key.to_vec(),
+            });
         }
-        removed
+        tracing::warn!("clé ré-épinglée pour « {username} » à la demande de l'utilisateur");
     }
 }
 

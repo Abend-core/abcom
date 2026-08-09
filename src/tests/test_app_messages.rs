@@ -166,3 +166,34 @@ fn unread_cache_follows_content_generation() {
     s.mark_conversation_read("alice");
     assert_eq!(s.unread_count("alice"), 0);
 }
+
+#[test]
+fn duplicate_receptions_are_detected() {
+    let dir = std::env::temp_dir().join(format!("abcom-dup-{:?}", std::thread::current().id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = AppState::new_with_base("moi", &dir);
+
+    let msg = ChatMessage {
+        from: "alice".into(),
+        content: "une seule fois".into(),
+        timestamp: "12:00".into(),
+        timestamp_epoch: Some(1),
+        to_user: Some("moi".into()),
+        media: None,
+        reply_to: None,
+        nonce: Some(42),
+    };
+    let hash = AppState::message_hash(&msg);
+
+    assert!(!s.has_message(hash));
+    s.add_message(msg.clone());
+    // Réémission après un ACK perdu : le même message doit être reconnu, sinon
+    // le retry en stockait jusqu'à six copies.
+    assert!(s.has_message(hash));
+    assert_eq!(s.messages.len(), 1);
+
+    // Un message au contenu identique mais de nonce différent reste distinct.
+    let mut other = msg.clone();
+    other.nonce = Some(43);
+    assert!(!s.has_message(AppState::message_hash(&other)));
+}

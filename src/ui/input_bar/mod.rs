@@ -80,22 +80,23 @@ impl AbcomApp {
         // verrou par frame dans la barre de saisie.
         let selected_peer_online = self.sidebar_cache.selected_peer_online;
 
+        // Hors ligne, on informe mais on **laisse écrire** : le message part
+        // dans la file d'attente et sera livré à la reconnexion du pair.
         if !selected_peer_online {
-            egui::Panel::bottom("input_panel")
-                .exact_size(40.0)
+            egui::Panel::bottom("offline_notice")
+                .exact_size(22.0)
                 .show(ui, |ui| {
                     ui.centered_and_justified(|ui| {
                         ui.label(
                             egui::RichText::new(self.tr(
-                                "🔴 Cet utilisateur est hors ligne",
-                                "🔴 This user is offline",
+                                "🔴 Hors ligne — votre message partira à sa reconnexion",
+                                "🔴 Offline — your message will be sent when they reconnect",
                             ))
                             .color(egui::Color32::from_rgb(180, 40, 40))
                             .small(),
                         );
                     });
                 });
-            return (false, false);
         }
 
         let mut emoji_button_clicked = false;

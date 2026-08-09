@@ -43,6 +43,18 @@ pub struct NetworkSendRequest {
     pub packet: NetworkPacket,
 }
 
+impl NetworkPacket {
+    /// Ce paquet peut-il être abandonné sans conséquence ?
+    ///
+    /// Seule la frappe en cours l'est : elle est réémise en continu et périmée
+    /// une seconde plus tard. Tout le reste — message, accusé, réaction,
+    /// événement de groupe, avatar — doit attendre une place plutôt que de
+    /// disparaître alors que l'interface le croit parti.
+    pub fn is_droppable(&self) -> bool {
+        matches!(self, Self::Typing(_))
+    }
+}
+
 macro_rules! network_request_from {
     ($source:ty, $packet:expr) => {
         impl From<$source> for NetworkSendRequest {

@@ -154,22 +154,23 @@ impl AppState {
         self.bump_content();
     }
 
-    /// Retire et renvoie les messages en attente pour un pair qui revient en ligne.
-    pub fn take_outbox_for(&mut self, peer: &str) -> Vec<(u64, ChatMessage)> {
-        let ready: Vec<u64> = self
-            .outbox
+    /// Messages en attente pour un pair qui revient en ligne, **sans** les
+    /// retirer : ils ne sortent de la file qu'une fois réellement mis en file
+    /// d'envoi, via [`Self::drop_from_outbox`]. Les vider ici les perdrait si
+    /// l'émission échouait ou si l'application fermait entre-temps.
+    pub fn outbox_for(&self, peer: &str) -> Vec<(u64, ChatMessage)> {
+        self.outbox
             .iter()
             .filter(|(_, (to, _))| to == peer)
-            .map(|(hash, _)| *hash)
-            .collect();
-        ready
-            .into_iter()
-            .filter_map(|hash| {
-                let (_, message) = self.outbox.remove(&hash)?;
-                self.persist(super::StorageCmd::DequeueOutbox { hash });
-                Some((hash, message))
-            })
+            .map(|(hash, (_, message))| (*hash, message.clone()))
             .collect()
+    }
+
+    /// Retire un message de la file d'attente, une fois son émission acquise.
+    pub fn drop_from_outbox(&mut self, message_hash: u64) {
+        if self.outbox.remove(&message_hash).is_some() {
+            self.persist(super::StorageCmd::DequeueOutbox { hash: message_hash });
+        }
     }
 
     /// Le message attend-il encore le retour en ligne de son destinataire ?

@@ -233,9 +233,9 @@ pub(crate) struct ModalsState {
     pub(crate) rename_input: String,
     pub(crate) settings_open: bool,
     pub(crate) settings_tab: SettingsTab,
-    /// Pair dont la clé a changé (TOFU `Mismatch`) : la modale propose le
-    /// ré-appairage explicite. None = aucune alerte en attente.
-    pub(crate) key_mismatch: Option<String>,
+    /// Pair dont la clé a changé (TOFU `Mismatch`) et clé qu'il a présentée :
+    /// la modale propose de ré-épingler **celle-ci**. None = aucune alerte.
+    pub(crate) key_mismatch: Option<(String, Vec<u8>)>,
 }
 
 /// État des médias du fil : caches de textures (éviction LRU), visionneuse

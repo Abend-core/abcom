@@ -95,6 +95,16 @@ impl AppState {
         total.saturating_sub(read)
     }
 
+    /// Ce message est-il déjà dans la fenêtre mémoire ?
+    ///
+    /// Un ACK perdu fait réémettre l'expéditeur jusqu'à cinq fois : sans ce
+    /// contrôle, chaque réémission créait une copie de plus.
+    pub fn has_message(&self, message_hash: u64) -> bool {
+        self.messages
+            .iter()
+            .any(|m| Self::message_hash(m) == message_hash)
+    }
+
     /// Clé d'un message entrant : le salon, ou l'expéditeur ; `None` pour les nôtres et « Tous ».
     fn incoming_key(&self, msg: &ChatMessage) -> Option<String> {
         let to = msg.to_user.as_deref()?;
