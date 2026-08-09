@@ -625,6 +625,71 @@ Honnêteté sur mes propres erreurs :
 
 ---
 
+## 9. Moteur de stockage : rester sur SQLite, ou passer à un moteur Rust ?
+
+Étude demandée le 9 août 2026 : *« un projet qui ne consomme pas de ressources,
+fiable et compatible SQLite — sans réinventer la roue »*, plus le chiffrement.
+
+### Ce qui existe réellement
+
+| Candidat | Version | Compatible SQLite | Verdict |
+|---|---|---|---|
+| **Turso Database** (ex-limbo) | `0.8.0-pre.3` | dialecte SQL, **format de fichier** et API C | Le seul candidat sérieux |
+| **libSQL** | production | fork de SQLite | Écrit en **C** : ne répond pas à la demande |
+| **GlueSQL** | 0.19 | SQL partiel, pas le format de fichier | Réécriture complète de notre couche |
+| **redb / sled / fjall** | — | aucune | Ce sont des magasins clé-valeur, pas du SQL |
+
+Turso est le seul projet qui coche « compatible SQLite » au sens fort : même
+dialecte, **même format de fichier** — une base `abcom.db` existante s'ouvrirait
+sans migration.
+
+### Pourquoi je ne le propose pas maintenant
+
+Trois faits, vérifiés :
+
+1. **Pas de 1.0.** 119 versions publiées et la dernière est une `0.8.0-pre.3`.
+   L'amont recommande lui-même de « garder des sauvegardes indépendantes »
+   jusqu'à la 1.0, et reconnaît que la compatibilité n'est pas à 100 %.
+2. **La recherche sauterait.** Turso n'implémente pas FTS5 : sa recherche
+   plein texte passe par `tantivy` et reste marquée expérimentale. Nous
+   venons de livrer la recherche sur FTS5 avec `contentless_delete` — elle
+   serait à réécrire, et sans l'astuce qui évite de dupliquer l'historique.
+3. **Son chiffrement est expérimental et non audité.** Or c'est précisément
+   ce qu'on veut obtenir.
+
+Le gain serait réel — 269 000 lignes de C en moins, et la MSRV libérée (elle est
+à 1.95 uniquement à cause du build script de `libsqlite3-sys`). Mais il se paie
+en fiabilité sur **l'historique de messages de l'utilisateur**, pour une
+application dont c'est la donnée centrale.
+
+**Proposition : recontrôler à la 1.0.** Le format de fichier étant compatible,
+la bascule restera possible plus tard sans migration de données — le coût
+d'attendre est donc faible, et c'est ce qui rend l'attente raisonnable.
+
+### Chiffrement au repos : trois voies
+
+| Voie | Ce que ça chiffre | Effet sur la recherche | Coût |
+|---|---|---|---|
+| **SQLCipher** (`bundled-sqlcipher`) | **tout le fichier**, page par page, de façon transparente | **aucun** : FTS5 continue de fonctionner | macOS utilise CommonCrypto (propre) ; Linux et Windows exigent OpenSSL, ou la feature `vendored-openssl` qui embarque tout OpenSSL |
+| Chiffrement applicatif du contenu | seulement le champ `content` | **détruit la recherche** : on n'indexe pas du texte chiffré | faible, mais on perd ce qu'on vient de livrer |
+| Chiffrement Turso | tout le fichier | FTS5 absent de toute façon | expérimental et non audité |
+
+**Proposition : SQLCipher**, seule voie qui chiffre l'ensemble *sans* sacrifier
+la recherche. Points à traiter avant de l'activer :
+
+- **migration** des bases existantes : SQLCipher ne lit pas un fichier en clair,
+  il faut exporter/réimporter au premier lancement (`sqlcipher_export`) ;
+- **origine de la clé** : dériver de `ABCOM_PASSPHRASE` par KDF lierait le
+  chiffrement du disque à la passphrase de salon, deux choses différentes. Mieux
+  vaut une clé propre, stockée avec `identity.key` (déjà en 0600 / ACL
+  restreinte) — ce qui protège des autres comptes de la machine, pas d'un accès
+  physique. À écrire noir sur blanc dans le modèle de menace, sous peine de
+  promettre plus que ce qui est livré ;
+- **OpenSSL sur Linux/Windows** : c'est le vrai coût, à mesurer sur la CI
+  multi-OS avant de s'engager.
+
+---
+
 ## Ordre d'attaque conseillé
 
 **Immédiat, effort trivial, gain net :**
