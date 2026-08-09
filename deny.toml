@@ -30,6 +30,11 @@ allow = [
     "OFL-1.1",
     "BSL-1.0",
     "Unlicense",
+    # Exigée par `epaint_default_fonts` : la police Ubuntu embarquée par egui.
+    # Le SPDX est un AND, elle ne peut pas être remplacée par MIT/Apache.
+    "Ubuntu-font-1.0",
+    # Licence unique de `webpki-roots` (magasin de certificats).
+    "CDLA-Permissive-2.0",
 ]
 confidence-threshold = 0.9
 

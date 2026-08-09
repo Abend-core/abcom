@@ -37,7 +37,7 @@ impl NetContext {
 
 impl NetContext {
     /// Signale à l'UI qu'une clé de pair a changé (connexion refusée).
-    pub async fn report_key_mismatch(&self, username: &str) {
+    pub async fn report_key_mismatch(&self, username: &str, offered_key: &[u8]) {
         tracing::warn!(
             "clé inattendue pour « {username} » : connexion refusée (usurpation possible ?)"
         );
@@ -45,6 +45,7 @@ impl NetContext {
             .event_tx
             .send(AppEvent::KeyChanged {
                 username: username.to_string(),
+                offered_key: offered_key.to_vec(),
             })
             .await;
     }

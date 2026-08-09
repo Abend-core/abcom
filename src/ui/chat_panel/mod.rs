@@ -277,7 +277,7 @@ impl AbcomApp {
             // réinstallation légitime du pair. On ne tranche pas à sa place :
             // la connexion reste refusée tant que l'utilisateur n'a pas
             // explicitement ré-appairé, empreinte vérifiée hors-bande.
-            if let Some(peer) = self.modals.key_mismatch.clone() {
+            if let Some((peer, offered_key)) = self.modals.key_mismatch.clone() {
                 let title = self.tr("Clé d'identité modifiée", "Identity key changed");
                 let explain = self.tr(
                     "La clé de ce pair ne correspond plus à celle enregistrée. \
@@ -316,13 +316,14 @@ impl AbcomApp {
                     || ui.input(|i| i.key_pressed(egui::Key::Escape));
 
                 if do_trust {
-                    // Désépinglage : la prochaine connexion ré-épingle la clé
-                    // présentée (retour au TOFU pour ce pair).
-                    self.trust.forget(&peer);
+                    // On épingle la clé effectivement présentée, pas la
+                    // prochaine venue : sinon une autre machine du réseau
+                    // pourrait se glisser dans la fenêtre de ré-appairage.
+                    self.trust.repin(&peer, &offered_key);
                     self.last_notification = Some(
                         self.tr(
-                            "Clé oubliée : la prochaine connexion sera ré-appairée",
-                            "Key forgotten: the next connection will be re-paired",
+                            "Nouvelle clé acceptée pour ce pair",
+                            "New key accepted for this peer",
                         )
                         .to_string(),
                     );

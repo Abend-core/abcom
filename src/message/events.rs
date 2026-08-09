@@ -48,6 +48,10 @@ pub enum AppEvent {
     /// prévenu d'une possible usurpation.
     KeyChanged {
         username: String,
+        /// Clé effectivement présentée. Le ré-appairage épingle **celle-ci**,
+        /// et pas la première clé reçue après un désépinglage — sinon une
+        /// autre machine pourrait gagner la course.
+        offered_key: Vec<u8>,
     },
     /// Résultats d'une recherche plein texte dans l'historique.
     SearchResults {

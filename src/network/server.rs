@@ -96,7 +96,7 @@ async fn handle_incoming_tracked(
     .await
     .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "Hello expiré"))??;
     if ctx.trust.verify_and_pin(&peer, &remote_key) == Trust::Mismatch {
-        ctx.report_key_mismatch(&peer).await;
+        ctx.report_key_mismatch(&peer, &remote_key).await;
         return Ok(());
     }
     let _active_guard = if let Some(active) = active {

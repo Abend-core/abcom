@@ -221,7 +221,7 @@ async fn connect_secure(
         )));
     }
     if ctx.trust.verify_and_pin(&peer, &remote_key) == Trust::Mismatch {
-        ctx.report_key_mismatch(&peer).await;
+        ctx.report_key_mismatch(&peer, &remote_key).await;
         return Err(to_io("clé du pair inattendue (TOFU)"));
     }
     Ok(secure)
@@ -366,7 +366,7 @@ async fn stream_in(
     )
     .await?;
     if ctx.trust.verify_and_pin(&peer, &remote_key) == Trust::Mismatch {
-        ctx.report_key_mismatch(&peer).await;
+        ctx.report_key_mismatch(&peer, &remote_key).await;
         return Err(to_io("clé du pair inattendue (TOFU)"));
     }
 

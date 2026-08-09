@@ -13,6 +13,8 @@ use crate::message::{NetworkPacket, NetworkSendRequest};
 use super::pool::ConnectionPool;
 
 const WORKER_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+/// Attente maximale d'une place dans la file d'un pair pour un paquet critique.
+const QUEUE_BACKPRESSURE: std::time::Duration = std::time::Duration::from_secs(5);
 
 /// Expéditeur commun pour tous les paquets courts.
 pub async fn run_sender(mut rx: Receiver<NetworkSendRequest>, pool: Arc<ConnectionPool>) {
@@ -43,9 +45,29 @@ pub async fn run_sender(mut rx: Receiver<NetworkSendRequest>, pool: Arc<Connecti
             });
             tx
         });
-        if worker.try_send(req.packet).is_err() {
-            crate::metrics::record_packet_dropped();
-            tracing::warn!("file réseau du pair saturée : {}", key.0);
+        // File du pair pleine : on ne jette que ce dont la perte est sans
+        // conséquence. Le reste applique une contre-pression bornée — bornée,
+        // pour qu'un pair bloqué ne fige pas la distribution vers les autres.
+        match worker.try_send(req.packet) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                crate::metrics::record_packet_dropped();
+                tracing::warn!("file réseau fermée : {}", key.0);
+            }
+            Err(mpsc::error::TrySendError::Full(packet)) => {
+                if packet.is_droppable() {
+                    crate::metrics::record_packet_dropped();
+                    tracing::debug!("signal abandonné, file du pair pleine : {}", key.0);
+                } else {
+                    match tokio::time::timeout(QUEUE_BACKPRESSURE, worker.send(packet)).await {
+                        Ok(Ok(())) => {}
+                        Ok(Err(_)) | Err(_) => {
+                            crate::metrics::record_packet_dropped();
+                            tracing::warn!("paquet perdu, file du pair saturée : {}", key.0);
+                        }
+                    }
+                }
+            }
         }
     }
 }

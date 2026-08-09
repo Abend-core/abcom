@@ -95,7 +95,7 @@ fn renders_every_modal_and_picker_open() {
     let mut app = test_app();
     app.modals.settings_open = true;
     app.modals.group_modal_open = true;
-    app.modals.key_mismatch = Some("alice".into());
+    app.modals.key_mismatch = Some(("alice".into(), vec![7u8; 32]));
     app.modals.rename_target = Some("alice".into());
     app.modals.participants_open = true;
     app.show_emoji_picker = true;

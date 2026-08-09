@@ -228,7 +228,7 @@ impl ConnectionPool {
             return None;
         }
         if self.ctx.trust.verify_and_pin(&peer, &remote_key) == Trust::Mismatch {
-            self.ctx.report_key_mismatch(&peer).await;
+            self.ctx.report_key_mismatch(&peer, &remote_key).await;
             return None;
         }
 

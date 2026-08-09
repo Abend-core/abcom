@@ -96,6 +96,13 @@ impl AbcomApp {
                         }
                     }
 
+                    // Doublon d'une réémission : l'ACK vient d'être renvoyé
+                    // ci-dessus, il ne reste qu'à ne pas dupliquer le message.
+                    if s.has_message(AppState::message_hash(&msg)) {
+                        tracing::debug!("message déjà reçu ignoré (réémission)");
+                        continue;
+                    }
+
                     s.add_message(msg.clone());
                     if msg.from != s.my_username {
                         self.last_notification = Some(match &group_conv {
@@ -151,7 +158,7 @@ impl AbcomApp {
                         });
                     }
                     // Messages écrits pendant son absence : réémis maintenant.
-                    let queued = s.take_outbox_for(&username);
+                    let queued = s.outbox_for(&username);
                     if !queued.is_empty() {
                         let requests: Vec<_> = queued
                             .into_iter()
@@ -168,8 +175,11 @@ impl AbcomApp {
                             .collect();
                         drop(s);
                         for (hash, request) in requests {
+                            // La sortie de file suit l'émission, jamais l'inverse.
                             if self.net.try_send(request.clone()) {
-                                self.state.lock_safe().mark_message_sent(hash, request);
+                                let mut state = self.state.lock_safe();
+                                state.drop_from_outbox(hash);
+                                state.mark_message_sent(hash, request);
                             }
                         }
                         s = self.state.lock_safe();
@@ -216,9 +226,12 @@ impl AbcomApp {
                 AppEvent::ReactionReceived(event) => {
                     s.apply_reaction_event(&event);
                 }
-                AppEvent::KeyChanged { username } => {
+                AppEvent::KeyChanged {
+                    username,
+                    offered_key,
+                } => {
                     // Clé non concordante : connexion refusée, la modale offre le ré-appairage.
-                    self.modals.key_mismatch = Some(username.clone());
+                    self.modals.key_mismatch = Some((username.clone(), offered_key));
                     let label = self.tr(
                         "la clé d'identité a changé, connexion refusée",
                         "identity key changed, connection refused",

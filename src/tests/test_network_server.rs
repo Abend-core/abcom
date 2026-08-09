@@ -414,7 +414,7 @@ async fn test_key_change_is_refused_and_reported() {
         .unwrap()
         .unwrap();
     assert!(
-        matches!(event, AppEvent::KeyChanged { ref username } if username == "client"),
+        matches!(event, AppEvent::KeyChanged { ref username, .. } if username == "client"),
         "alerte de changement de clé attendue"
     );
 }
