@@ -8,6 +8,10 @@ Format basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/), versi
 ## [Non publié]
 
 ### Ajouté
+- **Recherche dans l'historique** (Cmd/Ctrl+F) : index FTS5 sans seconde copie des messages sur le disque, recherche au fil de la frappe, clic sur un résultat pour sauter au message
+- **Raccourcis clavier globaux** : Cmd/Ctrl+F recherche, Cmd/Ctrl+, paramètres, Ctrl+Tab et Ctrl+Maj+Tab pour changer de conversation, Échap ferme la surcouche la plus haute
+- **Glisser-déposer** de fichiers directement dans la fenêtre
+- **Journal fichier** tournant dans `<données>/logs/`, en plus de la console
 - **Messages hors ligne** : un message écrit à un pair absent reste dans le fil et part automatiquement à sa reconnexion, au lieu d'être refusé — la file est persistée, un redémarrage ne perd rien
 - **Annonces de découverte signées** (Ed25519 dérivé de l'identité Noise) avec horodatage : plus personne ne peut injecter de pairs fantômes sur le LAN ni rejouer une annonce capturée
 - **Export d'une conversation** en texte et **compaction de la base** (Paramètres → Général → Données)
@@ -28,6 +32,10 @@ Format basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/), versi
 - Le fichier `.env` injectait n'importe quelle variable dans l'environnement : seules les trois clés attendues sont lues, guillemets gérés, et l'environnement existant a la priorité
 
 ### Performance
+- **TCP_NODELAY** sur les sockets de chat : notre trafic est fait de petits paquets (messages, accusés, frappe) que l'algorithme de Nagle retenait jusqu'à 40 ms chacun, sur un réseau local où la latence réelle est inférieure à la milliseconde
+- **Index SQLite `(to_user, id)`** : toutes les requêtes de conversation parcouraient la table entière ; ajout aussi des pragmas `busy_timeout`, `cache_size`, `mmap_size`, `temp_store` et d'un `PRAGMA optimize` à la fermeture
+- **`PowerPreference::LowPower`** : le défaut d'egui réveillait le GPU dédié d'un portable pour peindre une interface 2D
+- **`reduce_texture_memory`** : la copie CPU des images est libérée après téléversement en GPU
 - **egui/eframe 0.36** : la logique (événements réseau, tray, tâches périodiques) est séparée du rendu, et tourne désormais aussi quand la fenêtre est repliée
 - **Emojis décodés à la demande** au lieu du démarrage : empreinte physique au repos 91,7 → 57,6 Mo, et lancement plus rapide
 - **Renderer wgpu (Metal natif sur macOS) à la place d'OpenGL** : contexte GPU ramené de 29,6 à 6,2 Mo, RSS de 155,8 à 146,0 Mo, pic d'empreinte de 132,4 à 110,8 Mo (mesures A/B au repos). `glow` n'est plus lié du tout
@@ -35,6 +43,11 @@ Format basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/), versi
 - Les positions du curseur du composeur étaient recalculées à chaque frame — deux fois quand la barre de défilement apparaît — en itérant toute la saisie : elles sont désormais mémoïsées par (texte, largeur, densité de pixels)
 - Le nombre de non-lus re-parcourait tout l'historique en mémoire pour chaque conversation à chaque rafraîchissement de la barre latérale : un seul parcours par changement de contenu suffit maintenant
 - Une rafale de messages (import, salon actif, retour en ligne) provoquait un commit SQLite par message : les insertions en attente sont regroupées dans une seule transaction
+
+### Sécurité
+- Les images reçues sont **refusées sur leurs dimensions avant d'être décodées** : un pair pouvait faire allouer jusqu'à 512 Mo avec un fichier de quelques kilo-octets
+- Le handshake Noise porte un **prologue** liant la session à la version de protocole : une version incompatible échoue avant l'établissement de la session
+- Les boutons peints (croix, icônes d'action, coches d'accusé) annoncent un **libellé accessible** : ils étaient muets pour un lecteur d'écran
 
 ### Modifié
 - `chat_panel.rs` (1 589 lignes) et `input_bar.rs` (1 130) découpés en sous-modules ; `klipy` passe dans `services/`, `notify`/`autostart`/`tray` dans `platform/`
