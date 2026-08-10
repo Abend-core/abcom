@@ -14,7 +14,7 @@ const EXPECTED: &[char] = &[
     '•', '–', '—', '…', // ponctuation typographique
     '«', '»', '“', '”', // guillemets
     '≥', '≤', '×', '÷', '±', // mathématiques courantes
-    '€', '£', '©', '®', '°',
+    '€', '£', '©', '®', '°', '✘', // croix des tableaux de la documentation
 ];
 
 fn probe() -> egui::Context {
@@ -40,6 +40,21 @@ fn every_character_the_interface_writes_can_be_drawn() {
         missing.is_empty(),
         "caractères sans glyphe, ils s'afficheront en carré vide : {missing:?}"
     );
+}
+
+/// Les deux polices de repli doivent rester branchées sur les familles
+/// standard : sans elles, une part entière des symboles retombe en carré vide.
+/// Un caractère témoin par police, qu'elle seule fournit.
+#[test]
+fn both_fallback_fonts_are_wired_in() {
+    let ctx = probe();
+    for (character, font) in [('✓', "Inter"), ('✘', "Noto Sans Symbols 2")] {
+        let text = character.to_string();
+        assert!(
+            ctx.fonts_mut(|fonts| fonts.has_glyphs(&egui::FontId::proportional(14.0), &text)),
+            "{character} n'est plus dessinable : {font} n'est plus consultée en repli"
+        );
+    }
 }
 
 #[test]

@@ -58,6 +58,7 @@ impl AbcomApp {
         let klipy_role = self.t(i18n::GIF_ANIMES_MEMES_STATIQUES_ET_STICKERS);
         let openmoji_role = self.t(i18n::JEU_D_EMOJIS_UTILISE_DANS_LE);
         let inter_role = self.t(i18n::POLICE_D_ECRITURE_EN_GRAS_UTILISEE);
+        let symbols_role = self.t(i18n::POLICE_DE_SYMBOLES_UTILISEE_EN_REPLI);
 
         // Taille fixe (celle, maximale, de l'onglet Licence) pour que la fenêtre
         // ne change pas de dimensions quand on bascule d'un onglet à l'autre.
@@ -376,6 +377,38 @@ impl AbcomApp {
                                         lbl(ui, self.t(i18n::ROLE));
                                         ui.add(
                                             egui::Label::new(inter_role)
+                                                .wrap_mode(egui::TextWrapMode::Wrap),
+                                        );
+                                        ui.end_row();
+                                        lbl(ui, self.t(i18n::LICENCE));
+                                        ui.label("SIL Open Font License v1.1");
+                                        ui.end_row();
+                                    });
+
+                                ui.add_space(14.0);
+                                ui.separator();
+                                ui.add_space(8.0);
+
+                                // ── Noto Sans Symbols 2 ──────────────────────
+                                ui.label(
+                                    egui::RichText::new("Noto Sans Symbols 2 (police de symboles)")
+                                        .strong()
+                                        .heading(),
+                                );
+                                ui.add_space(4.0);
+                                egui::Grid::new("credits_noto_symbols")
+                                    .num_columns(2)
+                                    .spacing([12.0, 4.0])
+                                    .show(ui, |ui| {
+                                        let lbl = |ui: &mut egui::Ui, t: &str| {
+                                            ui.label(egui::RichText::new(t).strong());
+                                        };
+                                        lbl(ui, self.t(i18n::AUTEURS));
+                                        ui.label("The Noto Project Authors");
+                                        ui.end_row();
+                                        lbl(ui, self.t(i18n::ROLE));
+                                        ui.add(
+                                            egui::Label::new(symbols_role)
                                                 .wrap_mode(egui::TextWrapMode::Wrap),
                                         );
                                         ui.end_row();

@@ -148,7 +148,7 @@ Les dépendances directes sont déclarées dans [Cargo.toml](../Cargo.toml) et v
 
 Vérifier après toute montée d'`eframe` que `cargo tree | grep -i glow` ne renvoie **rien** : réintroduire les features par défaut relierait silencieusement le backend OpenGL.
 
-**Licence du projet : AGPL-3.0** — alignée le 08/08/2026. `LICENSE` (texte intégral de la GNU AGPL v3) et l'onglet Licence de l'application faisaient déjà foi ; `Cargo.toml` déclarait `MIT` par erreur et déclare désormais `AGPL-3.0-only`. Ce n'était pas une double licence, juste une incohérence. Ressources embarquées : police Inter (OFL-1.1, licence dans `assets/fonts/`), jeu d'emojis type Twemoji.
+**Licence du projet : AGPL-3.0** — alignée le 08/08/2026. `LICENSE` (texte intégral de la GNU AGPL v3) et l'onglet Licence de l'application faisaient déjà foi ; `Cargo.toml` déclarait `MIT` par erreur et déclare désormais `AGPL-3.0-only`. Ce n'était pas une double licence, juste une incohérence. Ressources embarquées : polices Inter et Noto Sans Symbols 2 (OFL-1.1 toutes deux, licences dans `assets/fonts/`), jeu d'emojis type Twemoji. Les deux polices servent aussi de repli aux familles standard : sans elles, les caractères qu'elles seules couvrent s'affichent en carré vide (cf. `ui::build_fonts` et `src/tests/test_ui_fonts.rs`).
 
 Outils d'entretien : `cargo audit` (vulnérabilités) et `cargo deny check` (licences, sources, doublons) — les deux exécutés par la CI `dev` **et** `main` ; `cargo outdated` (rapport mensuel automatique), `cargo update` (mises à jour semver). `Cargo.lock` est versionné : builds reproductibles.
 
