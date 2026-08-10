@@ -28,7 +28,7 @@ mkdir -p "$DIST_DIR/$DIST_NAME"
 cp target/release/abcom "$DIST_DIR/$DIST_NAME/"
 cp scripts/abcom-install.sh "$DIST_DIR/$DIST_NAME/"
 cp docs/06-installation.md "$DIST_DIR/$DIST_NAME/README.md"
-cp contrib/abcom.desktop "$DIST_DIR/$DIST_NAME/"
+cp scripts/abcom.desktop "$DIST_DIR/$DIST_NAME/"
 
 # Rend les scripts exécutables
 chmod +x "$DIST_DIR/$DIST_NAME/abcom"

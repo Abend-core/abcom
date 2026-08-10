@@ -75,7 +75,7 @@ install: release
 	cp target/release/$(BINARY_NAME) $(INSTALL_DIR)/$(BINARY_NAME)
 	chmod +x $(INSTALL_DIR)/$(BINARY_NAME)
 	@mkdir -p $(HOME)/.local/share/applications
-	cp contrib/abcom.desktop $(HOME)/.local/share/applications/abcom.desktop
+	cp scripts/abcom.desktop $(HOME)/.local/share/applications/abcom.desktop
 	@mkdir -p $(HOME)/.local/share/$(BINARY_NAME)
 	@# Reste d'une installation antérieure : un service systemd doublait le
 	@# démarrage XDG de l'application et lançait une seconde instance.
