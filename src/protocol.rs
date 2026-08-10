@@ -3,7 +3,11 @@
 /// Version du protocole filaire ; les versions incompatibles sont rejetées.
 ///
 /// 2 : annonces de découverte signées (Ed25519 dérivé de l'identité Noise).
-pub const PROTOCOL_VERSION: u16 = 2;
+/// 3 : les salons sont désignés par un identifiant immuable — `to_user` porte
+///     `#<id>` et non plus `#<nom>`. Comme cette clé entre dans le hash des
+///     messages, un pair resté en v2 calculerait des hashs différents : ses
+///     accusés ne correspondraient à rien. Les deux versions se refusent donc.
+pub const PROTOCOL_VERSION: u16 = 3;
 
 pub const MAX_USERNAME_CHARS: usize = 64;
 

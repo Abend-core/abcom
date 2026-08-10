@@ -302,7 +302,7 @@ async fn test_forged_authors_and_wrong_recipients_are_rejected() {
 async fn test_group_event_preserves_authenticated_peer() {
     let event = dispatch(NetworkPacket::Group(GroupEvent {
         action: GroupAction::Delete {
-            group_name: "Team".to_string(),
+            group_id: "Team".to_string(),
         },
     }))
     .await

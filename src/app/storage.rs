@@ -26,7 +26,9 @@ pub const INITIAL_WINDOW: u32 = 500;
 pub const SEARCH_LIMIT: u32 = 200;
 /// Taille d'une page de chargement d'historique (scroll vers le haut).
 pub const OLDER_PAGE: u32 = 100;
-const SCHEMA_VERSION: i64 = 1;
+/// 2 : les salons sont désignés par un identifiant immuable — `to_user` porte
+/// `#<id>` au lieu de `#<nom>`, et les hashs qui en dépendent sont recalculés.
+const SCHEMA_VERSION: i64 = 2;
 
 /// Nature d'un accusé nominatif persisté.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -260,8 +262,11 @@ impl Storage {
             if !has_nonce {
                 tx.execute("ALTER TABLE messages ADD COLUMN nonce INTEGER", [])?;
             }
-            tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         }
+        if version < 2 {
+            Self::migrate_groups_to_ids(&tx)?;
+        }
+        tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         tx.commit()?;
 
         let mut storage = Self { conn };
@@ -273,6 +278,108 @@ impl Storage {
         storage.purge_orphan_receipts()?;
         purge_legacy_backups(base);
         Ok(storage)
+    }
+
+    /// Bascule les salons du nom vers l'identifiant (schéma v2).
+    ///
+    /// `to_user` portait `#<nom>` et ce nom entrait dans le hash des messages :
+    /// un renommage laissait derrière lui des réactions, des accusés et un
+    /// repère de lecture accrochés à des hashs que plus aucun message ne
+    /// produisait. On réécrit donc la clé en `#<id>`, on recalcule les hashs
+    /// concernés et on reporte les tables qui s'y réfèrent.
+    fn migrate_groups_to_ids(tx: &Connection) -> rusqlite::Result<()> {
+        let groups: Vec<Group> = {
+            let mut stmt = tx.prepare("SELECT data FROM groups")?;
+            let rows = stmt
+                .query_map([], |row| {
+                    let data = row.get::<_, String>(0)?;
+                    serde_json::from_str::<Group>(&data)
+                        .map_err(|error| Self::serde_from_sql(0, error))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            rows
+        };
+
+        for mut group in groups {
+            let old_key = format!("#{}", group.name);
+            group.ensure_id();
+            let new_key = format!("#{}", group.id);
+            if old_key == new_key {
+                continue;
+            }
+
+            // Le salon lui-même : on persiste l'identifiant dérivé.
+            let data = serde_json::to_string(&group).map_err(Self::serde_to_sql)?;
+            tx.execute(
+                "UPDATE groups SET data = ?2 WHERE name = ?1",
+                params![group.name, data],
+            )?;
+
+            // Messages du salon : nouvelle clé et nouveau hash.
+            let rows: Vec<(i64, i64, ChatMessage)> = {
+                let mut stmt = tx.prepare(
+                    "SELECT id, hash, from_user, content, timestamp, ts_epoch, media, reply_to,
+                            nonce
+                     FROM messages WHERE to_user = ?1",
+                )?;
+                let rows = stmt
+                    .query_map(params![old_key], |row| {
+                        let media = row
+                            .get::<_, Option<String>>(6)?
+                            .map(|raw| serde_json::from_str(&raw))
+                            .transpose()
+                            .map_err(|error| Self::serde_from_sql(6, error))?;
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, i64>(1)?,
+                            ChatMessage {
+                                from: row.get::<_, String>(2)?,
+                                content: row.get::<_, String>(3)?,
+                                timestamp: row.get::<_, String>(4)?,
+                                timestamp_epoch: row.get::<_, Option<i64>>(5)?.map(|v| v as u64),
+                                // La nouvelle clé : c'est elle qui change le hash.
+                                to_user: Some(new_key.clone()),
+                                media,
+                                reply_to: row.get::<_, Option<i64>>(7)?.map(|v| v as u64),
+                                nonce: row.get::<_, Option<i64>>(8)?.map(|v| v as u64),
+                            },
+                        ))
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                rows
+            };
+
+            for (row_id, old_hash, message) in rows {
+                let new_hash = message.stable_hash() as i64;
+                tx.execute(
+                    "UPDATE messages SET to_user = ?2, hash = ?3 WHERE id = ?1",
+                    params![row_id, new_key, new_hash],
+                )?;
+                if new_hash != old_hash {
+                    // `OR REPLACE` : deux hashs distincts peuvent converger vers
+                    // la même ligne cible, la clé primaire absorbe le doublon.
+                    tx.execute(
+                        "UPDATE OR REPLACE reactions SET message_hash = ?2 WHERE message_hash = ?1",
+                        params![old_hash, new_hash],
+                    )?;
+                    tx.execute(
+                        "UPDATE OR REPLACE receipts SET message_hash = ?2 WHERE message_hash = ?1",
+                        params![old_hash, new_hash],
+                    )?;
+                    tx.execute(
+                        "UPDATE read_marks SET message_hash = ?2 WHERE message_hash = ?1",
+                        params![old_hash, new_hash],
+                    )?;
+                }
+            }
+
+            // Repère de lecture : il est indexé par la clé de conversation.
+            tx.execute(
+                "UPDATE OR REPLACE read_marks SET username = ?2 WHERE username = ?1",
+                params![old_key, new_key],
+            )?;
+        }
+        Ok(())
     }
 
     fn serde_to_sql(error: serde_json::Error) -> rusqlite::Error {
@@ -354,6 +461,12 @@ impl Storage {
 
     pub fn insert_message(&self, msg: &ChatMessage) -> rusqlite::Result<()> {
         Self::insert_message_on(&self.conn, msg)
+    }
+
+    /// Force la version de schéma, pour rejouer une migration dans les tests.
+    #[cfg(test)]
+    pub fn set_user_version(&self, version: i64) -> rusqlite::Result<()> {
+        self.conn.pragma_update(None, "user_version", version)
     }
 
     /// Insertion groupée : un seul commit WAL par rafale au lieu d'un par message.
@@ -813,7 +926,15 @@ impl Storage {
         let groups = stmt
             .query_map([], |row| {
                 let data = row.get::<_, String>(0)?;
-                serde_json::from_str::<Group>(&data).map_err(|error| Self::serde_from_sql(0, error))
+                serde_json::from_str::<Group>(&data)
+                    .map(|mut group| {
+                        // Salon enregistré avant l'introduction des
+                        // identifiants : on le dérive, à l'identique chez tous
+                        // les membres.
+                        group.ensure_id();
+                        group
+                    })
+                    .map_err(|error| Self::serde_from_sql(0, error))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 

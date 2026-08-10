@@ -36,21 +36,7 @@ impl AppState {
     /// même seconde restent distincts. Le nonce n'est ajouté que s'il est
     /// présent, pour ne pas changer le hash des messages déjà persistés.
     pub fn message_hash(msg: &ChatMessage) -> u64 {
-        let key = format!(
-            "{}:{}:{}:{}:{}{}",
-            msg.from,
-            msg.to_user.as_deref().unwrap_or("broadcast"),
-            msg.timestamp_epoch.unwrap_or(0),
-            msg.content,
-            msg.media.as_ref().map(|m| m.id.as_str()).unwrap_or(""),
-            msg.nonce.map(|n| format!(":{n}")).unwrap_or_default()
-        );
-        let mut hash: u64 = 14_695_981_039_346_656_037;
-        for byte in key.bytes() {
-            hash ^= byte as u64;
-            hash = hash.wrapping_mul(1_099_511_628_211);
-        }
-        hash
+        msg.stable_hash()
     }
 
     pub fn mark_message_read(&mut self, message_hash: u64, username: String) {

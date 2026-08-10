@@ -167,6 +167,7 @@ fn recipients_group_only_online_members() {
         peer("eve", 9004, true), // pas membre → exclue
     ];
     s.groups = vec![Group {
+        id: "team".to_string(),
         name: "team".to_string(),
         owner: "alice".to_string(),
         members: vec!["alice".to_string(), "bob".to_string(), "carol".to_string()],
@@ -244,6 +245,7 @@ fn ack_from_another_peer_does_not_complete_delivery() {
 fn group_ack_is_accepted_only_from_a_member() {
     let mut s = state();
     s.groups.push(Group {
+        id: "team".into(),
         name: "team".into(),
         owner: "alice".into(),
         members: vec!["alice".into(), "bob".into()],
@@ -262,6 +264,7 @@ fn group_ack_is_accepted_only_from_a_member() {
 fn group_read_receipt_is_shared_for_messages_from_other_members() {
     let mut s = state();
     s.groups.push(Group {
+        id: "team".into(),
         name: "team".into(),
         owner: "alice".into(),
         members: vec!["alice".into(), "bob".into(), "carol".into()],
