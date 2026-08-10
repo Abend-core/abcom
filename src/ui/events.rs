@@ -250,6 +250,13 @@ impl AbcomApp {
                     self.last_notification = Some(format!("{username} : {label}"));
                     self.notification_time = std::time::Instant::now();
                 }
+                AppEvent::ConversationExported { error } => {
+                    self.last_notification = Some(match error {
+                        None => self.t(i18n::CONVERSATION_EXPORTEE).to_string(),
+                        Some(error) => format!("{} : {error}", self.t(i18n::EXPORT_IMPOSSIBLE)),
+                    });
+                    self.notification_time = std::time::Instant::now();
+                }
                 AppEvent::MediaDownloaded { filename } => {
                     self.last_notification = Some(match filename {
                         Some(name) => format!("{} {name}", self.t(i18n::TELECHARGE)),

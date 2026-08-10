@@ -116,3 +116,34 @@ fn find_message_by_hash_not_found_returns_none() {
     let s = state();
     assert!(s.find_message_by_hash(123_456).is_none());
 }
+
+#[test]
+fn reaction_flood_from_a_peer_is_bounded() {
+    let mut s = state();
+    // Un pair ne peut pas empiler indéfiniment d'emojis sur un même message.
+    for i in 0..(super::MAX_REACTIONS_PER_MESSAGE + 10) {
+        s.apply_reaction_event(&ReactionEvent {
+            message_hash: 42,
+            emoji: format!("e{i}"),
+            user: "mallory".to_string(),
+            action: ReactionAction::Add,
+        });
+    }
+    assert_eq!(
+        s.reactions_for(42).len(),
+        super::MAX_REACTIONS_PER_MESSAGE,
+        "le nombre d'emojis distincts est plafonné"
+    );
+
+    // Un retrait reste toujours accepté : il ne fait que réduire.
+    s.apply_reaction_event(&ReactionEvent {
+        message_hash: 42,
+        emoji: "e0".to_string(),
+        user: "mallory".to_string(),
+        action: ReactionAction::Remove,
+    });
+    assert_eq!(
+        s.reactions_for(42).len(),
+        super::MAX_REACTIONS_PER_MESSAGE - 1
+    );
+}

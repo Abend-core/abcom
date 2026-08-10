@@ -106,6 +106,7 @@ catalog! {
     DOSSIER_AJOUTE => ("Dossier ajouté", "Folder added"),
     EXPORTER_LA_CONVERSATION => ("Exporter la conversation", "Export conversation"),
     CONVERSATION_EXPORTEE => ("Conversation exportée", "Conversation exported"),
+    EXPORT_IMPOSSIBLE => ("Export impossible", "Export failed"),
     CHOISIR_UNE_IMAGE_DE_PROFIL => ("Choisir une image de profil", "Choose a profile picture"),
     IMAGE_DE_PROFIL_INVALIDE => ("Image de profil invalide", "Invalid profile picture"),
     RECHERCHER => ("Rechercher", "Search"),

@@ -26,9 +26,17 @@ pub fn instance_id() -> u32 {
     })
 }
 
+/// Nombre d'instances distinctes adressables sans sortir de la plage de ports.
+///
+/// Chaque instance consomme `chat_port` et `chat_port + 1` ; au-delà, le calcul
+/// déborderait `u16` — en release il rebouclait silencieusement sur des ports
+/// déjà attribués, en debug il paniquait.
+const MAX_INSTANCE_ID: u32 = (u16::MAX as u32 - 9001) / 10;
+
 /// Port TCP de chat de cette instance : 9000, 9010, 9020, …
 pub fn chat_port() -> u16 {
-    9000 + (instance_id() as u16) * 10
+    let id = instance_id().min(MAX_INSTANCE_ID);
+    9000 + (id as u16) * 10
 }
 
 /// Port TCP de streaming des médias : toujours `chat_port + 1`.

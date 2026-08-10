@@ -1273,17 +1273,24 @@ fn run(
                 Err(error) => Err(error),
             },
             StorageCmd::ExportConversation { me, conv, path } => {
-                match storage.export_conversation(&me, conv.as_deref()) {
-                    Ok(text) => {
-                        if let Err(error) = std::fs::write(&path, text) {
-                            tracing::error!("export impossible : {error}");
-                        } else {
-                            tracing::info!("conversation exportée vers {}", path.display());
-                        }
-                        Ok(())
+                // Le verdict remonte à l'UI : c'est elle qui a annoncé
+                // l'export, elle doit pouvoir se dédire.
+                let outcome = match storage.export_conversation(&me, conv.as_deref()) {
+                    Ok(text) => std::fs::write(&path, text).map_err(|error| error.to_string()),
+                    Err(error) => Err(error.to_string()),
+                };
+                let error = match outcome {
+                    Ok(()) => {
+                        tracing::info!("conversation exportée vers {}", path.display());
+                        None
                     }
-                    Err(error) => Err(error),
-                }
+                    Err(error) => {
+                        tracing::error!("export impossible : {error}");
+                        Some(error)
+                    }
+                };
+                let _ = event_tx.blocking_send(AppEvent::ConversationExported { error });
+                Ok(())
             }
             StorageCmd::AddReceipt {
                 hash,
