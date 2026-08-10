@@ -51,6 +51,7 @@ Installation par plateforme (Linux/systemd, Windows, Docker) : voir [docs/06-ins
 | [07 — Développement](docs/07-developpement.md) | Build, tests, CI, workflow Git, dépendances et licences |
 | [08 — Historique et audits](docs/08-historique-et-audits.md) | Phases du projet, audits menés, résultats mesurés |
 | [09 — Limites et pistes](docs/09-limites-et-pistes.md) | Limites connues et travaux envisagés |
+| [10 — Cahier de tests](docs/10-cahier-de-tests.md) | Tests manuels : fonctionnalités, régressions, spécificités par OS |
 
 Pour contribuer : [CONTRIBUTING.md](CONTRIBUTING.md) (barrière verte, conventions, workflow Git). Le suivi au fil de l'eau est dans [CHANGELOG.md](CHANGELOG.md) et [AVANCEMENT.md](AVANCEMENT.md). Les documents historiques (audits et plans d'origine, ADR, anciennes versions) sont conservés tels quels dans [old/](old/).
 

@@ -42,7 +42,7 @@ Ces choix structurent le projet ; les remettre en cause revient à le refondre.
 
 **Un seul processus pour le mode résident.** Un découpage daemon + interface a été évalué et écarté : des semaines de plomberie IPC pour un gain mémoire récupérable autrement (purge des textures quand la fenêtre se cache). Le réseau, le stockage et la découverte sont déjà indépendants de l'UI ; la frontière existante permettrait ce découpage plus tard si un client mobile le justifiait.
 
-**Le nom d'un groupe est son identifiant.** Simple et lisible, avec une limite assumée : deux groupes créés indépendamment sous le même nom entreront en collision. Le passage à un identifiant UUID est une piste connue (voir [09 — Limites et pistes](09-limites-et-pistes.md)).
+**Un groupe est identifié par un identifiant immuable, pas par son nom.** Le nom a d'abord servi d'identifiant, pour la lisibilité. C'était un défaut de fond : cette clé entre dans le hash des messages, donc renommer un salon orphelinait d'un coup ses réactions, ses accusés et son repère de lecture. Le nom est désormais un simple libellé, librement modifiable ; les salons antérieurs retrouvent un identifiant dérivé de leurs données immuables, identique chez tous les pairs.
 
 ## Vocabulaire
 
@@ -51,7 +51,7 @@ Ces choix structurent le projet ; les remettre en cause revient à le refondre.
 | **Pair** (peer) | Une autre instance d'Abcom détectée sur le réseau, identifiée par son pseudo et sa clé publique |
 | **Découverte** | Annonce UDP périodique par laquelle les instances se signalent mutuellement |
 | **Fil « Tous »** | Conversation publique : les messages sont diffusés à tous les pairs en ligne |
-| **Salon** (groupe) | Conversation réservée à une liste de membres ; identifiée en interne par la clé `#<nom>` |
+| **Salon** (groupe) | Conversation réservée à une liste de membres ; identifiée en interne par la clé `#<id>`, où `id` est immuable — le nom n'est qu'un libellé |
 | **Propriétaire** | Créateur d'un salon (ou son successeur) ; seul habilité à ajouter, exclure et supprimer |
 | **ACK / accusé de lecture** | Confirmations réseau de livraison et de lecture d'un message privé |
 | **Noise XX** | Motif de handshake cryptographique : authentification mutuelle par clés statiques X25519, secret de session éphémère |

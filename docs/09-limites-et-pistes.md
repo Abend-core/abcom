@@ -14,9 +14,8 @@ Inventaire honnête de ce que l'application ne fait pas (ou fait imparfaitement)
 
 | Limite | Détail | Piste |
 |---|---|---|
-| Le nom du groupe est son identifiant | Deux groupes créés indépendamment sous le même nom se percutent (l'upsert du dernier propriétaire vu fait foi) | UUID + nom d'affichage libre — changement de protocole, à faire d'un bloc |
 | Pas de réémission hors ligne | Un membre absent au moment d'un envoi ne recevra jamais ce message (les mutations de membres, elles, sont rattrapées par le propriétaire) | Journal par salon avec offset par membre |
-| Renommage de salon sans UI | Le protocole et la migration d'historique existent (`Rename`), pas le bouton | Ajouter l'entrée dans le modal de gestion |
+| Renommage de salon sans UI | Le protocole existe (`Rename`) et le renommage ne coûte plus rien depuis le passage aux identifiants immuables, mais le bouton n'est pas câblé | Ajouter l'entrée dans le modal de gestion |
 | Salon sans membre en ligne | Le message part dans le vide (historique local seulement) ; la barre de saisie reste active, contrairement au privé qui signale « hors ligne » | Avertissement visuel |
 | Chiffrement de groupe par lien | Pas de clé de salon partagée : l'émetteur chiffre vers chaque membre sur sa session pair-à-pair — suffisant tant que l'émetteur relaie lui-même | Clé de groupe si le relais par un tiers apparaît |
 
