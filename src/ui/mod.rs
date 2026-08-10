@@ -1090,11 +1090,14 @@ pub(crate) const BOLD_FAMILY: &str = "bold";
 /// Définitions de polices : on conserve les polices par défaut et on ajoute
 /// Inter Bold (OFL) sous la famille [`BOLD_FAMILY`] pour les noms d'auteur.
 ///
-/// Inter sert aussi de **repli** aux familles standard. Les polices par défaut
-/// d'egui ignorent des caractères courants dès qu'on colle du texte venu
-/// d'ailleurs — coche `✓`, flèche `→`, retour `⏎` — qui s'affichaient alors en
-/// carré vide. Placée en dernier, Inter n'est consultée que pour ce que les
-/// autres ne savent pas dessiner : le texte ordinaire garde sa graisse.
+/// Deux polices servent aussi de **repli** aux familles standard : les polices
+/// par défaut d'egui ignorent des caractères courants dès qu'on colle du texte
+/// venu d'ailleurs — coche `✓`, flèches, cases à cocher — qui s'affichaient
+/// alors en carré vide. Inter d'abord (elle couvre `✓`, les flèches et le
+/// retour `⏎` dans le style de l'interface), Noto Sans Symbols 2 ensuite pour
+/// le reste des symboles. Placées en dernier, elles ne sont consultées que
+/// pour ce que les autres ne savent pas dessiner : le texte ordinaire garde
+/// sa graisse.
 fn build_fonts() -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(
@@ -1103,16 +1106,20 @@ fn build_fonts() -> egui::FontDefinitions {
             "../../assets/fonts/Inter-Bold.ttf"
         ))),
     );
+    fonts.font_data.insert(
+        "noto-symbols2".to_owned(),
+        Arc::new(egui::FontData::from_static(include_bytes!(
+            "../../assets/fonts/NotoSansSymbols2-Regular.ttf"
+        ))),
+    );
     fonts.families.insert(
         egui::FontFamily::Name(BOLD_FAMILY.into()),
         vec!["inter-bold".to_owned()],
     );
     for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-        fonts
-            .families
-            .entry(family)
-            .or_default()
-            .push("inter-bold".to_owned());
+        let fallbacks = fonts.families.entry(family).or_default();
+        fallbacks.push("inter-bold".to_owned());
+        fallbacks.push("noto-symbols2".to_owned());
     }
     fonts
 }

@@ -127,6 +127,26 @@ fn renders_every_modal_and_picker_open() {
     render(&mut app, 3);
 }
 
+/// Les onglets de Paramètres ne s'ouvraient dans aucun test : Crédits et
+/// Licence n'étaient jamais peints, donc ni panique ni identifiant egui
+/// dupliqué n'y auraient été détectés.
+#[test]
+fn renders_every_settings_tab() {
+    use crate::ui::SettingsTab;
+
+    let mut app = test_app();
+    app.modals.settings_open = true;
+    for tab in [
+        SettingsTab::Profile,
+        SettingsTab::General,
+        SettingsTab::Credits,
+        SettingsTab::License,
+    ] {
+        app.modals.settings_tab = tab;
+        render(&mut app, 2);
+    }
+}
+
 /// Le rattrapage d'accusés de lecture doit fonctionner sans changer de
 /// conversation — c'est ce que `logic` déclenche au retour du focus — et ne
 /// pas réémettre à chaque passage.
