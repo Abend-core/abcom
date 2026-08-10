@@ -32,7 +32,11 @@ impl AppState {
                     .filter_map(|member| {
                         self.peers
                             .iter()
-                            .find(|peer| peer.online && peer.username == *member)
+                            .find(|peer| {
+                                peer.online
+                                    && peer.username == *member
+                                    && !peer.addr.ip().is_unspecified()
+                            })
                             .map(|peer| TransferTarget {
                                 username: peer.username.clone(),
                                 addr: peer.addr,

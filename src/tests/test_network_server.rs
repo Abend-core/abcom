@@ -42,7 +42,11 @@ async fn secure_client_with_identity(
 }
 
 #[tokio::test]
-async fn duplicate_authenticated_session_is_rejected() {
+async fn a_reconnecting_peer_replaces_its_previous_session() {
+    // Une seule session entrante par pair, mais c'est la dernière qui compte :
+    // le pair qui rouvre une connexion (changement d'adresse, coupure vue d'un
+    // seul côté) doit être entendu, pas ignoré jusqu'à l'expiration de
+    // l'ancienne session.
     let (tx, mut rx) = mpsc::channel(8);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -50,30 +54,47 @@ async fn duplicate_authenticated_session_is_rejected() {
 
     let identity = Identity::ephemeral().unwrap();
     let mut first = secure_client_with_identity(addr, "alice", &identity).await;
-    let packet = NetworkPacket::Ack(MessageAck {
-        from: "alice".into(),
-        to: "serveur".into(),
-        message_hash: 1,
-        timestamp: "12:00".into(),
-    });
+    let packet = |hash: u64| {
+        NetworkPacket::Ack(MessageAck {
+            from: "alice".into(),
+            to: "serveur".into(),
+            message_hash: hash,
+            timestamp: "12:00".into(),
+        })
+    };
     first
-        .send(&serde_json::to_vec(&packet).unwrap())
+        .send(&serde_json::to_vec(&packet(1)).unwrap())
         .await
         .unwrap();
     assert!(matches!(
         tokio::time::timeout(Duration::from_secs(2), rx.recv())
             .await
             .unwrap(),
-        Some(AppEvent::MessageAckReceived(_))
+        Some(AppEvent::MessageAckReceived(ack)) if ack.message_hash == 1
     ));
 
     let mut second = secure_client_with_identity(addr, "alice", &identity).await;
-    let _ = second.send(&serde_json::to_vec(&packet).unwrap()).await;
+    second
+        .send(&serde_json::to_vec(&packet(2)).unwrap())
+        .await
+        .unwrap();
     assert!(
-        tokio::time::timeout(Duration::from_millis(300), rx.recv())
+        matches!(
+            tokio::time::timeout(Duration::from_secs(2), rx.recv())
+                .await
+                .unwrap(),
+            Some(AppEvent::MessageAckReceived(ack)) if ack.message_hash == 2
+        ),
+        "la session la plus récente doit être servie"
+    );
+
+    // L'ancienne session a été close : elle ne dispatche plus rien.
+    let _ = first.send(&serde_json::to_vec(&packet(3)).unwrap()).await;
+    assert!(
+        tokio::time::timeout(Duration::from_millis(500), rx.recv())
             .await
             .is_err(),
-        "la seconde session ne doit produire aucun événement"
+        "la session remplacée ne doit plus produire d'événement"
     );
 }
 

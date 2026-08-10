@@ -25,6 +25,8 @@ Format basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/), versi
 - MSRV déclarée (`rust-version = "1.95"`) et vérifiée en CI ; `cargo audit` et `cargo deny` désormais exécutés sur `dev` comme sur `main`
 
 ### Corrigé
+- **Messages perdus en silence entre deux pairs** : chaque annonce de découverte part deux fois (multicast et broadcast) et revient sous deux adresses source, si bien que l'adresse retenue pour un pair basculait toutes les trois secondes. Le pool rouvrait une connexion à chaque bascule, le pair d'en face refusait cette session en double *après* le handshake — l'émetteur croyait donc son canal établi — et les messages écrits entre-temps disparaissaient sans la moindre erreur, jusqu'à six minutes durant. Mesuré à 69 % de pertes entre deux instances locales, aussi bien en privé qu'en salon ou en diffusion. L'adresse d'un pair est désormais stable tant qu'il donne signe de vie, et une session entrante est remplacée par la plus récente au lieu d'être refusée
+- **Envoi de salon vers une adresse fantôme** : la branche « groupe » était la seule à ne pas écarter les pairs restaurés hors ligne (`0.0.0.0:0`)
 - **Accusé de lecture au retour du focus** : un message reçu pendant que la fenêtre était en arrière-plan n'était acquitté qu'après avoir quitté la conversation et y être revenu
 - **Accusé de réception avant persistance** : le destinataire acquittait dès la mise en file d'écriture ; un arrêt avant commit laissait l'expéditeur croire son message livré alors qu'il avait disparu. L'accusé suit désormais le commit
 - **File d'envoi vidée trop tôt** : un message quittait la file durable dès son admission dans le canal réseau — ni écriture socket, ni réception garanties. Un arrêt au mauvais moment le privait de toute réémission
