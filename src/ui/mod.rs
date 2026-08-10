@@ -1089,6 +1089,12 @@ pub(crate) const BOLD_FAMILY: &str = "bold";
 
 /// Définitions de polices : on conserve les polices par défaut et on ajoute
 /// Inter Bold (OFL) sous la famille [`BOLD_FAMILY`] pour les noms d'auteur.
+///
+/// Inter sert aussi de **repli** aux familles standard. Les polices par défaut
+/// d'egui ignorent des caractères courants dès qu'on colle du texte venu
+/// d'ailleurs — coche `✓`, flèche `→`, retour `⏎` — qui s'affichaient alors en
+/// carré vide. Placée en dernier, Inter n'est consultée que pour ce que les
+/// autres ne savent pas dessiner : le texte ordinaire garde sa graisse.
 fn build_fonts() -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
     fonts.font_data.insert(
@@ -1101,6 +1107,13 @@ fn build_fonts() -> egui::FontDefinitions {
         egui::FontFamily::Name(BOLD_FAMILY.into()),
         vec!["inter-bold".to_owned()],
     );
+    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
+        fonts
+            .families
+            .entry(family)
+            .or_default()
+            .push("inter-bold".to_owned());
+    }
     fonts
 }
 
@@ -1281,3 +1294,7 @@ fn set_dock_visible(_visible: bool) {}
 #[cfg(test)]
 #[path = "../tests/test_ui_app.rs"]
 mod app_tests;
+
+#[cfg(test)]
+#[path = "../tests/test_ui_fonts.rs"]
+mod font_tests;
