@@ -3,12 +3,13 @@
 //! L'index vit dans SQLite (FTS5 sans copie du contenu) : l'UI n'envoie qu'une
 //! requête au thread de stockage et affiche ce qui revient.
 
+use super::i18n;
 use eframe::egui;
 
 use crate::app::AppState;
 use crate::util::MutexExt;
 
-use super::chat_panel::{header_time, peer_color};
+use super::chat_panel::{header_time, peer_color_for};
 use super::AbcomApp;
 
 /// Longueur minimale avant d'interroger l'index : en dessous, toute
@@ -21,10 +22,10 @@ impl AbcomApp {
             return;
         }
 
-        let title = self.tr("Rechercher", "Search");
-        let hint = self.tr("Rechercher dans l'historique…", "Search history…");
-        let empty = self.tr("Aucun résultat", "No results");
-        let short = self.tr("Tapez au moins 2 caractères", "Type at least 2 characters");
+        let title = self.t(i18n::RECHERCHER);
+        let hint = self.t(i18n::RECHERCHER_DANS_L_HISTORIQUE);
+        let empty = self.t(i18n::AUCUN_RESULTAT);
+        let short = self.t(i18n::TAPEZ_AU_MOINS_2_CARACTERES);
         let my_name = self.state.lock_safe().my_username.clone();
 
         let mut jump_to: Option<(Option<String>, u64)> = None;
@@ -60,8 +61,12 @@ impl AbcomApp {
                         let conversation = conversation_of(message, &my_name);
                         let response = ui
                             .add(
-                                egui::Label::new(result_line(message, &my_name))
-                                    .sense(egui::Sense::click()),
+                                egui::Label::new(result_line(
+                                    message,
+                                    &my_name,
+                                    ui.visuals().dark_mode,
+                                ))
+                                .sense(egui::Sense::click()),
                             )
                             .on_hover_text(conversation_label(&conversation));
                         if response.clicked() {
@@ -116,7 +121,7 @@ fn conversation_label(conversation: &Option<String>) -> String {
     conversation.clone().unwrap_or_else(|| "Tous".to_string())
 }
 
-fn result_line(message: &crate::message::ChatMessage, me: &str) -> egui::RichText {
+fn result_line(message: &crate::message::ChatMessage, me: &str, dark_mode: bool) -> egui::RichText {
     let author = if message.from == me {
         "Vous"
     } else {
@@ -128,5 +133,5 @@ fn result_line(message: &crate::message::ChatMessage, me: &str) -> egui::RichTex
         header_time(message),
         author
     ))
-    .color(peer_color(&message.from))
+    .color(peer_color_for(&message.from, dark_mode))
 }

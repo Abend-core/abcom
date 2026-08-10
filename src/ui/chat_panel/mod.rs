@@ -1,3 +1,4 @@
+use crate::ui::i18n;
 use eframe::egui;
 
 use crate::util::MutexExt;
@@ -15,8 +16,7 @@ use row::{
     HIGHLIGHT_SECS, MESSAGE_RIGHT_MARGIN,
 };
 pub(crate) use row::{
-    day_divider_label, header_time, message_day, peer_color, starts_new_group, OWN_NAME_COLOR,
-    PEER_NAME_COLOR,
+    day_divider_label, header_time, message_day, peer_color_for, starts_new_group,
 };
 
 impl AbcomApp {
@@ -42,7 +42,7 @@ impl AbcomApp {
                 Some(name) => name.clone(),
                 None => selected_conv
                     .clone()
-                    .unwrap_or_else(|| self.tr("Tous", "All").to_string()),
+                    .unwrap_or_else(|| self.t(i18n::TOUS_2).to_string()),
             };
             // Salon sélectionné : nom de groupe (sans `#`) et sous-titre
             // « N membres » sous le titre.
@@ -58,9 +58,9 @@ impl AbcomApp {
                     .map(|g| {
                         let n = g.members.len();
                         if n > 1 {
-                            format!("{} {}", n, self.tr("membres", "members"))
+                            format!("{} {}", n, self.t(i18n::MEMBRES_2))
                         } else {
-                            format!("{} {}", n, self.tr("membre", "member"))
+                            format!("{} {}", n, self.t(i18n::MEMBRE))
                         }
                     })
             });
@@ -74,11 +74,11 @@ impl AbcomApp {
                     }
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.menu_button(self.tr("Actions", "Actions"), |ui| {
+                    ui.menu_button(self.t(i18n::ACTIONS), |ui| {
                         let sound_text = if self.enable_sound_notifications {
-                            self.tr("🔊 Désactiver tous les sons", "🔊 Disable all sounds")
+                            self.t(i18n::DESACTIVER_TOUS_LES_SONS)
                         } else {
-                            self.tr("🔇 Activer tous les sons", "🔇 Enable all sounds")
+                            self.t(i18n::ACTIVER_TOUS_LES_SONS)
                         };
                         if ui.button(sound_text).clicked() {
                             self.enable_sound_notifications = !self.enable_sound_notifications;
@@ -87,12 +87,9 @@ impl AbcomApp {
                         let this_conv = selected_conv.clone();
                         let is_muted = self.muted_conversations.contains(&this_conv);
                         let mute_text = if is_muted {
-                            self.tr(
-                                "🔔 Réactiver les sons de ce salon",
-                                "🔔 Re-enable sounds for this chat",
-                            )
+                            self.t(i18n::REACTIVER_LES_SONS_DE_CE_SALON)
                         } else {
-                            self.tr("🔕 Muet pour ce salon", "🔕 Mute this chat")
+                            self.t(i18n::MUET_POUR_CE_SALON)
                         };
                         if ui.button(mute_text).clicked() {
                             if is_muted {
@@ -102,28 +99,19 @@ impl AbcomApp {
                             }
                             ui.close();
                         }
-                        if ui
-                            .button(self.tr("👥 Voir les participants", "👥 View participants"))
-                            .clicked()
-                        {
+                        if ui.button(self.t(i18n::VOIR_LES_PARTICIPANTS)).clicked() {
                             self.modals.participants_open = true;
                             ui.close();
                         }
                         if let Some(gname) = &selected_group_name {
-                            if ui
-                                .button(self.tr("⚙ Gérer le groupe", "⚙ Manage group"))
-                                .clicked()
-                            {
+                            if ui.button(self.t(i18n::GERER_LE_GROUPE)).clicked() {
                                 self.modals.group_manage_target = Some(gname.clone());
                                 self.modals.group_manage_confirm = None;
                                 ui.close();
                             }
                         }
                         if let Some(user) = &private_peer {
-                            if ui
-                                .button(self.tr("Renommer ce contact", "Rename contact"))
-                                .clicked()
-                            {
+                            if ui.button(self.t(i18n::RENOMMER_CE_CONTACT)).clicked() {
                                 self.modals.rename_input = self
                                     .state
                                     .lock()
@@ -137,10 +125,7 @@ impl AbcomApp {
                                 ui.close();
                             }
                         }
-                        if !is_broadcast
-                            && ui
-                                .button(self.tr("🗑 Effacer l'historique", "🗑 Clear history"))
-                                .clicked()
+                        if !is_broadcast && ui.button(self.t(i18n::EFFACER_L_HISTORIQUE)).clicked()
                         {
                             self.state.lock_safe().clear_conversation_history();
                             ui.close();
@@ -156,7 +141,7 @@ impl AbcomApp {
                     .sidebar_cache
                     .selected_conversation
                     .clone()
-                    .unwrap_or_else(|| self.tr("Tous", "All").to_string());
+                    .unwrap_or_else(|| self.t(i18n::TOUS_2).to_string());
                 let my_name2 = self.sidebar_cache.my_username.clone();
                 let sel_conv = self.sidebar_cache.selected_conversation.clone();
                 let peers = self.sidebar_cache.peers.clone();
@@ -172,7 +157,7 @@ impl AbcomApp {
                             .cloned()
                     });
                 let mut open = self.modals.participants_open;
-                egui::Window::new(self.tr("Participants", "Participants"))
+                egui::Window::new(self.t(i18n::PARTICIPANTS))
                     .open(&mut open)
                     .resizable(false)
                     .collapsible(false)
@@ -181,7 +166,7 @@ impl AbcomApp {
                         ui.label(
                             egui::RichText::new(format!(
                                 "{}: {}",
-                                self.tr("Conversation", "Conversation"),
+                                self.t(i18n::CONVERSATION),
                                 conv_name
                             ))
                             .strong(),
@@ -192,12 +177,7 @@ impl AbcomApp {
                                 ui.label(&peer.username);
                             }
                             if peers.is_empty() {
-                                ui.label(
-                                    self.tr(
-                                        "Aucun participant connecté",
-                                        "No connected participant",
-                                    ),
-                                );
+                                ui.label(self.t(i18n::AUCUN_PARTICIPANT_CONNECTE));
                             }
                         } else if let Some(group) = &group_view {
                             // Membres du salon : présence, couronne du
@@ -212,12 +192,12 @@ impl AbcomApp {
                                 }
                                 if *member == my_name2 {
                                     line.push(' ');
-                                    line.push_str(self.tr("(vous)", "(you)"));
+                                    line.push_str(self.t(i18n::VOUS));
                                 }
                                 ui.label(line);
                             }
                         } else {
-                            ui.label(format!("{} ({})", my_name2, self.tr("vous", "you")));
+                            ui.label(format!("{} ({})", my_name2, self.t(i18n::VOUS_3)));
                             if let Some(peer) = sel_conv {
                                 ui.label(&peer);
                             }
@@ -230,11 +210,11 @@ impl AbcomApp {
             if let Some(target) = self.modals.rename_target.clone() {
                 // Libellés calculés avant la closure (évite d'emprunter `self`
                 // pendant qu'on édite `self.modals.rename_input`).
-                let title = self.tr("Renommer le contact", "Rename contact");
-                let lbl_original = self.tr("Nom d'origine", "Original name");
-                let hint = self.tr("Alias (vide = retirer)", "Alias (empty = remove)");
-                let save_lbl = self.tr("Enregistrer", "Save");
-                let clear_lbl = self.tr("Retirer l'alias", "Remove alias");
+                let title = self.t(i18n::RENOMMER_LE_CONTACT);
+                let lbl_original = self.t(i18n::NOM_D_ORIGINE);
+                let hint = self.t(i18n::ALIAS_VIDE_RETIRER);
+                let save_lbl = self.t(i18n::ENREGISTRER);
+                let clear_lbl = self.t(i18n::RETIRER_L_ALIAS);
 
                 let mut open = true;
                 let mut do_save = false;
@@ -278,18 +258,10 @@ impl AbcomApp {
             // la connexion reste refusée tant que l'utilisateur n'a pas
             // explicitement ré-appairé, empreinte vérifiée hors-bande.
             if let Some((peer, offered_key)) = self.modals.key_mismatch.clone() {
-                let title = self.tr("Clé d'identité modifiée", "Identity key changed");
-                let explain = self.tr(
-                    "La clé de ce pair ne correspond plus à celle enregistrée. \
-                     Cela arrive après une réinstallation — mais aussi en cas \
-                     d'usurpation. Ne continuez qu'après avoir vérifié son \
-                     empreinte de vive voix.",
-                    "This peer's key no longer matches the pinned one. This happens \
-                     after a reinstall — but also when someone is impersonating them. \
-                     Only continue after checking their fingerprint out of band.",
-                );
-                let trust_lbl = self.tr("Faire confiance à la nouvelle clé", "Trust the new key");
-                let keep_lbl = self.tr("Garder l'ancienne clé", "Keep the current key");
+                let title = self.t(i18n::CLE_D_IDENTITE_MODIFIEE);
+                let explain = self.t(i18n::LA_CLE_DE_CE_PAIR_NE);
+                let trust_lbl = self.t(i18n::FAIRE_CONFIANCE_A_LA_NOUVELLE_CLE);
+                let keep_lbl = self.t(i18n::GARDER_L_ANCIENNE_CLE);
 
                 // `Modal` plutôt que `Window` : voile de fond et focus piégé —
                 // cette alerte ne doit pas pouvoir être ignorée par inadvertance.
@@ -320,13 +292,8 @@ impl AbcomApp {
                     // prochaine venue : sinon une autre machine du réseau
                     // pourrait se glisser dans la fenêtre de ré-appairage.
                     self.trust.repin(&peer, &offered_key);
-                    self.last_notification = Some(
-                        self.tr(
-                            "Nouvelle clé acceptée pour ce pair",
-                            "New key accepted for this peer",
-                        )
-                        .to_string(),
-                    );
+                    self.last_notification =
+                        Some(self.t(i18n::NOUVELLE_CLE_ACCEPTEE_POUR_CE_PAIR).to_string());
                     self.notification_time = std::time::Instant::now();
                     self.modals.key_mismatch = None;
                 } else if do_keep || dismissed {
@@ -369,12 +336,9 @@ impl AbcomApp {
                 }
             }
 
-            let not_found_label = self.tr(
-                "Message d'origine introuvable",
-                "Original message not found",
-            );
-            let reply_label = self.tr("Répondre", "Reply");
-            let add_reaction_label = self.tr("Ajouter une réaction", "Add reaction");
+            let not_found_label = self.t(i18n::MESSAGE_D_ORIGINE_INTROUVABLE);
+            let reply_label = self.t(i18n::REPONDRE);
+            let add_reaction_label = self.t(i18n::AJOUTER_UNE_REACTION);
             let language = self.ui_language;
 
             // Largeur du fil figée AVANT la zone défilante, depuis la largeur
@@ -399,9 +363,7 @@ impl AbcomApp {
 
                     if rows.is_empty() {
                         ui.add_space(50.0);
-                        ui.label(
-                            egui::RichText::new(self.tr("Aucun message", "No message")).weak(),
-                        );
+                        ui.label(egui::RichText::new(self.t(i18n::AUCUN_MESSAGE)).weak());
                     }
 
                     // Une seule ligne peut revendiquer le survol par frame :
@@ -620,7 +582,7 @@ impl AbcomApp {
                                     egui::Align2::CENTER_CENTER,
                                     &row.header_time,
                                     egui::TextStyle::Small.resolve(ui.style()),
-                                    egui::Color32::from_gray(140),
+                                    crate::ui::theme::palette(ui).text_muted,
                                 );
                             }
                         }
@@ -752,17 +714,14 @@ impl AbcomApp {
         for (index, offer) in self.media.pending_offers.iter().enumerate() {
             ui.add_space(6.0);
             egui::Frame::group(ui.style())
-                .fill(egui::Color32::from_rgb(48, 52, 60))
+                .fill(crate::ui::theme::palette(ui).surface_hover)
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.label(
                         egui::RichText::new(format!(
                             "{} {}",
                             offer.from,
-                            self.tr(
-                                "souhaite vous envoyer un fichier",
-                                "wants to send you a file"
-                            )
+                            self.t(i18n::SOUHAITE_VOUS_ENVOYER_UN_FICHIER)
                         ))
                         .strong(),
                     );
@@ -776,10 +735,10 @@ impl AbcomApp {
                     );
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
-                        if ui.button(self.tr("Refuser", "Decline")).clicked() {
+                        if ui.button(self.t(i18n::REFUSER)).clicked() {
                             decided = Some((index, false));
                         }
-                        if ui.button(self.tr("Accepter", "Accept")).clicked() {
+                        if ui.button(self.t(i18n::ACCEPTER)).clicked() {
                             decided = Some((index, true));
                         }
                     });
@@ -806,14 +765,14 @@ impl AbcomApp {
     pub(crate) fn show_notification(&mut self, ctx: &egui::Context) {
         if let Some(notif) = &self.last_notification {
             if self.notification_time.elapsed().as_secs_f32() < 3.0 {
-                egui::Window::new(self.tr("Notification", "Notification"))
+                egui::Window::new(self.t(i18n::NOTIFICATION))
                     .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 10.0))
                     .resizable(false)
                     .collapsible(false)
                     .title_bar(false)
                     .show(ctx, |ui| {
                         ui.colored_label(
-                            egui::Color32::from_rgb(255, 200, 100),
+                            crate::ui::theme::palette(ui).accent_soft,
                             egui::RichText::new(notif).text_style(egui::TextStyle::Body),
                         );
                     });
@@ -852,7 +811,7 @@ fn show_receipt(ui: &mut egui::Ui, delivered: bool, read: bool, failed: bool) {
         ui.label(
             egui::RichText::new("!")
                 .strong()
-                .color(egui::Color32::from_rgb(225, 90, 90)),
+                .color(crate::ui::theme::palette(ui).danger),
         )
         .on_hover_text("Échec de livraison / Delivery failed");
         return;
@@ -874,9 +833,9 @@ fn show_receipt(ui: &mut egui::Ui, delivered: bool, read: bool, failed: bool) {
         return;
     }
     let color = if read {
-        egui::Color32::from_rgb(80, 180, 255) // bleu = lu
+        crate::ui::theme::palette(ui).receipt_read // bleu = lu
     } else {
-        egui::Color32::from_gray(160) // gris = envoyé ou livré
+        crate::ui::theme::palette(ui).text_muted // gris = envoyé ou livré
     };
     let stroke = egui::Stroke::new(1.5, color);
     let p = ui.painter();

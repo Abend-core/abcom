@@ -20,6 +20,7 @@ mod emoji_picker;
 mod events;
 mod gif_picker;
 mod group_modal;
+mod i18n;
 mod input_bar;
 mod markdown;
 mod media;
@@ -494,11 +495,9 @@ impl AbcomApp {
         }
     }
 
-    pub(crate) fn tr(&self, french: &'static str, english: &'static str) -> &'static str {
-        match self.ui_language {
-            UiLanguage::French => french,
-            UiLanguage::English => english,
-        }
+    /// Libellé du catalogue dans la langue active.
+    pub(crate) fn t(&self, entry: i18n::Entry) -> &'static str {
+        entry.get(self.ui_language)
     }
 
     /// Sauvegarde le texte courant dans les drafts pour la conversation active
@@ -738,7 +737,7 @@ impl AbcomApp {
         if self.notif_preview {
             media::elide(content, 120)
         } else {
-            self.tr("Nouveau message", "New message").to_string()
+            self.t(i18n::NOUVEAU_MESSAGE).to_string()
         }
     }
 }
@@ -756,10 +755,7 @@ impl eframe::App for AbcomApp {
         // Icône résidente, créée paresseusement (macOS impose le thread
         // principal avec l'event loop démarrée — c'est le cas ici).
         if self.tray.is_none() && !self.tray_init_failed {
-            self.tray = tray::Tray::new(
-                self.tr("Ouvrir Abcom", "Open Abcom"),
-                self.tr("Quitter", "Quit"),
-            );
+            self.tray = tray::Tray::new(self.t(i18n::OUVRIR_ABCOM), self.t(i18n::QUITTER));
             if self.tray.is_none() {
                 self.tray_init_failed = true;
                 tracing::warn!("icône résidente indisponible : la croix quittera l'application");
@@ -820,9 +816,12 @@ impl eframe::App for AbcomApp {
         {
             let s = self.state.lock_safe();
             self.sidebar_cache.refresh(&s);
-            let rebuilt = self
-                .chat_cache
-                .refresh(&s, self.ui_language, &self.emoji.map);
+            let rebuilt = self.chat_cache.refresh(
+                &s,
+                self.ui_language,
+                &self.emoji.map,
+                ctx.theme() == egui::Theme::Dark,
+            );
             drop(s);
             if let Some(conv_changed) = rebuilt {
                 if conv_changed {
@@ -857,10 +856,10 @@ impl eframe::App for AbcomApp {
             let kind = self.pending_picker;
             self.pending_picker = 0;
             let (files_title, folder_title, files_added, folder_added) = (
-                self.tr("Ajouter des fichiers", "Add files"),
-                self.tr("Ajouter un dossier", "Add folder"),
-                self.tr("Fichiers ajoutés", "Files added"),
-                self.tr("Dossier ajouté", "Folder added"),
+                self.t(i18n::AJOUTER_DES_FICHIERS),
+                self.t(i18n::AJOUTER_UN_DOSSIER),
+                self.t(i18n::FICHIERS_AJOUTES),
+                self.t(i18n::DOSSIER_AJOUTE),
             );
             match kind {
                 1 => {
@@ -899,7 +898,7 @@ impl eframe::App for AbcomApp {
                 .collect()
         });
         if !dropped.is_empty() {
-            let added = self.tr("Fichiers ajoutés", "Files added");
+            let added = self.t(i18n::FICHIERS_AJOUTES);
             for path in dropped {
                 if !self.composer.pending_attachments.contains(&path) {
                     self.composer.pending_attachments.push(path);
@@ -912,8 +911,8 @@ impl eframe::App for AbcomApp {
         // Export de conversation : même report que les autres sélecteurs natifs.
         if self.pending_export {
             self.pending_export = false;
-            let title = self.tr("Exporter la conversation", "Export conversation");
-            let done = self.tr("Conversation exportée", "Conversation exported");
+            let title = self.t(i18n::EXPORTER_LA_CONVERSATION);
+            let done = self.t(i18n::CONVERSATION_EXPORTEE);
             let name = {
                 let state = self.state.lock_safe();
                 match &state.selected_conversation {
@@ -937,8 +936,8 @@ impl eframe::App for AbcomApp {
         if self.pending_avatar_pick {
             self.pending_avatar_pick = false;
             let (pick_title, error_msg) = (
-                self.tr("Choisir une image de profil", "Choose a profile picture"),
-                self.tr("Image de profil invalide", "Invalid profile picture"),
+                self.t(i18n::CHOISIR_UNE_IMAGE_DE_PROFIL),
+                self.t(i18n::IMAGE_DE_PROFIL_INVALIDE),
             );
             if let Some(path) = rfd::FileDialog::new()
                 .set_title(pick_title)

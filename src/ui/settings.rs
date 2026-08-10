@@ -1,3 +1,4 @@
+use super::i18n;
 use eframe::egui;
 
 use crate::util::MutexExt;
@@ -23,21 +24,18 @@ impl AbcomApp {
         let version = env!("CARGO_PKG_VERSION");
         let service_name = "Abcom";
 
-        let title = self.tr("Paramètres", "Settings");
-        let profile_label = self.tr("Profil", "Profile");
-        let general_label = self.tr("Général", "General");
-        let credits_label = self.tr("Crédits", "Credits");
-        let license_label = self.tr("Licence", "License");
+        let title = self.t(i18n::PARAMETRES);
+        let profile_label = self.t(i18n::PROFIL);
+        let general_label = self.t(i18n::GENERAL);
+        let credits_label = self.t(i18n::CREDITS);
+        let license_label = self.t(i18n::LICENCE);
 
         // Onglet Profil
-        let profile_heading = self.tr("Image de profil", "Profile picture");
-        let profile_hint = self.tr(
-            "Visible par les autres pairs dans les conversations.",
-            "Visible to other peers in conversations.",
-        );
-        let choose_label = self.tr("Choisir une image…", "Choose an image…");
-        let change_label = self.tr("Changer l'image…", "Change image…");
-        let remove_label = self.tr("Retirer", "Remove");
+        let profile_heading = self.t(i18n::IMAGE_DE_PROFIL);
+        let profile_hint = self.t(i18n::VISIBLE_PAR_LES_AUTRES_PAIRS_DANS);
+        let choose_label = self.t(i18n::CHOISIR_UNE_IMAGE);
+        let change_label = self.t(i18n::CHANGER_L_IMAGE);
+        let remove_label = self.t(i18n::RETIRER);
 
         // Avatar courant (texture chargée paresseusement) calculé avant la
         // fenêtre pour éviter un double emprunt de `self` dans la closure.
@@ -48,33 +46,18 @@ impl AbcomApp {
         let mut clear_avatar = false;
 
         // Onglet Général
-        let language_label = self.tr("Langue", "Language");
-        let theme_label = self.tr("Thème", "Theme");
-        let theme_system_label = self.tr("Suivre le système", "Follow system");
-        let theme_light_label = self.tr("Clair", "Light");
-        let theme_dark_label = self.tr("Sombre", "Dark");
+        let language_label = self.t(i18n::LANGUE);
+        let theme_label = self.t(i18n::THEME);
+        let theme_system_label = self.t(i18n::SUIVRE_LE_SYSTEME);
+        let theme_light_label = self.t(i18n::CLAIR);
+        let theme_dark_label = self.t(i18n::SOMBRE);
 
         // Onglet Crédits
-        let description_text = self.tr(
-            "Messagerie pair-à-pair locale : découverte automatique des pairs, conversations, groupes, alias de contacts et rendu Markdown natif.",
-            "Local peer-to-peer messaging: automatic peer discovery, conversations, groups, contact aliases, and native Markdown rendering.",
-        );
-        let warranty_text = self.tr(
-            "Logiciel distribué sans garantie. Voir la licence AGPL v3 pour les détails.",
-            "Software distributed without warranty. See the AGPL v3 license for details.",
-        );
-        let klipy_role = self.tr(
-            "GIF animés, mèmes statiques et stickers dans le sélecteur de contenu.",
-            "Animated GIFs, static memes, and stickers in the content picker.",
-        );
-        let openmoji_role = self.tr(
-            "Jeu d'emojis utilisé dans le picker et l'affichage inline des messages.",
-            "Emoji set used in the emoji picker and inline message rendering.",
-        );
-        let inter_role = self.tr(
-            "Police d'écriture en gras utilisée pour les noms d'auteur dans les messages.",
-            "Bold typeface used for author names in messages.",
-        );
+        let description_text = self.t(i18n::MESSAGERIE_PAIR_A_PAIR_LOCALE_DECOUVERTE);
+        let warranty_text = self.t(i18n::LOGICIEL_DISTRIBUE_SANS_GARANTIE_VOIR_LA);
+        let klipy_role = self.t(i18n::GIF_ANIMES_MEMES_STATIQUES_ET_STICKERS);
+        let openmoji_role = self.t(i18n::JEU_D_EMOJIS_UTILISE_DANS_LE);
+        let inter_role = self.t(i18n::POLICE_D_ECRITURE_EN_GRAS_UTILISEE);
 
         // Taille fixe (celle, maximale, de l'onglet Licence) pour que la fenêtre
         // ne change pas de dimensions quand on bascule d'un onglet à l'autre.
@@ -122,19 +105,16 @@ impl AbcomApp {
                         ui.label(
                             egui::RichText::new(format!(
                                 "{} : {}",
-                                self.tr("Empreinte de votre clé", "Your key fingerprint"),
+                                self.t(i18n::EMPREINTE_DE_VOTRE_CLE),
                                 self.identity_fingerprint
                             ))
                             .small()
                             .weak(),
                         );
                         let psk_label = if self.psk_active {
-                            self.tr("Passphrase de salon : active", "Room passphrase: enabled")
+                            self.t(i18n::PASSPHRASE_DE_SALON_ACTIVE)
                         } else {
-                            self.tr(
-                                "Passphrase de salon : désactivée (ABCOM_PASSPHRASE)",
-                                "Room passphrase: disabled (ABCOM_PASSPHRASE)",
-                            )
+                            self.t(i18n::PASSPHRASE_DE_SALON_DESACTIVEE_ABCOM_PASSPHRASE)
                         };
                         ui.label(egui::RichText::new(psk_label).small().weak());
                         ui.add_space(12.0);
@@ -203,15 +183,9 @@ impl AbcomApp {
                                 });
                                 ui.end_row();
 
-                                ui.label(
-                                    egui::RichText::new(self.tr("Notifications", "Notifications"))
-                                        .strong(),
-                                );
+                                ui.label(egui::RichText::new(self.t(i18n::NOTIFICATIONS)).strong());
                                 {
-                                    let label = self.tr(
-                                        "Afficher un aperçu du message",
-                                        "Show a message preview",
-                                    );
+                                    let label = self.t(i18n::AFFICHER_UN_APERCU_DU_MESSAGE);
                                     if ui.checkbox(&mut self.notif_preview, label).changed() {
                                         let v = if self.notif_preview { "1" } else { "0" };
                                         self.state.lock_safe().set_pref("notif_preview", v);
@@ -219,14 +193,9 @@ impl AbcomApp {
                                 }
                                 ui.end_row();
 
-                                ui.label(
-                                    egui::RichText::new(self.tr("Démarrage", "Startup")).strong(),
-                                );
+                                ui.label(egui::RichText::new(self.t(i18n::DEMARRAGE)).strong());
                                 {
-                                    let label = self.tr(
-                                        "Lancer Abcom à l'ouverture de session",
-                                        "Launch Abcom at login",
-                                    );
+                                    let label = self.t(i18n::LANCER_ABCOM_A_L_OUVERTURE_DE);
                                     if ui.checkbox(&mut self.autostart_enabled, label).changed() {
                                         match crate::platform::autostart::set_enabled(
                                             self.autostart_enabled,
@@ -245,28 +214,18 @@ impl AbcomApp {
                                 }
                                 ui.end_row();
 
-                                ui.label(egui::RichText::new(self.tr("Données", "Data")).strong());
+                                ui.label(egui::RichText::new(self.t(i18n::DONNEES)).strong());
                                 ui.horizontal(|ui| {
                                     if ui
-                                        .button(self.tr(
-                                            "Exporter la conversation…",
-                                            "Export conversation…",
-                                        ))
+                                        .button(self.t(i18n::EXPORTER_LA_CONVERSATION_2))
                                         .clicked()
                                     {
                                         self.pending_export = true;
                                     }
-                                    if ui
-                                        .button(self.tr("Compacter la base", "Compact database"))
-                                        .clicked()
-                                    {
+                                    if ui.button(self.t(i18n::COMPACTER_LA_BASE)).clicked() {
                                         self.state.lock_safe().compact_storage();
                                         self.last_notification = Some(
-                                            self.tr(
-                                                "Compaction de la base lancée",
-                                                "Database compaction started",
-                                            )
-                                            .to_string(),
+                                            self.t(i18n::COMPACTION_DE_LA_BASE_LANCEE).to_string(),
                                         );
                                         self.notification_time = std::time::Instant::now();
                                     }
@@ -276,21 +235,18 @@ impl AbcomApp {
                                 // Diagnostic : compteurs de la session en cours
                                 // (cf. `metrics`). « Jetés » non nul = file
                                 // saturée ou pair injoignable.
-                                ui.label(
-                                    egui::RichText::new(self.tr("Diagnostic", "Diagnostics"))
-                                        .strong(),
-                                );
+                                ui.label(egui::RichText::new(self.t(i18n::DIAGNOSTIC)).strong());
                                 {
                                     let m = crate::metrics::snapshot();
                                     let line = format!(
                                         "{} {} · {} {} · {} {} · {} {}",
-                                        self.tr("envoyés", "sent"),
+                                        self.t(i18n::ENVOYES),
                                         m.packets_sent,
-                                        self.tr("reçus", "received"),
+                                        self.t(i18n::RECUS),
                                         m.packets_received,
-                                        self.tr("jetés", "dropped"),
+                                        self.t(i18n::JETES),
                                         m.packets_dropped,
-                                        self.tr("pairs vus", "peers seen"),
+                                        self.t(i18n::PAIRS_VUS),
                                         m.peers_seen,
                                     );
                                     ui.label(egui::RichText::new(line).small().weak());
@@ -312,22 +268,22 @@ impl AbcomApp {
                                         let lbl = |ui: &mut egui::Ui, t: &str| {
                                             ui.label(egui::RichText::new(t).strong());
                                         };
-                                        lbl(ui, self.tr("Version", "Version"));
+                                        lbl(ui, self.t(i18n::VERSION));
                                         ui.label(version);
                                         ui.end_row();
-                                        lbl(ui, self.tr("Description", "Description"));
+                                        lbl(ui, self.t(i18n::DESCRIPTION));
                                         ui.add(
                                             egui::Label::new(description_text)
                                                 .wrap_mode(egui::TextWrapMode::Wrap),
                                         );
                                         ui.end_row();
-                                        lbl(ui, self.tr("Développeurs", "Developers"));
+                                        lbl(ui, self.t(i18n::DEVELOPPEURS));
                                         ui.label("Hugo Lagouardat Massiroles, Rudy Alves");
                                         ui.end_row();
-                                        lbl(ui, self.tr("Copyright", "Copyright"));
+                                        lbl(ui, self.t(i18n::COPYRIGHT));
                                         ui.label("Abnd © 2026");
                                         ui.end_row();
-                                        lbl(ui, self.tr("Licence", "License"));
+                                        lbl(ui, self.t(i18n::LICENCE));
                                         ui.label("GNU Affero General Public License v3");
                                         ui.end_row();
                                     });
@@ -348,19 +304,19 @@ impl AbcomApp {
                                         let lbl = |ui: &mut egui::Ui, t: &str| {
                                             ui.label(egui::RichText::new(t).strong());
                                         };
-                                        lbl(ui, self.tr("Fournisseur", "Provider"));
+                                        lbl(ui, self.t(i18n::FOURNISSEUR));
                                         ui.label("KLIPY (klipy.com)");
                                         ui.end_row();
-                                        lbl(ui, self.tr("Rôle", "Role"));
+                                        lbl(ui, self.t(i18n::ROLE));
                                         ui.add(
                                             egui::Label::new(klipy_role)
                                                 .wrap_mode(egui::TextWrapMode::Wrap),
                                         );
                                         ui.end_row();
-                                        lbl(ui, self.tr("Licence", "License"));
+                                        lbl(ui, self.t(i18n::LICENCE));
                                         ui.label("Klipy API Terms of Service");
                                         ui.end_row();
-                                        lbl(ui, self.tr("Attribution", "Attribution"));
+                                        lbl(ui, self.t(i18n::ATTRIBUTION));
                                         ui.label("© KLIPY — Powered by KLIPY");
                                         ui.end_row();
                                     });
@@ -379,19 +335,19 @@ impl AbcomApp {
                                         let lbl = |ui: &mut egui::Ui, t: &str| {
                                             ui.label(egui::RichText::new(t).strong());
                                         };
-                                        lbl(ui, self.tr("Source", "Source"));
+                                        lbl(ui, self.t(i18n::SOURCE));
                                         ui.label("OpenEmoji (openmoji.org)");
                                         ui.end_row();
-                                        lbl(ui, self.tr("Rôle", "Role"));
+                                        lbl(ui, self.t(i18n::ROLE));
                                         ui.add(
                                             egui::Label::new(openmoji_role)
                                                 .wrap_mode(egui::TextWrapMode::Wrap),
                                         );
                                         ui.end_row();
-                                        lbl(ui, self.tr("Licence", "License"));
+                                        lbl(ui, self.t(i18n::LICENCE));
                                         ui.label("CC BY 4.0");
                                         ui.end_row();
-                                        lbl(ui, self.tr("Auteurs", "Authors"));
+                                        lbl(ui, self.t(i18n::AUTEURS));
                                         ui.label("HfG Schwäbisch Gmünd & contributeurs OpenEmoji");
                                         ui.end_row();
                                     });
@@ -414,16 +370,16 @@ impl AbcomApp {
                                         let lbl = |ui: &mut egui::Ui, t: &str| {
                                             ui.label(egui::RichText::new(t).strong());
                                         };
-                                        lbl(ui, self.tr("Auteur", "Author"));
+                                        lbl(ui, self.t(i18n::AUTEUR));
                                         ui.label("Rasmus Andersson");
                                         ui.end_row();
-                                        lbl(ui, self.tr("Rôle", "Role"));
+                                        lbl(ui, self.t(i18n::ROLE));
                                         ui.add(
                                             egui::Label::new(inter_role)
                                                 .wrap_mode(egui::TextWrapMode::Wrap),
                                         );
                                         ui.end_row();
-                                        lbl(ui, self.tr("Licence", "License"));
+                                        lbl(ui, self.t(i18n::LICENCE));
                                         ui.label("SIL Open Font License v1.1");
                                         ui.end_row();
                                     });

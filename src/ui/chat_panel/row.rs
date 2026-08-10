@@ -27,14 +27,11 @@ pub(super) const HOVER_BTN_SIZE: f32 = 26.0;
 /// Taille d'une texture d'emoji peinte dans un bouton de la barre de survol
 /// ou d'une pastille de réaction.
 pub(super) const HOVER_EMOJI_SIZE: f32 = 16.0;
-/// Couleur du nom pour nos propres messages (conservée partout).
-pub(crate) const OWN_NAME_COLOR: egui::Color32 = egui::Color32::from_rgb(80, 200, 120);
-/// Couleur du nom d'un autre pair en conversation 1-à-1.
-pub(crate) const PEER_NAME_COLOR: egui::Color32 = egui::Color32::from_rgb(100, 180, 255);
 
-/// Palette de couleurs distinctes pour les pairs dans les vues multi-personnes
-/// (groupes et « Tous »), inspirée des couleurs d'utilisateur de Cinny.
-const PEER_PALETTE: [egui::Color32; 8] = [
+/// Palette de couleurs distinctes pour les pairs dans les vues multi-personnes.
+/// Les teintes vives conviennent au fond sombre ; leurs équivalentes assombries
+/// (`PEER_PALETTE_LIGHT`) restent lisibles sur fond clair.
+const PEER_PALETTE_DARK: [egui::Color32; 8] = [
     egui::Color32::from_rgb(128, 195, 255),
     egui::Color32::from_rgb(255, 153, 253),
     egui::Color32::from_rgb(102, 255, 212),
@@ -45,13 +42,30 @@ const PEER_PALETTE: [egui::Color32; 8] = [
     egui::Color32::from_rgb(197, 255, 153),
 ];
 
+/// Mêmes teintes, assombries pour rester lisibles sur un fond clair.
+const PEER_PALETTE_LIGHT: [egui::Color32; 8] = [
+    egui::Color32::from_rgb(21, 94, 156),
+    egui::Color32::from_rgb(158, 30, 148),
+    egui::Color32::from_rgb(12, 122, 96),
+    egui::Color32::from_rgb(163, 30, 66),
+    egui::Color32::from_rgb(158, 82, 15),
+    egui::Color32::from_rgb(12, 116, 128),
+    egui::Color32::from_rgb(76, 62, 178),
+    egui::Color32::from_rgb(86, 118, 24),
+];
+
 /// Couleur déterministe attribuée à un pair (même nom → même couleur) pour le
 /// distinguer des autres participants dans une conversation multi-personnes.
-pub(crate) fn peer_color(username: &str) -> egui::Color32 {
+pub(crate) fn peer_color_for(username: &str, dark_mode: bool) -> egui::Color32 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     username.hash(&mut hasher);
-    PEER_PALETTE[(hasher.finish() as usize) % PEER_PALETTE.len()]
+    let palette = if dark_mode {
+        PEER_PALETTE_DARK
+    } else {
+        PEER_PALETTE_LIGHT
+    };
+    palette[(hasher.finish() as usize) % palette.len()]
 }
 
 const MONTHS_FR: [&str; 12] = [
@@ -127,16 +141,10 @@ pub(crate) fn starts_new_group(
 /// complète selon la langue).
 pub(crate) fn day_divider_label(date: NaiveDate, today: NaiveDate, language: UiLanguage) -> String {
     if date == today {
-        return match language {
-            UiLanguage::French => "Aujourd'hui".to_string(),
-            UiLanguage::English => "Today".to_string(),
-        };
+        return crate::ui::i18n::AUJOURD_HUI.get(language).to_string();
     }
     if Some(date) == today.pred_opt() {
-        return match language {
-            UiLanguage::French => "Hier".to_string(),
-            UiLanguage::English => "Yesterday".to_string(),
-        };
+        return crate::ui::i18n::HIER.get(language).to_string();
     }
     let (day, month, year) = (date.day(), date.month0() as usize, date.year());
     match language {
@@ -149,8 +157,8 @@ pub(crate) fn day_divider_label(date: NaiveDate, today: NaiveDate, language: UiL
 /// le libellé centré, façon Discord/Cinny.
 pub(super) fn render_day_divider(ui: &mut egui::Ui, label: &str) {
     ui.add_space(14.0);
-    let line_color = egui::Color32::from_gray(80);
-    let text_color = crate::ui::theme::TEXT_MUTED;
+    let line_color = crate::ui::theme::palette(ui).separator;
+    let text_color = crate::ui::theme::palette(ui).text_muted;
     let font = egui::TextStyle::Small.resolve(ui.style());
 
     let full_width = ui.available_width();
@@ -214,7 +222,7 @@ pub(super) fn render_message_header(
         ui.label(
             egui::RichText::new(timestamp)
                 .small()
-                .color(egui::Color32::from_gray(140)),
+                .color(crate::ui::theme::palette(ui).text_muted),
         );
         if let Some(detail) = receipt_detail {
             show_receipt_detail_button(ui, detail, row_hash, language);
@@ -243,10 +251,10 @@ pub(super) fn show_receipt_detail_button(
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
         .show(|ui| {
             ui.set_min_width(160.0);
-            let (delivered_lbl, read_lbl) = match language {
-                UiLanguage::French => ("Reçu par", "Lu par"),
-                UiLanguage::English => ("Delivered to", "Read by"),
-            };
+            let (delivered_lbl, read_lbl) = (
+                crate::ui::i18n::RECU_PAR.get(language),
+                crate::ui::i18n::LU_PAR.get(language),
+            );
             ui.label(egui::RichText::new(delivered_lbl).strong());
             if detail.delivered_by.is_empty() {
                 ui.label(egui::RichText::new("—").weak());
@@ -294,26 +302,17 @@ pub(super) fn render_message_body(
                     emoji_map,
                     emoji_textures,
                 );
-                let label = match language {
-                    UiLanguage::French => format!(
-                        "Afficher la suite ({} lignes · {} caractères)",
-                        info.total_lines, info.total_chars
-                    ),
-                    UiLanguage::English => format!(
-                        "Show more ({} lines · {} characters)",
-                        info.total_lines, info.total_chars
-                    ),
-                };
+                let label = crate::ui::i18n::AFFICHER_LA_SUITE_MODELE
+                    .get(language)
+                    .replace("{lignes}", &info.total_lines.to_string())
+                    .replace("{caracteres}", &info.total_chars.to_string());
                 if ui.small_button(label).clicked() {
                     toggled = true;
                 }
             }
             Some(_) => {
                 crate::ui::markdown::render_parsed_markdown(ui, parsed, emoji_map, emoji_textures);
-                let label = match language {
-                    UiLanguage::French => "Réduire",
-                    UiLanguage::English => "Show less",
-                };
+                let label = crate::ui::i18n::REDUIRE.get(language);
                 if ui.small_button(label).clicked() {
                     toggled = true;
                 }
@@ -410,7 +409,7 @@ pub(super) fn render_reaction_pills(
             let stroke = if mine {
                 egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 150, 255))
             } else {
-                egui::Stroke::new(1.0, egui::Color32::from_rgb(70, 72, 78))
+                egui::Stroke::new(1.0, crate::ui::theme::palette(ui).surface_strong)
             };
             ui.painter()
                 .rect(rect, 6.0, fill, stroke, egui::StrokeKind::Inside);
@@ -499,7 +498,7 @@ pub(super) fn render_reply_quote(
                             egui::Label::new(
                                 egui::RichText::new(snippet)
                                     .small()
-                                    .color(egui::Color32::from_gray(165)),
+                                    .color(crate::ui::theme::palette(ui).text_muted),
                             )
                             .truncate(),
                         );
@@ -509,7 +508,7 @@ pub(super) fn render_reply_quote(
                             egui::RichText::new(not_found_label)
                                 .small()
                                 .italics()
-                                .color(egui::Color32::from_gray(120)),
+                                .color(crate::ui::theme::palette(ui).text_muted),
                         );
                     }
                 }
@@ -519,7 +518,7 @@ pub(super) fn render_reply_quote(
 
         // Ligne de liaison : descend du coin arrondi vers l'avatar du message
         // qui répond, et rejoint horizontalement la citation.
-        let stroke = egui::Stroke::new(2.0, egui::Color32::from_gray(90));
+        let stroke = egui::Stroke::new(2.0, crate::ui::theme::palette(ui).separator);
         let cy = rect.center().y;
         let corner = 8.0;
         let painter = ui.painter();

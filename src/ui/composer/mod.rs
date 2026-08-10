@@ -818,7 +818,7 @@ pub fn custom_composer_input(
             egui::Align2::LEFT_CENTER,
             "Send a message... Ctrl/Cmd + Enter ",
             egui::TextStyle::Body.resolve(ui.style()),
-            egui::Color32::from_rgb(185, 187, 192),
+            crate::ui::theme::palette(ui).text_muted,
         );
     } else {
         let painter = ui.painter().with_clip_rect(content_rect);
@@ -880,7 +880,7 @@ pub fn custom_composer_input(
                     egui::Align2::LEFT_CENTER,
                     &glyph,
                     egui::TextStyle::Body.resolve(ui.style()),
-                    egui::Color32::from_rgb(244, 245, 247),
+                    crate::ui::theme::palette(ui).text,
                 );
                 x += glyph_w;
                 i += 1;
@@ -948,7 +948,7 @@ pub fn custom_composer_input(
                         egui::pos2(x, top.max(content_rect.top())),
                         egui::pos2(x, bottom),
                     ],
-                    egui::Stroke::new(1.6, egui::Color32::from_rgb(250, 250, 252)),
+                    egui::Stroke::new(1.6, crate::ui::theme::palette(ui).text),
                 );
             }
         }

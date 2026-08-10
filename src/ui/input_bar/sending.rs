@@ -1,5 +1,6 @@
 //! Envoi : préparation des médias, découpage en flux et validation du message.
 
+use crate::ui::i18n;
 use std::path::Path;
 
 use crate::app::AppState;
@@ -163,13 +164,7 @@ pub(super) fn send_current_message(app: &mut AbcomApp) -> bool {
     };
 
     if has_attachments && transfer_targets.is_empty() {
-        app.last_notification = Some(
-            app.tr(
-                "Aucun destinataire en ligne pour l'envoi",
-                "No online recipient available",
-            )
-            .to_string(),
-        );
+        app.last_notification = Some(app.t(i18n::AUCUN_DESTINATAIRE_EN_LIGNE_POUR_L).to_string());
         app.notification_time = std::time::Instant::now();
         return false;
     }
@@ -197,11 +192,8 @@ pub(super) fn send_current_message(app: &mut AbcomApp) -> bool {
         // silencieusement (l'input est conservé).
         if chat_wire_size(&msg) > crate::network::secure::MAX_LOGICAL_MESSAGE {
             app.last_notification = Some(
-                app.tr(
-                    "Message trop volumineux pour être envoyé",
-                    "Message too large to send",
-                )
-                .to_string(),
+                app.t(i18n::MESSAGE_TROP_VOLUMINEUX_POUR_ETRE_ENVOYE)
+                    .to_string(),
             );
             app.notification_time = std::time::Instant::now();
             return false;

@@ -39,9 +39,16 @@ fn test_app() -> AbcomApp {
     )
 }
 
-/// Peint `frames` frames de l'arbre complet.
+/// Peint `frames` frames de l'arbre complet, dans les deux thèmes.
 fn render(app: &mut AbcomApp, frames: usize) {
+    for theme in [egui::Theme::Dark, egui::Theme::Light] {
+        render_with_theme(app, frames, theme);
+    }
+}
+
+fn render_with_theme(app: &mut AbcomApp, frames: usize, theme: egui::Theme) {
     let ctx = egui::Context::default();
+    ctx.set_theme(theme);
     for _ in 0..frames {
         let mut output = ctx.run_ui(egui::RawInput::default(), |root| {
             app.show_sidebar_panel(root);

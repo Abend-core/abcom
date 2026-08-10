@@ -14,10 +14,10 @@ use crate::app::{AppState, Peer, ReceiptDetail};
 use crate::message::{ChatMessage, Group, ReactionEntry};
 
 use super::chat_panel::{
-    day_divider_label, header_time, message_day, peer_color, starts_new_group, OWN_NAME_COLOR,
-    PEER_NAME_COLOR,
+    day_divider_label, header_time, message_day, peer_color_for, starts_new_group,
 };
 use super::markdown::{parse_message, ParsedMarkdown};
+use super::theme;
 use super::UiLanguage;
 
 /// Seuils de repli des messages très longs : protège le coût de layout du
@@ -101,6 +101,9 @@ pub(crate) struct ChatCache {
     conversation_key: Option<Option<String>>,
     language: Option<UiLanguage>,
     today: Option<NaiveDate>,
+    /// Thème du cache : les couleurs d'auteur en dépendent, il faut donc le
+    /// reconstruire quand l'utilisateur bascule clair/sombre.
+    dark_mode: Option<bool>,
     pub(crate) rows: Arc<Vec<ChatRow>>,
     /// Auteurs uniques du fil (préchargement des avatars).
     pub(crate) authors: Vec<String>,
@@ -139,6 +142,7 @@ impl ChatCache {
         s: &AppState,
         language: UiLanguage,
         emoji_map: &HashMap<String, usize>,
+        dark_mode: bool,
     ) -> Option<bool> {
         let today = Local::now().date_naive();
         let conv_changed = self.conversation_key.as_ref() != Some(&s.selected_conversation);
@@ -146,9 +150,12 @@ impl ChatCache {
             && self.generation == Some(s.content_generation)
             && self.language == Some(language)
             && self.today == Some(today)
+            && self.dark_mode == Some(dark_mode)
         {
             return None;
         }
+        let palette = theme::for_dark_mode(dark_mode);
+        self.dark_mode = Some(dark_mode);
         self.generation = Some(s.content_generation);
         self.conversation_key = Some(s.selected_conversation.clone());
         self.language = Some(language);
@@ -212,11 +219,11 @@ impl ChatCache {
                 );
             let is_me = msg.from == self.my_name;
             let name_color = if is_me {
-                OWN_NAME_COLOR
+                palette.success
             } else if self.multi_person {
-                peer_color(&msg.from)
+                peer_color_for(&msg.from, dark_mode)
             } else {
-                PEER_NAME_COLOR
+                palette.receipt_read
             };
             let reply = msg.reply_to.map(|reply_hash| {
                 let resolved = s.find_message_by_hash(reply_hash).cloned();
@@ -233,11 +240,11 @@ impl ChatCache {
                     .as_ref()
                     .map(|m| {
                         if m.from == self.my_name {
-                            OWN_NAME_COLOR
+                            palette.success
                         } else if self.multi_person {
-                            peer_color(&m.from)
+                            peer_color_for(&m.from, dark_mode)
                         } else {
-                            PEER_NAME_COLOR
+                            palette.receipt_read
                         }
                     })
                     .unwrap_or(egui::Color32::GRAY);
