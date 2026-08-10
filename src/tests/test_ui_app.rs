@@ -23,7 +23,7 @@ fn test_app() -> AbcomApp {
     let state = Arc::new(Mutex::new(AppState::new_with_base("moi", &dir)));
     let (send_tx, _send_rx) = mpsc::channel(16);
     let (send_media_tx, _media_rx) = mpsc::channel(16);
-    let (_event_tx, event_rx) = mpsc::channel(16);
+    let (event_tx, event_rx) = mpsc::channel(16);
     let (_offer_tx, media_offer_rx) = mpsc::channel(16);
     AbcomApp::new(
         state,
@@ -31,6 +31,7 @@ fn test_app() -> AbcomApp {
         false,
         UiRuntimeChannels {
             event_rx,
+            event_tx,
             send_tx,
             send_media_tx,
             media_offer_rx,

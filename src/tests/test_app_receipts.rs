@@ -362,3 +362,29 @@ fn offline_messages_wait_for_the_peer_to_return() {
     assert!(!s.is_queued_offline(hash));
     assert!(s.outbox_for("alice").is_empty());
 }
+
+#[test]
+fn outbox_survives_until_the_ack_confirms_delivery() {
+    let mut s = state();
+    let message = make_msg("alice", "hello bob");
+    let hash = AppState::message_hash(&message);
+    s.queue_offline(message.clone(), "bob".to_string());
+
+    // En attente de reconnexion : visible comme tel.
+    assert!(s.is_queued_offline(hash));
+    assert_eq!(s.outbox_for("bob").len(), 1);
+
+    // Confié au réseau : il quitte l'affichage « hors ligne » mais reste dans
+    // la file durable — une coupure ici doit pouvoir le réémettre.
+    s.mark_message_sent(hash, request(9000, message));
+    assert!(!s.is_queued_offline(hash));
+    assert!(s.outbox.contains_key(&hash), "la file durable le conserve");
+    assert!(
+        s.outbox_for("bob").is_empty(),
+        "déjà en vol : pas de réémission par cette file"
+    );
+
+    // ACK : seulement maintenant il disparaît.
+    assert!(s.mark_message_acked(hash, "bob"));
+    assert!(!s.outbox.contains_key(&hash));
+}

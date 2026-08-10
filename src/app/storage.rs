@@ -133,8 +133,12 @@ pub enum StorageCmd {
         k: String,
         v: String,
     },
-    /// Accusé de traitement : toutes les commandes précédentes sont écrites.
-    Flush(SyncSender<()>),
+    /// Accusé de traitement : toutes les commandes précédentes ont été
+    /// appliquées. La réponse porte la **dernière erreur d'écriture** survenue
+    /// depuis le flush précédent, ou `None` si tout est bien passé — sans quoi
+    /// un disque plein ou une base en lecture seule resterait invisible et
+    /// l'utilisateur quitterait en croyant son historique sauvegardé.
+    Flush(SyncSender<Option<String>>),
 }
 
 /// État initial chargé depuis la base au démarrage.
@@ -1204,6 +1208,8 @@ fn run(
 ) {
     // Commande qui a interrompu un lot : à rejouer avant toute lecture, sinon l'ordre change.
     let mut deferred: Option<StorageCmd> = None;
+    // Dernière erreur d'écriture, rendue au prochain `Flush`.
+    let mut last_error: Option<String> = None;
     loop {
         let cmd = match deferred.take() {
             Some(cmd) => cmd,
@@ -1228,6 +1234,7 @@ fn run(
             }
             if let Err(e) = storage.insert_messages(&batch) {
                 tracing::error!("erreur d'écriture : {e}");
+                last_error = Some(e.to_string());
             }
             continue;
         }
@@ -1304,12 +1311,16 @@ fn run(
                 }
             }
             StorageCmd::Flush(ack) => {
-                let _ = ack.send(());
+                // Les commandes sont appliquées dans l'ordre : à ce point,
+                // tout ce qui précède est traité. On rend le verdict, pas
+                // seulement l'accusé de passage.
+                let _ = ack.send(last_error.take());
                 Ok(())
             }
         };
         if let Err(e) = result {
             tracing::error!("erreur d'écriture : {e}");
+            last_error = Some(e.to_string());
         }
     }
 
