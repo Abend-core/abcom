@@ -8,6 +8,10 @@ use crate::message::{
 use crate::protocol::media_requires_ack;
 use crate::util::MutexExt;
 
+/// Accusés retenus en attente de commit. Plafond de sécurité : si la
+/// persistance tombe durablement, on cesse d'accumuler.
+const MAX_PENDING_ACKS: usize = 10_000;
+
 /// Période du nettoyage du cache disque des médias.
 const MEDIA_GC_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
 
@@ -96,12 +100,32 @@ impl AbcomApp {
                                 }
                             }
 
-                            outbound.extend(ack_reqs.into_iter().map(Into::into));
-                            outbound.extend(receipt_reqs.into_iter().map(Into::into));
+                            // Déjà en base (réémission) : rien n'attend, on
+                            // acquitte tout de suite. Sinon l'accusé patiente
+                            // jusqu'au commit — le dire « reçu » avant serait
+                            // un mensonge qu'un arrêt brutal démentirait.
+                            if s.has_message(msg_hash) || !s.has_storage() {
+                                outbound.extend(ack_reqs.into_iter().map(Into::into));
+                                outbound.extend(receipt_reqs.into_iter().map(Into::into));
+                            } else if self.pending_acks.len() < MAX_PENDING_ACKS {
+                                let waiting: Vec<NetworkSendRequest> = ack_reqs
+                                    .into_iter()
+                                    .map(Into::into)
+                                    .chain(receipt_reqs.into_iter().map(Into::into))
+                                    .collect();
+                                self.pending_acks
+                                    .entry(msg_hash)
+                                    .or_default()
+                                    .extend(waiting);
+                            } else {
+                                // Persistance durablement en panne : on cesse
+                                // d'accumuler plutôt que d'enfler sans fin.
+                                tracing::warn!("accusés en attente saturés, message non acquitté");
+                            }
                         }
                     }
 
-                    // Doublon d'une réémission : l'ACK vient d'être renvoyé
+                    // Doublon d'une réémission : l'ACK vient d'être traité
                     // ci-dessus, il ne reste qu'à ne pas dupliquer le message.
                     if s.has_message(AppState::message_hash(&msg)) {
                         tracing::debug!("message déjà reçu ignoré (réémission)");
@@ -249,6 +273,13 @@ impl AbcomApp {
                     let label = self.t(i18n::INJOIGNABLE_MESSAGE_NON_ENVOYE);
                     self.last_notification = Some(format!("{username} : {label}"));
                     self.notification_time = std::time::Instant::now();
+                }
+                AppEvent::MessagesPersisted { hashes } => {
+                    for hash in hashes {
+                        if let Some(waiting) = self.pending_acks.remove(&hash) {
+                            outbound.extend(waiting);
+                        }
+                    }
                 }
                 AppEvent::ConversationExported { error } => {
                     self.last_notification = Some(match error {

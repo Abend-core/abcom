@@ -302,6 +302,9 @@ pub(crate) struct AbcomApp {
     pub(crate) emoji: EmojiPickerState,
     pub(crate) modals: ModalsState,
     pub(crate) last_typing_broadcast: std::time::Instant,
+    /// Accusés prêts mais retenus jusqu'au commit du message correspondant
+    /// (cf. `AppEvent::MessagesPersisted`), par hash.
+    pub(crate) pending_acks: std::collections::HashMap<u64, Vec<NetworkSendRequest>>,
     pub(crate) last_retry_time: std::time::Instant,
     /// Dernier passage du GC du cache média (cf. `MEDIA_GC_INTERVAL`).
     pub(crate) last_media_gc: std::time::Instant,
@@ -465,6 +468,7 @@ impl AbcomApp {
                 key_mismatch: None,
             },
             last_typing_broadcast: std::time::Instant::now(),
+            pending_acks: std::collections::HashMap::new(),
             last_retry_time: std::time::Instant::now(),
             last_media_gc: std::time::Instant::now(),
             muted_conversations: std::collections::HashSet::new(),

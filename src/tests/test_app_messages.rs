@@ -236,3 +236,41 @@ fn unread_survives_a_ring_buffer_purge() {
         "le repère de lecture doit survivre à la purge"
     );
 }
+
+#[test]
+fn pagination_survives_a_window_overflow() {
+    let dir = std::env::temp_dir().join(format!(
+        "abcom-overflow-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = AppState::new_with_base("alice", &dir);
+    // Position connue au départ : la pagination a de quoi repartir.
+    s.oldest_loaded_rowid = Some(500);
+
+    // Déborder la fenêtre mémoire.
+    for i in 0..(s.history_cap() + 200) {
+        s.add_message(msg("bob", None, &format!("m{i}")));
+    }
+
+    assert!(s.window_overflowed, "le débordement doit être mémorisé");
+    assert_eq!(
+        s.oldest_loaded_rowid, None,
+        "les rowids sont inconnus après le drain"
+    );
+    // Le point clé : un rowid inconnu ne doit pas se confondre avec « plus
+    // rien à charger ». Sans stockage branché la requête ne part pas, mais le
+    // curseur doit être dérivable du plus ancien message encore en mémoire.
+    assert!(
+        !s.messages.is_empty(),
+        "il reste des messages pour redériver le curseur"
+    );
+
+    // Une page rendue par le stockage réarme un curseur normal.
+    s.prepend_older_messages(Vec::new(), Some(42));
+    assert!(!s.window_overflowed);
+    assert_eq!(s.oldest_loaded_rowid, Some(42));
+}

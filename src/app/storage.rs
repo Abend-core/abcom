@@ -48,6 +48,22 @@ impl ReceiptKind {
     }
 }
 
+/// Point de reprise pour charger la page d'historique précédente.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HistoryCursor {
+    /// Position connue : charger ce qui précède ce rowid.
+    Before(i64),
+    /// Position perdue — la fenêtre mémoire a débordé et les rowids des
+    /// messages restants sont inconnus. Le stockage la reconstruit depuis le
+    /// hash du plus ancien message encore en mémoire.
+    ///
+    /// Sans ce cas, un débordement se confondait avec « tout l'historique est
+    /// déjà chargé » et la pagination s'arrêtait définitivement pour la
+    /// session, alors que c'est précisément le moment où il reste le plus à
+    /// charger.
+    BeforeHash(u64),
+}
+
 /// Commandes du thread de stockage (FIFO : l'ordre des mutations est
 /// préservé ; `Flush` répond une fois toutes les commandes précédentes
 /// appliquées).
@@ -120,7 +136,7 @@ pub enum StorageCmd {
     /// Charge la page précédente de l'historique ; le résultat revient à
     /// l'UI via `AppEvent::OlderMessagesLoaded`.
     LoadOlder {
-        before_rowid: i64,
+        cursor: HistoryCursor,
     },
     /// Préférence persistée (table kv) : notifications, autostart…
     SetKv {
@@ -490,26 +506,63 @@ impl Storage {
         }
     }
 
+    /// Efface une conversation **et tout ce qui s'y rattache**.
+    ///
+    /// Réactions, accusés et repère de lecture sont indexés par hash de
+    /// message : les laisser derrière eux les rendait orphelins jusqu'à la
+    /// prochaine ouverture de l'application, où seul `purge_orphan_receipts`
+    /// finissait par les ramasser. Une conversation effacée doit l'être tout
+    /// de suite et entièrement.
     pub fn delete_conversation(&self, me: &str, conv: Option<&str>) -> rusqlite::Result<()> {
-        match conv {
-            None => {
-                self.conn
-                    .execute("DELETE FROM messages WHERE to_user IS NULL", [])?;
-            }
+        // Filtre commun à la sélection des hashs et à la suppression.
+        let (predicate, args): (&str, Vec<String>) = match conv {
+            None => ("to_user IS NULL", Vec::new()),
             // Salon de groupe : tous les messages portent la clé en `to_user`,
             // quel que soit l'auteur.
-            Some(conv) if conv.starts_with('#') => {
-                self.conn
-                    .execute("DELETE FROM messages WHERE to_user = ?1", params![conv])?;
+            Some(conv) if conv.starts_with('#') => ("to_user = ?1", vec![conv.to_string()]),
+            Some(user) => (
+                "(from_user = ?1 AND to_user = ?2) OR (from_user = ?2 AND to_user = ?1)",
+                vec![user.to_string(), me.to_string()],
+            ),
+        };
+        let params = rusqlite::params_from_iter(args.iter());
+
+        let mut stmt = self
+            .conn
+            .prepare(&format!("SELECT hash FROM messages WHERE {predicate}"))?;
+        let hashes: Vec<i64> = stmt
+            .query_map(params, |row| row.get::<_, i64>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(stmt);
+
+        self.conn.execute(
+            &format!("DELETE FROM messages WHERE {predicate}"),
+            rusqlite::params_from_iter(args.iter()),
+        )?;
+
+        // Un même hash peut rester porté par un message d'une autre
+        // conversation (rare mais possible) : on ne purge que ceux devenus
+        // réellement orphelins.
+        let mut still_used = self
+            .conn
+            .prepare("SELECT EXISTS(SELECT 1 FROM messages WHERE hash = ?1)")?;
+        let mut drop_reactions = self
+            .conn
+            .prepare("DELETE FROM reactions WHERE message_hash = ?1")?;
+        let mut drop_receipts = self
+            .conn
+            .prepare("DELETE FROM receipts WHERE message_hash = ?1")?;
+        let mut drop_marks = self
+            .conn
+            .prepare("DELETE FROM read_marks WHERE message_hash = ?1")?;
+        for hash in hashes {
+            let used: bool = still_used.query_row(params![hash], |row| row.get(0))?;
+            if used {
+                continue;
             }
-            Some(user) => {
-                self.conn.execute(
-                    "DELETE FROM messages
-                     WHERE (from_user = ?1 AND to_user = ?2)
-                        OR (from_user = ?2 AND to_user = ?1)",
-                    params![user, me],
-                )?;
-            }
+            drop_reactions.execute(params![hash])?;
+            drop_receipts.execute(params![hash])?;
+            drop_marks.execute(params![hash])?;
         }
         Ok(())
     }
@@ -805,6 +858,27 @@ impl Storage {
 
     /// Page précédente de l'historique (messages plus anciens que
     /// `before_rowid`), ordre chronologique.
+    /// Résout un curseur en rowid : `BeforeHash` demande une recherche par
+    /// hash (colonne indexée). Un hash introuvable — message purgé entre-temps
+    /// — ne renvoie rien plutôt que de repartir du début de l'historique.
+    fn resolve_cursor(&self, cursor: HistoryCursor) -> rusqlite::Result<Option<i64>> {
+        match cursor {
+            HistoryCursor::Before(rowid) => Ok(Some(rowid)),
+            HistoryCursor::BeforeHash(hash) => self
+                .conn
+                .query_row(
+                    "SELECT id FROM messages WHERE hash = ?1 ORDER BY id LIMIT 1",
+                    params![hash as i64],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(Some)
+                .or_else(|error| match error {
+                    rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                    other => Err(other),
+                }),
+        }
+    }
+
     pub fn load_older(
         &self,
         before_rowid: i64,
@@ -1226,16 +1300,28 @@ fn run(
                     Err(_) => break,
                 }
             }
-            if let Err(e) = storage.insert_messages(&batch) {
-                tracing::error!("erreur d'écriture : {e}");
-                last_error = Some(e.to_string());
+            match storage.insert_messages(&batch) {
+                Ok(()) => {
+                    // Commit acquis : les accusés en attente peuvent partir.
+                    let hashes = batch.iter().map(|msg| msg.stable_hash()).collect();
+                    let _ = event_tx.blocking_send(AppEvent::MessagesPersisted { hashes });
+                }
+                Err(e) => {
+                    tracing::error!("erreur d'écriture : {e}");
+                    last_error = Some(e.to_string());
+                }
             }
             continue;
         }
 
         let result = match cmd {
-            // Traité juste au-dessus.
-            StorageCmd::InsertMessage(msg) => storage.insert_message(&msg),
+            // Le chemin normal est le lot ci-dessus ; ce bras ne sert qu'au
+            // message rejoué après interruption d'une rafale.
+            StorageCmd::InsertMessage(msg) => storage.insert_message(&msg).inspect(|()| {
+                let _ = event_tx.blocking_send(AppEvent::MessagesPersisted {
+                    hashes: vec![msg.stable_hash()],
+                });
+            }),
             StorageCmd::DeleteConversation { me, conv } => {
                 storage.delete_conversation(&me, conv.as_deref())
             }
@@ -1298,8 +1384,17 @@ fn run(
                 kind,
             } => storage.add_receipt(hash, &username, kind),
             StorageCmd::SetKv { k, v } => storage.set_kv(&k, &v),
-            StorageCmd::LoadOlder { before_rowid } => {
-                match storage.load_older(before_rowid, OLDER_PAGE) {
+            StorageCmd::LoadOlder { cursor } => match storage.resolve_cursor(cursor) {
+                Ok(None) => {
+                    // Curseur irrécupérable : on le signale comme fin
+                    // d'historique plutôt que de laisser l'UI attendre.
+                    let _ = event_tx.blocking_send(AppEvent::OlderMessagesLoaded {
+                        messages: Vec::new(),
+                        oldest_rowid: None,
+                    });
+                    Ok(())
+                }
+                Ok(Some(before_rowid)) => match storage.load_older(before_rowid, OLDER_PAGE) {
                     Ok((messages, oldest_rowid)) => {
                         let _ = event_tx.blocking_send(AppEvent::OlderMessagesLoaded {
                             messages,
@@ -1308,8 +1403,9 @@ fn run(
                         Ok(())
                     }
                     Err(e) => Err(e),
-                }
-            }
+                },
+                Err(e) => Err(e),
+            },
             StorageCmd::GcMedia { dir } => match storage.all_media_ids() {
                 Ok(referenced) => {
                     // Le parcours du dossier part sur un thread : il ne doit
