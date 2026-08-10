@@ -11,7 +11,7 @@
 //! sources importées avec succès sont renommées en `.bak`.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, SyncSender};
 
 use rusqlite::types::Type;
@@ -58,12 +58,6 @@ pub enum StorageCmd {
     DeleteConversation {
         me: String,
         conv: Option<String>,
-    },
-    /// Migre l'historique d'un salon renommé (`to_user` : ancienne clé
-    /// `#ancien` vers la nouvelle `#nouveau`).
-    RenameConversation {
-        old: String,
-        new: String,
     },
     DeleteMessageByMediaId(String),
     /// Remplace l'ensemble des réactions d'un message (vide = suppression).
@@ -132,6 +126,14 @@ pub enum StorageCmd {
     SetKv {
         k: String,
         v: String,
+    },
+    /// Nettoyage du cache disque des médias (orphelins + plafond).
+    ///
+    /// Traité ici parce que la liste des médias encore référencés est une
+    /// requête SQL : l'historique en mémoire est fenêtré, s'en servir
+    /// supprimerait les fichiers des messages plus anciens.
+    GcMedia {
+        dir: PathBuf,
     },
     /// Accusé de traitement : toutes les commandes précédentes ont été
     /// appliquées. La réponse porte la **dernière erreur d'écriture** survenue
@@ -509,14 +511,6 @@ impl Storage {
                 )?;
             }
         }
-        Ok(())
-    }
-
-    pub fn rename_conversation(&self, old: &str, new: &str) -> rusqlite::Result<()> {
-        self.conn.execute(
-            "UPDATE messages SET to_user = ?2 WHERE to_user = ?1",
-            params![old, new],
-        )?;
         Ok(())
     }
 
@@ -1245,7 +1239,6 @@ fn run(
             StorageCmd::DeleteConversation { me, conv } => {
                 storage.delete_conversation(&me, conv.as_deref())
             }
-            StorageCmd::RenameConversation { old, new } => storage.rename_conversation(&old, &new),
             StorageCmd::DeleteMessageByMediaId(id) => storage.delete_by_media_id(&id),
             StorageCmd::ReplaceReactions { hash, entries } => {
                 storage.replace_reactions(hash, &entries)
@@ -1310,6 +1303,15 @@ fn run(
                     Err(e) => Err(e),
                 }
             }
+            StorageCmd::GcMedia { dir } => match storage.all_media_ids() {
+                Ok(referenced) => {
+                    // Le parcours du dossier part sur un thread : il ne doit
+                    // bloquer ni les écritures suivantes, ni l'UI.
+                    std::thread::spawn(move || crate::app::media::gc_media_dir(dir, referenced));
+                    Ok(())
+                }
+                Err(error) => Err(error),
+            },
             StorageCmd::Flush(ack) => {
                 // Les commandes sont appliquées dans l'ordre : à ce point,
                 // tout ce qui précède est traité. On rend le verdict, pas

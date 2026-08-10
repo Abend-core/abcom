@@ -8,6 +8,9 @@ use crate::message::{
 use crate::protocol::media_requires_ack;
 use crate::util::MutexExt;
 
+/// Période du nettoyage du cache disque des médias.
+const MEDIA_GC_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
 impl AbcomApp {
     /// Dépile les événements réseau reçus depuis les tâches tokio.
     ///
@@ -421,6 +424,13 @@ impl AbcomApp {
                     Some(self.t(i18n::ECHEC_DE_LIVRAISON_D_UN_MESSAGE).to_string());
                 self.notification_time = std::time::Instant::now();
             }
+        }
+
+        // Plafond du cache média : le GC ne tournait qu'au démarrage, si bien
+        // qu'une longue session pouvait dépasser durablement la limite.
+        if self.last_media_gc.elapsed() >= MEDIA_GC_INTERVAL {
+            self.last_media_gc = std::time::Instant::now();
+            self.state.lock_safe().request_media_gc();
         }
     }
 }

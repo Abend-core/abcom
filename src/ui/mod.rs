@@ -303,6 +303,8 @@ pub(crate) struct AbcomApp {
     pub(crate) modals: ModalsState,
     pub(crate) last_typing_broadcast: std::time::Instant,
     pub(crate) last_retry_time: std::time::Instant,
+    /// Dernier passage du GC du cache média (cf. `MEDIA_GC_INTERVAL`).
+    pub(crate) last_media_gc: std::time::Instant,
     pub(crate) muted_conversations: std::collections::HashSet<Option<String>>,
     /// 0 = none, 1 = pick files, 2 = pick folder (deferred to next frame to avoid AppKit conflict)
     pub(crate) pending_picker: u8,
@@ -464,6 +466,7 @@ impl AbcomApp {
             },
             last_typing_broadcast: std::time::Instant::now(),
             last_retry_time: std::time::Instant::now(),
+            last_media_gc: std::time::Instant::now(),
             muted_conversations: std::collections::HashSet::new(),
             pending_picker: 0,
             ui_language: UiLanguage::French,
