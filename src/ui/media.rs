@@ -186,7 +186,13 @@ pub(crate) fn render_media_block(
     // un GIF invisible ne décode rien, ne s'anime pas et ne déclenche aucun
     // repaint. Dès qu'un pixel entre à l'écran, il s'anime immédiatement.
     if media.kind == MediaKind::Gif {
-        if let Some(url) = &media.url {
+        // Filtre appliqué ici, au point de chargement : il couvre aussi les
+        // messages déjà en base, reçus avant l'ajout de ce contrôle.
+        if let Some(url) = media
+            .url
+            .as_ref()
+            .filter(|url| crate::message::media_url_is_loadable(url))
+        {
             let max_w = GIF_MAX_WIDTH.min(ui.available_width());
             let size = gif_display_size(media.width, media.height, max_w, GIF_MAX_HEIGHT);
             let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());

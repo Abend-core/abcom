@@ -37,6 +37,42 @@ pub struct MediaAttachment {
     pub height: Option<u32>,
 }
 
+/// Hôtes dont un GIF distant peut être chargé.
+///
+/// Le champ `url` d'un média arrive d'un pair et `Image::from_uri` déclenche
+/// une requête HTTP dès que le message devient visible — sans clic. Sans
+/// filtre, n'importe quel pair transforme un message en balise de traçage :
+/// l'hôte visé apprend l'adresse IP du destinataire et l'instant exact où il a
+/// lu, hors de tout accusé de lecture, alors que le reste de l'application ne
+/// sort jamais du réseau local.
+///
+/// Restreindre au CDN de Klipy ne déplace donc pas le problème : Klipy sert
+/// déjà l'image à l'émetteur, il est dans la boucle par construction.
+const ALLOWED_MEDIA_URL_HOSTS: &[&str] = &["klipy.com"];
+
+/// Une URL de GIF est-elle chargeable sans risque ?
+///
+/// Exige `https` (pas de dégradation en clair) et un hôte de la liste, en
+/// correspondance par suffixe de domaine — jamais par simple `contains`, qui
+/// laisserait passer `klipy.com.pirate.example`.
+pub fn media_url_is_loadable(url: &str) -> bool {
+    let Some(rest) = url.strip_prefix("https://") else {
+        return false;
+    };
+    let host = rest
+        .split(['/', '?', '#'])
+        .next()
+        .unwrap_or("")
+        .rsplit('@')
+        .next()
+        .unwrap_or("");
+    // Port éventuel écarté avant comparaison.
+    let host = host.split(':').next().unwrap_or("").to_ascii_lowercase();
+    ALLOWED_MEDIA_URL_HOSTS
+        .iter()
+        .any(|allowed| host == *allowed || host.ends_with(&format!(".{allowed}")))
+}
+
 impl MediaAttachment {
     /// Vrai si le fichier porte une extension d'image prise en charge.
     pub fn is_image_filename(filename: &str) -> bool {
