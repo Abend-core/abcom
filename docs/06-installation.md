@@ -3,8 +3,55 @@
 ## Prérequis
 
 - Rust stable (`rustup`), édition 2021.
-- Linux : paquets de développement audio et clavier (`libasound2-dev`, `libxkbcommon-dev` sur Debian/Ubuntu — les mêmes que la CI).
 - Réseau : les machines doivent être sur le même LAN, ports 9000-9001/tcp et 9001/udp ouverts entre elles.
+
+### Dépendances système sous Linux
+
+Elles sont **requises à la compilation**, pas seulement à l'exécution : sans
+elles, `cargo build` échoue avant même d'atteindre notre code.
+
+| Besoin | Debian / Ubuntu | Fedora | Arch | Alpine |
+|---|---|---|---|---|
+| Clavier, fenêtrage | `libxkbcommon-dev` | `libxkbcommon-devel` | `libxkbcommon` | `libxkbcommon-dev` |
+| Automatisation X11 (tray) | `libxdo-dev` | `libxdo-devel` | `xdotool` | `libxdo-dev` |
+| Son des notifications | `libasound2-dev` | `alsa-lib-devel` | `alsa-lib` | `alsa-lib-dev` |
+| Icône résidente (tray) | `libgtk-3-dev libayatana-appindicator3-dev` | `gtk3-devel libayatana-appindicator-gtk3-devel` | `gtk3 libayatana-appindicator` | `gtk+3.0-dev libayatana-appindicator-dev` |
+
+**Les deux dernières lignes sont optionnelles** : voir les features ci-dessous.
+
+### Compiler léger : `tray` et `sound`
+
+Les deux dépendances C les plus lourdes sont derrière des features actives par
+défaut. Les désactiver permet de compiler sur un système minimal — conteneur,
+image Alpine, poste sans environnement de bureau — sans installer GTK ni ALSA.
+
+```bash
+# Sans icône résidente ni son : ni GTK, ni libappindicator, ni ALSA requis
+cargo build --release --no-default-features
+
+# Sans le tray uniquement
+cargo build --release --no-default-features --features sound
+```
+
+Sans `tray`, fermer la fenêtre quitte réellement l'application au lieu de la
+replier. Sans `sound`, le bip de notification disparaît ; les notifications
+système, elles, restent (elles passent par D-Bus en Rust pur, sans dépendance C).
+
+### musl et Alpine
+
+**Compilation dynamique contre musl** (Alpine, `x86_64-unknown-linux-musl` sans
+lien statique) : fonctionne, avec les paquets du tableau ci-dessus. Aucun code
+d'abcom ne dépend de la glibc.
+
+**Binaire entièrement statique** : ce n'est **pas** possible, et ce n'est pas une
+limite qu'on peut lever par configuration. Le rendu passe par `wgpu`, qui charge
+le pilote Vulkan à l'exécution via `dlopen` — or `dlopen` ne fonctionne pas dans
+un binaire musl statique. Le tray (GTK) et le son (ALSA) ajoutent la même
+contrainte. Un binaire statique supposerait d'abandonner l'interface graphique.
+
+En résumé, sur Alpine : installer les paquets, compiler normalement, obtenir un
+binaire lié dynamiquement à musl. Réduire la surface avec
+`--no-default-features` si GTK et ALSA ne sont pas souhaités.
 
 ## Lancer depuis les sources (toutes plateformes)
 
@@ -42,15 +89,18 @@ make install
 compile en release puis :
 
 - copie le binaire dans `~/.local/bin/abcom` ;
-- installe le service utilisateur [contrib/abcom.service](../contrib/abcom.service) dans `~/.config/systemd/user/` ;
-- crée un lanceur desktop dans `~/.local/share/applications/`, pointant sur le chemin absolu du binaire (`%h` est un spécificateur systemd : dans un fichier `.desktop` il n'est pas développé et le raccourci ne lance rien).
+- crée un lanceur desktop dans `~/.local/share/applications/`, pointant sur le chemin absolu du binaire (`%h` est un spécificateur systemd : dans un fichier `.desktop` il n'est pas développé et le raccourci ne lance rien) ;
+- supprime un éventuel service systemd installé par une version antérieure.
 
-Activation du service (session graphique requise, aucun droit root) :
+### Lancement à l'ouverture de session
 
-```bash
-systemctl --user daemon-reload
-systemctl --user enable --now abcom.service
-```
+**Un seul mécanisme, géré par l'application** : une entrée XDG dans
+`~/.config/autostart/`, activable et désactivable depuis Paramètres → Général.
+
+Aucun service systemd n'est installé. Les versions antérieures en posaient un
+*en plus* de l'entrée XDG : deux instances démarraient et se disputaient les
+mêmes ports. Un service systemd serait de toute façon inadapté ici — il
+démarrerait l'application hors de toute session graphique.
 
 Pour installer un binaire déjà compilé sur une autre machine : `bash scripts/abcom-install.sh ./target/release/abcom`. Désinstallation : `make uninstall` ou `scripts/uninstall.sh`.
 

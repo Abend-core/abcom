@@ -110,6 +110,26 @@ jobs:
       - name: Compile avec la MSRV déclarée
         run: cargo check --all-targets --all-features --locked
 
+  minimal-build:
+    name: Build minimal (sans GTK ni ALSA)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Volontairement aucune dépendance système : c'est tout l'intérêt du
+      # test. Si `--no-default-features` réclamait encore GTK, libappindicator
+      # ou ALSA, ce job échouerait — et la compatibilité annoncée pour les
+      # systèmes minimaux (conteneur, Alpine/musl) serait fausse.
+      - name: Dépendances système (clavier/fenêtrage uniquement)
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Compile et teste sans tray ni son
+        run: |
+          cargo check --all-targets --no-default-features --locked
+          cargo test --no-default-features --locked
+
   platform-check:
     name: Check ${{ matrix.os }}
     runs-on: ${{ matrix.os }}

@@ -6,15 +6,23 @@
 //! file statique puis réveillent egui via le `UiContext` partagé — le même
 //! mécanisme que le réveil réseau. L'`update()` suivant dépile via `poll()`.
 
+#[cfg(feature = "tray")]
 use std::sync::Mutex;
 
+#[cfg(feature = "tray")]
 use tray_icon::menu::{Menu, MenuEvent, MenuId, MenuItem, PredefinedMenuItem};
+#[cfg(feature = "tray")]
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder, TrayIconEvent};
 
+#[cfg(feature = "tray")]
 use crate::util::MutexExt;
 
 /// Action utilisateur issue du tray, consommée par `AbcomApp::update`.
+///
+/// Le type reste défini sans la feature `tray` — les appelants s'en servent
+/// dans un `match` que `poll()` ne peuplera simplement jamais.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(not(feature = "tray"), allow(dead_code))]
 pub(crate) enum TrayAction {
     Open,
     Quit,
@@ -22,16 +30,19 @@ pub(crate) enum TrayAction {
 
 /// File d'événements bruts remplie par les callbacks (threads variés) et
 /// drainée sur le thread UI.
+#[cfg(feature = "tray")]
 enum RawEvent {
     Menu(MenuId),
     /// Clic gauche sur l'icône (convention Windows/Linux : ouvrir).
     Click,
 }
 
+#[cfg(feature = "tray")]
 static PENDING: Mutex<Vec<RawEvent>> = Mutex::new(Vec::new());
 
 /// Installe les handlers globaux tray/menu : chaque événement est mis en
 /// file puis réveille l'UI. À appeler une seule fois, avant la création.
+#[cfg(feature = "tray")]
 pub(crate) fn install_event_handlers(ui_ctx: crate::platform::notify::UiContext) {
     let wake = ui_ctx.clone();
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
@@ -55,6 +66,7 @@ pub(crate) fn install_event_handlers(ui_ctx: crate::platform::notify::UiContext)
     }));
 }
 
+#[cfg(feature = "tray")]
 pub(crate) struct Tray {
     // Conservée en vie : la dropper retire l'icône du système.
     #[allow(dead_code)]
@@ -66,6 +78,7 @@ pub(crate) struct Tray {
     badge_shown: bool,
 }
 
+#[cfg(feature = "tray")]
 impl Tray {
     /// Crée l'icône résidente. macOS : doit être appelé sur le thread
     /// principal, event loop démarrée (premier `update()`). Renvoie `None`
@@ -133,6 +146,35 @@ impl Tray {
         };
         let _ = self.icon.set_icon(Some(icon));
     }
+}
+
+// ── Sans la feature `tray` ───────────────────────────────────────────────────
+//
+// `tray-icon` tire GTK3 et libappindicator sur Linux : sans en-têtes de
+// développement, la compilation échoue avant même d'atteindre notre code.
+// Ces bouchons gardent la même API pour que les appelants restent identiques ;
+// l'application se comporte alors comme sur un bureau sans zone de
+// notification — fermer la fenêtre quitte réellement.
+
+/// Sans tray, aucun handler global à poser.
+#[cfg(not(feature = "tray"))]
+pub(crate) fn install_event_handlers(_ui_ctx: crate::platform::notify::UiContext) {}
+
+#[cfg(not(feature = "tray"))]
+pub(crate) struct Tray;
+
+#[cfg(not(feature = "tray"))]
+impl Tray {
+    /// `None` : l'appelant retombe sur le comportement « pas de tray ».
+    pub(crate) fn new(_open_label: &str, _quit_label: &str) -> Option<Self> {
+        None
+    }
+
+    pub(crate) fn poll(&self) -> Vec<TrayAction> {
+        Vec::new()
+    }
+
+    pub(crate) fn set_unread(&mut self, _unread: bool) {}
 }
 
 /// Capte une fois le HWND natif de la fenêtre depuis `eframe::Frame`, pour
@@ -253,10 +295,12 @@ pub(crate) mod win {
 }
 
 /// Taille de l'icône tray (points logiques ; les OS remettent à l'échelle).
+#[cfg(feature = "tray")]
 const TRAY_PX: u32 = 32;
 
 /// Construit les deux icônes (normale, avec pastille rouge) depuis l'icône
 /// de l'application embarquée.
+#[cfg(feature = "tray")]
 fn build_icons() -> Option<(Icon, Icon)> {
     let data = include_bytes!("../../assets/app_icon.png");
     let img = image::load_from_memory(data).ok()?;

@@ -62,8 +62,8 @@ ed25519-dalek = "3"
 blake2 = "0.10.6"
 # Sons de notification : seule la lecture est utilisée (tonalités
 # synthétisées), aucun décodeur de format n'est nécessaire.
-rodio = { version = "0.22", default-features = false, features = ["playback"] }
-tray-icon = "0.24.1"
+rodio = { version = "0.22", default-features = false, features = ["playback"], optional = true }
+tray-icon = { version = "0.24.1", optional = true }
 notify-rust = "4.18.0"
 auto-launch = "0.6.0"
 tracing = "0.1"
@@ -88,7 +88,14 @@ egui_kittest = "0.36"
 egui = "0.36"
 
 [features]
-default = []
+default = ["tray", "sound"]
+# Icône résidente. Tire GTK3 + libappindicator sur Linux : la désactiver permet
+# de compiler sur un système qui n'a pas ces en-têtes (conteneur, Alpine/musl,
+# poste sans bureau). Sans elle, fermer la fenêtre quitte l'application.
+tray = ["dep:tray-icon"]
+# Son de notification. Tire ALSA (`libasound2-dev`) sur Linux, pour deux
+# tonalités synthétisées : la désactiver retire le bip, rien d'autre.
+sound = ["dep:rodio"]
 # Import d'un avatar SVG (rasterisation via resvg — dépendance lourde,
 # désactivée par défaut : binaire et compilation nettement plus légers).
 avatar-svg = ["dep:resvg"]
