@@ -643,11 +643,10 @@ impl AbcomApp {
             let hash = crate::app::AppState::message_hash(m);
             for (recipient, addr) in s.receipt_recipients(m) {
                 // Delta : ce destinataire a-t-il déjà reçu cet accusé ?
-                if !self
+                if self
                     .read_receipts_sent
-                    .entry(recipient.clone())
-                    .or_default()
-                    .insert(hash)
+                    .get(&recipient)
+                    .is_some_and(|sent| sent.contains(&hash))
                 {
                     continue;
                 }
@@ -666,7 +665,17 @@ impl AbcomApp {
         drop(s);
 
         for req in receipts {
-            self.net.try_send(req);
+            let recipient = req.to_peer.clone();
+            let hash = req.receipt.message_hash;
+            // Marqué envoyé seulement si l'émission aboutit : l'inscrire avant
+            // condamnait l'accusé à ne jamais partir dès que la file d'envoi
+            // était pleine, puisqu'il était alors considéré comme déjà remis.
+            if self.net.try_send(req) {
+                self.read_receipts_sent
+                    .entry(recipient)
+                    .or_default()
+                    .insert(hash);
+            }
         }
     }
 }
@@ -936,9 +945,10 @@ impl eframe::App for AbcomApp {
                 .set_file_name(format!("abcom-{name}.txt"))
                 .save_file()
             {
+                // Pas de notification ici : l'écriture est asynchrone et son
+                // verdict revient par `AppEvent::ConversationExported`.
+                let _ = done;
                 self.state.lock_safe().export_selected_conversation(path);
-                self.last_notification = Some(done.to_string());
-                self.notification_time = std::time::Instant::now();
             }
         }
 

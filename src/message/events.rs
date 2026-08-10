@@ -71,4 +71,11 @@ pub enum AppEvent {
         /// Nom du fichier écrit, ou `None` si la copie a échoué.
         filename: Option<String>,
     },
+    /// Fin d'un export de conversation. L'écriture a lieu sur le thread de
+    /// stockage : annoncer le succès à l'ouverture du sélecteur de fichier
+    /// mentait dès que l'écriture échouait (disque plein, dossier en lecture
+    /// seule).
+    ConversationExported {
+        error: Option<String>,
+    },
 }
