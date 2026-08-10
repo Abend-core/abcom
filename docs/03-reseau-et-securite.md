@@ -68,7 +68,7 @@ Tous les échanges de chat sont des `NetworkPacket` (enum JSON taggé, [message/
 | `Reaction` | Ajout ou retrait d'une réaction emoji |
 | `Avatar` | Annonce de l'avatar de l'expéditeur |
 
-La version de protocole vaut **2** depuis l'ajout des annonces signées : un pair d'une version différente est rejeté au `Hello`.
+La version de protocole vaut **3** depuis le passage des salons à un identifiant immuable : cet identifiant entre dans le hash des messages, donc un pair resté en version 2 calculerait des hashs différents et ses accusés ne correspondraient à rien. Un pair d'une version différente est rejeté au `Hello`.
 
 Les messages sont identifiés sur le réseau par un hash FNV-1a déterministe de (expéditeur, destinataire, timestamp epoch, contenu) — stable entre machines et plateformes, contrairement au `DefaultHasher` utilisé à l'origine.
 
