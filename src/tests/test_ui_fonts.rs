@@ -1,44 +1,90 @@
 //! Couverture des polices : un caractère sans glyphe s'affiche en carré vide,
 //! sans le moindre avertissement. Ce qui est écrit doit être dessinable.
+//!
+//! La mesure passe par le **glyphe réellement peint**, pas par
+//! `Fonts::has_glyphs` : celui-ci répond « absent » pour tout caractère porté
+//! par la police de remplacement de la famille, ce qui en fait un faux négatif
+//! sur une bonne part des symboles.
 
 use eframe::egui;
 
 /// Caractères que l'interface écrit elle-même, et ceux qu'un texte collé
 /// apporte couramment (documentation, notes, README).
 const EXPECTED: &[char] = &[
-    '☐', // case à cocher vide (listes de tâches Markdown)
-    '✓', // case cochée, et coche des accusés dans les textes collés
+    '☐', '☑', // cases à cocher des listes de tâches Markdown
+    '✓', '✔', '✘', // coches et croix des accusés et des tableaux
     '→', '←', '↑', '↓', // flèches
-    '⏎', // retour à la ligne
+    '⏎', '␣', // touches
     '⌘', // raccourcis macOS
     '•', '–', '—', '…', // ponctuation typographique
     '«', '»', '“', '”', // guillemets
     '≥', '≤', '×', '÷', '±', // mathématiques courantes
-    '€', '£', '©', '®', '°', '✘', // croix des tableaux de la documentation
+    '€', '£', '©', '®', '°',
 ];
 
-fn probe() -> egui::Context {
-    let ctx = egui::Context::default();
-    ctx.set_fonts(super::build_fonts());
-    // Les polices ne sont interrogeables qu'à l'intérieur d'une passe.
-    ctx.begin_pass(egui::RawInput::default());
-    ctx
+/// Codets non assignés par Unicode : aucune police ne peut les dessiner, ils
+/// donnent donc la signature du carré vide.
+const UNASSIGNED: [char; 2] = ['\u{0378}', '\u{05FF}'];
+
+/// Signature du glyphe peint pour `c` : sa position dans l'atlas et sa chasse.
+/// Deux caractères qui la partagent sont peints à l'identique.
+fn glyph_signature(ctx: &egui::Context, c: char) -> Option<(u16, u16, u16, u16, u32)> {
+    let galley = ctx.fonts_mut(|fonts| {
+        fonts.layout_no_wrap(
+            c.to_string(),
+            egui::FontId::proportional(14.0),
+            egui::Color32::WHITE,
+        )
+    });
+    let glyph = galley.rows.first()?.glyphs.first()?;
+    let uv = glyph.uv_rect;
+    Some((
+        uv.min[0],
+        uv.min[1],
+        uv.max[0],
+        uv.max[1],
+        glyph.advance_width.to_bits(),
+    ))
+}
+
+struct Probe {
+    ctx: egui::Context,
+    tofu: Option<(u16, u16, u16, u16, u32)>,
+}
+
+impl Probe {
+    fn new() -> Self {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(super::build_fonts());
+        // Les polices ne sont interrogeables qu'à l'intérieur d'une passe.
+        ctx.begin_pass(egui::RawInput::default());
+        let tofu = glyph_signature(&ctx, UNASSIGNED[0]);
+        assert_eq!(
+            tofu,
+            glyph_signature(&ctx, UNASSIGNED[1]),
+            "deux codets non assignés doivent produire le même carré vide, \
+             sans quoi la référence de la mesure ne vaut rien"
+        );
+        Self { ctx, tofu }
+    }
+
+    fn is_drawn(&self, c: char) -> bool {
+        let signature = glyph_signature(&self.ctx, c);
+        signature.is_some() && signature != self.tofu
+    }
 }
 
 #[test]
-fn every_character_the_interface_writes_can_be_drawn() {
-    let ctx = probe();
+fn every_character_the_interface_writes_is_drawn() {
+    let probe = Probe::new();
     let missing: Vec<char> = EXPECTED
         .iter()
         .copied()
-        .filter(|c| {
-            let text = c.to_string();
-            !ctx.fonts_mut(|fonts| fonts.has_glyphs(&egui::FontId::proportional(14.0), &text))
-        })
+        .filter(|c| !probe.is_drawn(*c))
         .collect();
     assert!(
         missing.is_empty(),
-        "caractères sans glyphe, ils s'afficheront en carré vide : {missing:?}"
+        "caractères peints en carré vide : {missing:?}"
     );
 }
 
@@ -47,25 +93,11 @@ fn every_character_the_interface_writes_can_be_drawn() {
 /// Un caractère témoin par police, qu'elle seule fournit.
 #[test]
 fn both_fallback_fonts_are_wired_in() {
-    let ctx = probe();
+    let probe = Probe::new();
     for (character, font) in [('✓', "Inter"), ('✘', "Noto Sans Symbols 2")] {
-        let text = character.to_string();
         assert!(
-            ctx.fonts_mut(|fonts| fonts.has_glyphs(&egui::FontId::proportional(14.0), &text)),
-            "{character} n'est plus dessinable : {font} n'est plus consultée en repli"
-        );
-    }
-}
-
-#[test]
-fn the_markdown_task_list_markers_can_be_drawn() {
-    // Régression : `☑` n'était couvert par aucune police embarquée, si bien
-    // qu'une tâche cochée s'affichait en carré vide.
-    let ctx = probe();
-    for marker in ["✓ ", "☐ "] {
-        assert!(
-            ctx.fonts_mut(|fonts| fonts.has_glyphs(&egui::FontId::proportional(14.0), marker)),
-            "marqueur de liste de tâches non dessinable : {marker:?}"
+            probe.is_drawn(character),
+            "{character} est peint en carré vide : {font} n'est plus consultée en repli"
         );
     }
 }

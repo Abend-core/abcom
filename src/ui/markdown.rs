@@ -607,9 +607,7 @@ pub(crate) fn render_parsed_markdown(
             }
             MarkdownBlock::TaskItem { checked, spans } => {
                 ui.horizontal_wrapped(|ui| {
-                    // `☑` n'existe dans aucune police embarquée : la case
-                    // cochée s'affichait en carré vide (cf. `build_fonts`).
-                    ui.label(if *checked { "✓ " } else { "☐ " });
+                    ui.label(if *checked { "☑ " } else { "☐ " });
                     render_spans_with_emoji_size(
                         ui,
                         spans,
