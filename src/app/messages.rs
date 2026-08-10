@@ -26,7 +26,12 @@ impl AppState {
             let overflow = self.messages.len() - self.history_cap() + 99;
             let n = overflow.min(self.messages.len());
             self.messages.drain(0..n);
-            self.oldest_loaded_rowid = None; // rowids inconnus après drain
+            // Les rowids des messages restants sont inconnus après le drain.
+            // Marquer « plus rien à paginer » (`None`) arrêtait définitivement
+            // le chargement vers le haut, au moment précis où il reste le plus
+            // d'historique en base : on garde donc un curseur redérivable.
+            self.oldest_loaded_rowid = None;
+            self.window_overflowed = true;
             self.purge_stale_message_state();
         }
         self.bump_content();

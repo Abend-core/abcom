@@ -777,3 +777,41 @@ fn migration_moves_group_conversations_to_ids() {
     );
     assert_eq!(loaded.read_marks.get(&new_key), Some(&new_hash));
 }
+
+#[test]
+fn deleting_a_conversation_takes_its_reactions_and_receipts_with_it() {
+    let dir = tmp_dir("delete-cascade");
+    let mut storage = Storage::open(&dir).unwrap();
+
+    let doomed = msg("bob", Some("me"), "à effacer", 1);
+    let kept = msg("carol", Some("me"), "à garder", 2);
+    let doomed_hash = AppState::message_hash(&doomed);
+    let kept_hash = AppState::message_hash(&kept);
+    storage.insert_message(&doomed).unwrap();
+    storage.insert_message(&kept).unwrap();
+
+    for hash in [doomed_hash, kept_hash] {
+        storage
+            .replace_reactions(
+                hash,
+                &[ReactionEntry {
+                    emoji: "👍".to_string(),
+                    users: vec!["me".to_string()],
+                }],
+            )
+            .unwrap();
+        storage
+            .add_receipt(hash, "me", super::ReceiptKind::Read)
+            .unwrap();
+    }
+
+    storage.delete_conversation("me", Some("bob")).unwrap();
+
+    let loaded = storage.load_all(INITIAL_WINDOW).unwrap();
+    // La conversation effacée n'a rien laissé derrière elle…
+    assert!(!loaded.reactions.contains_key(&doomed_hash));
+    assert!(!loaded.read_receipts.contains_key(&doomed_hash));
+    // …et celle qui reste est intacte.
+    assert!(loaded.reactions.contains_key(&kept_hash));
+    assert!(loaded.read_receipts.contains_key(&kept_hash));
+}

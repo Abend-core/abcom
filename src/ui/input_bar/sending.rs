@@ -12,9 +12,47 @@ use std::sync::{Arc, Mutex};
 
 use crate::ui::AbcomApp;
 
-/// thread dédié pour ne jamais geler l'UI, même pour plusieurs Go.
-/// Envoie un fichier (ou un dossier zippé) comme média, par streaming. Tout le
-/// travail lourd (zip, copie locale dans `media/<id>`, lecture) se fait dans un
+/// Threads de préparation média tournant en parallèle.
+///
+/// La préparation est bornée par les E/S (copie, zip), pas par le processeur :
+/// en multiplier les threads n'accélère rien. Aligné sur le nombre de
+/// réceptions simultanées côté réseau.
+const MEDIA_PREP_WORKERS: usize = 4;
+
+type PrepJob = Box<dyn FnOnce() + Send>;
+
+/// File de préparation média, servie par un pool de taille fixe.
+///
+/// Un thread par pièce jointe faisait exploser le nombre de threads OS dès
+/// qu'on sélectionnait un dossier entier — des centaines de threads se
+/// disputant le même disque, pour un débit moindre.
+fn prep_pool() -> &'static std::sync::mpsc::Sender<PrepJob> {
+    static POOL: std::sync::OnceLock<std::sync::mpsc::Sender<PrepJob>> = std::sync::OnceLock::new();
+    POOL.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<PrepJob>();
+        let rx = Arc::new(Mutex::new(rx));
+        for _ in 0..MEDIA_PREP_WORKERS {
+            let rx = rx.clone();
+            std::thread::spawn(move || {
+                loop {
+                    // Le verrou est relâché avant d'exécuter la tâche, sinon
+                    // le pool se comporterait comme un thread unique.
+                    let job = rx.lock_safe().recv();
+                    match job {
+                        Ok(job) => job(),
+                        Err(_) => break,
+                    }
+                }
+            });
+        }
+        tx
+    })
+}
+
+/// Envoie un fichier (ou un dossier zippé) comme média, par streaming.
+///
+/// Tout le travail lourd (zip, copie locale dans `media/<id>`, lecture) part
+/// dans le pool de préparation : l'UI ne gèle jamais, même pour plusieurs Go.
 pub(super) fn send_one_media(
     app: &AbcomApp,
     path: &Path,
@@ -29,13 +67,16 @@ pub(super) fn send_one_media(
     let to_user = to_user.clone();
     let targets = targets.to_vec();
 
-    std::thread::spawn(move || {
+    let job: PrepJob = Box::new(move || {
         if let Err(e) =
             prepare_and_stream(&state, &send_media_tx, &path, &my_name, &to_user, &targets)
         {
             tracing::warn!("préparation média échouée ({}): {}", path.display(), e);
         }
     });
+    if prep_pool().send(job).is_err() {
+        tracing::error!("pool de préparation média arrêté, pièce jointe ignorée");
+    }
 }
 
 /// Prépare un média dans `media/<id>` (copie d'un fichier ou zip d'un dossier),

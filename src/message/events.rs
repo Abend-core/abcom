@@ -78,4 +78,14 @@ pub enum AppEvent {
     ConversationExported {
         error: Option<String>,
     },
+    /// Messages effectivement commités en base.
+    ///
+    /// Un ACK dit à l'émetteur « je l'ai » : l'envoyer dès la mise en file
+    /// d'écriture mentait, un arrêt avant commit lui laissant croire le
+    /// message livré alors qu'il avait disparu. Les accusés attendent donc ce
+    /// signal, et une écriture qui échoue ne l'émet jamais — l'émetteur
+    /// réémet.
+    MessagesPersisted {
+        hashes: Vec<u64>,
+    },
 }
