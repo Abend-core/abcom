@@ -219,3 +219,38 @@ fn pipes_without_delimiter_row_stay_paragraph() {
         )])]
     );
 }
+
+#[test]
+fn only_http_schemes_become_clickable_links() {
+    for url in [
+        "https://example.com",
+        "http://example.com",
+        "HTTPS://EX.COM",
+    ] {
+        let text = format!("[voir]({url})");
+        assert!(
+            matches!(
+                parse_markdown(&text).as_slice(),
+                [MarkdownBlock::Paragraph(spans)] if matches!(spans.as_slice(), [MarkdownSpan::Link { .. }])
+            ),
+            "{url} devrait rester un lien"
+        );
+    }
+
+    // Schémas dangereux : le message reste du texte, jamais un lien cliquable.
+    for url in [
+        "file:///etc/passwd",
+        "smb://serveur/partage",
+        "javascript:alert(1)",
+        "example.com",
+    ] {
+        let text = format!("[document officiel]({url})");
+        assert_eq!(
+            parse_markdown(&text),
+            vec![MarkdownBlock::Paragraph(vec![MarkdownSpan::Text(
+                text.clone()
+            )])],
+            "{url} ne doit pas devenir un lien"
+        );
+    }
+}

@@ -351,7 +351,7 @@ impl AbcomApp {
         }
     }
 
-    /// Récupère les offres de médias volumineux (> 1 Go) en attente d'accord et
+    /// Récupère les offres de médias volumineux (au-delà du seuil d'accord) en attente d'accord et
     /// les ajoute au bandeau d'acceptation.
     pub(crate) fn process_media_offers(&mut self) {
         while let Ok(offer) = self.media.offer_rx.try_recv() {

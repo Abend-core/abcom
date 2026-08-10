@@ -113,7 +113,7 @@ fn progress(id: &str, done: u64, total: u64, finished: bool, outgoing: bool) -> 
     })
 }
 
-/// En attente de l'acceptation du destinataire (média > 1 Go, côté émetteur).
+/// En attente de l'acceptation du destinataire (média au-delà du seuil d'accord, côté émetteur).
 fn waiting(id: &str, total: u64) -> AppEvent {
     AppEvent::MediaProgressed(MediaProgress {
         id: id.to_string(),

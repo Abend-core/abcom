@@ -246,7 +246,7 @@ pub(crate) struct MediaState {
     pub(crate) textures: std::collections::HashMap<String, Option<egui::TextureHandle>>,
     /// Identifiant du média affiché en grand dans la visionneuse (None = fermée).
     pub(crate) viewer: Option<String>,
-    /// Réception des offres de médias volumineux (> 1 Go) à accepter/refuser.
+    /// Réception des offres de médias volumineux (au-delà du seuil d'accord) à accepter/refuser.
     pub(crate) offer_rx: mpsc::Receiver<MediaStreamOffer>,
     /// Offres de médias volumineux en attente de décision (bandeau).
     pub(crate) pending_offers: Vec<MediaStreamOffer>,

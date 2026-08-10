@@ -72,12 +72,15 @@ echo "  ✓ Service prêt pour démarrage auto"
 
 # ── Raccourci Menu (Desktop file) ─────────────────────────────────────────────
 mkdir -p "$APPS_DIR"
-cat > "$APPS_DIR/abcom.desktop" << 'EOF'
+# `%h` est un spécificateur systemd : dans un fichier .desktop il n'est pas
+# développé et le raccourci ne lance rien. On écrit le chemin absolu (heredoc
+# non quoté), en échappant `$username` qui doit rester pour le shell appelé.
+cat > "$APPS_DIR/abcom.desktop" << EOF
 [Desktop Entry]
 Type=Application
 Name=Abcom
 Comment=Chat LAN P2P et découverte automatique des pairs
-Exec=bash -c 'read -p "Ton pseudonyme: " username; %h/.local/bin/abcom "$username"'
+Exec=bash -c 'read -p "Ton pseudonyme: " username; "$BINARY_DIR/abcom" "\$username"'
 Icon=chat
 Terminal=true
 Categories=Network;Chat;

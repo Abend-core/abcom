@@ -76,7 +76,7 @@ pub struct MediaSendJob {
     pub header: MediaStreamHeader,
 }
 
-/// Offre de réception d'un média volumineux (> 1 Go), transmise à l'UI pour
+/// Offre de réception d'un média volumineux (au-delà du seuil d'accord), transmise à l'UI pour
 /// décision avant d'écrire le moindre octet.
 pub struct MediaStreamOffer {
     pub from: String,
@@ -92,7 +92,7 @@ pub struct MediaProgress {
     pub id: String,
     pub done: u64,
     pub total: u64,
-    /// En attente de l'acceptation du destinataire (émetteur, média > 1 Go).
+    /// En attente de l'acceptation du destinataire (émetteur, média au-delà du seuil d'accord).
     pub waiting: bool,
     /// Transfert terminé avec succès.
     pub finished: bool,
