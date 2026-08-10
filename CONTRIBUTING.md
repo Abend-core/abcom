@@ -52,7 +52,6 @@ Types : `feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `perf`, `ci`.
 - Toujours partir de `dev` à jour ; branche `feature/` ou `task/` selon la portée.
 - **Jamais de `git push` sans accord explicite.**
 - **Pas de trailer `Co-Authored-By`.**
-- `AVANCEMENT.md` se met à jour **sur `dev` uniquement** : c'est ce qui le garde sans conflits.
 
 ## Licence
 

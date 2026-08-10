@@ -113,7 +113,6 @@ docs(git): ajouter les règles de workflow pour l'équipe
 - **Jamais de `git push` sans accord explicite de l'utilisateur.**
 - **Pas de trailer `Co-Authored-By` dans les messages de commit.**
 - PR via `gh pr create` puis `gh pr merge` — ne pas renvoyer l'utilisateur vers GitHub.
-- Après le merge d'une feature : mettre à jour `AVANCEMENT.md` **sur `dev` uniquement** (ce fichier ne doit jamais être modifié depuis une branche feature, c'est ce qui le garde sans conflits).
 
 ### Releases
 
@@ -156,5 +155,4 @@ Outils d'entretien : `cargo audit` (vulnérabilités) et `cargo deny check` (lic
 ## Fichiers de suivi
 
 - [CHANGELOG.md](../CHANGELOG.md) — modifications notables, alimenté en continu, consolidé à chaque release.
-- [AVANCEMENT.md](../AVANCEMENT.md) — tableau des features en cours/terminées, tenu sur `dev` uniquement.
 - [old/](../old/) — documentation historique (audits, plans, ADR, anciennes versions), conservée en l'état.

@@ -40,14 +40,14 @@ La communication entre ces mondes passe par des canaux `mpsc` tokio. L'état app
 | [config.rs](../src/config.rs) | Ports et répertoire de données, dérivés de `ABCOM_INSTANCE` (multi-instances locales) ; clé API Klipy |
 | [identity.rs](../src/identity.rs) | Paire X25519 de la machine (`identity.key`, permissions 0600), empreinte BLAKE2s |
 | [discovery.rs](../src/discovery.rs) | Annonce UDP périodique (broadcast + multicast), suivi de présence, événements émis uniquement au changement d'état |
-| [notify.rs](../src/notify.rs) | `UiSender` : un `mpsc::Sender` couplé au contexte egui — chaque événement relayé réveille le rendu (`request_repaint`) |
+| [platform/notify.rs](../src/platform/notify.rs) | `UiSender` : un `mpsc::Sender` couplé au contexte egui — chaque événement relayé réveille le rendu (`request_repaint`) |
 | [network/](../src/network/mod.rs) | Transport chiffré : `secure.rs` (handshake Noise, TOFU, PSK), `pool.rs` (connexions persistantes par pair), `server.rs` (réception), `sender.rs` (expéditeurs par type de paquet), `media_stream.rs` (streaming des fichiers par tranches) |
 | [message/](../src/message/mod.rs) | Types échangés et événements internes : `ChatMessage`, `NetworkPacket` (enum taggé), `GroupAction`, réactions, accusés, avatars, médias, `AppEvent` |
 | [app/](../src/app/mod.rs) | État applicatif : messages et conversations, pairs et alias, groupes, réactions, accusés, transferts, frappe, avatars ; `storage.rs` (SQLite et son thread d'écriture) |
 | [ui/](../src/ui/mod.rs) | Interface : `chat_panel` (fil), `sidebar` (pairs et salons), `input_bar` et `composer/` (saisie), `markdown`, pickers emoji/GIF, `group_modal`, `settings`, `snapshot` (caches dérivés), `tray` (icône résidente), `media` (vignettes, visionneuse), `sound` |
-| [klipy.rs](../src/klipy.rs) | Client de l'API Klipy (GIF, mèmes, stickers) : recherche avec anti-rebond, pagination |
+| [services/klipy.rs](../src/services/klipy.rs) | Client de l'API Klipy (GIF, mèmes, stickers) : recherche avec anti-rebond, pagination |
 | [archive.rs](../src/archive.rs) | Compression ZIP d'un dossier pour l'envoyer comme un fichier |
-| [autostart.rs](../src/autostart.rs) | Lancement à l'ouverture de session (Launch Agent, clé Run, `.desktop`) |
+| [platform/autostart.rs](../src/platform/autostart.rs) | Lancement à l'ouverture de session (Launch Agent, clé Run, `.desktop`) |
 | [emoji_registry.rs](../src/emoji_registry.rs) | 323 emojis PNG embarqués dans le binaire, décodés dans un thread au démarrage |
 | [tests/](../src/tests/) | 288 tests unitaires : un fichier par module testé, réseau testé sur de vraies sockets |
 | [tests/p2p_e2e.rs](../tests/p2p_e2e.rs) | Scénario d'intégration headless entre deux pairs authentifiés |
