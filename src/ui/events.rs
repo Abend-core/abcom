@@ -106,6 +106,14 @@ impl AbcomApp {
                             // un mensonge qu'un arrêt brutal démentirait.
                             if s.has_message(msg_hash) || !s.has_storage() {
                                 outbound.extend(ack_reqs.into_iter().map(Into::into));
+                                // Mémorisé comme envoyé : sinon le rattrapage
+                                // au retour du focus réémettrait tout le fil.
+                                for req in &receipt_reqs {
+                                    self.read_receipts_sent
+                                        .entry(req.to_peer.clone())
+                                        .or_default()
+                                        .insert(msg_hash);
+                                }
                                 outbound.extend(receipt_reqs.into_iter().map(Into::into));
                             } else if self.pending_acks.len() < MAX_PENDING_ACKS {
                                 let waiting: Vec<NetworkSendRequest> = ack_reqs
