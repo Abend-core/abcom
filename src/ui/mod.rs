@@ -810,7 +810,20 @@ impl eframe::App for AbcomApp {
             self.hide_to_tray(ctx);
         }
 
+        let was_focused = self.window_focused;
         self.window_focused = !self.window_hidden && ctx.input(|i| i.focused);
+        // Retour du focus : les messages arrivés pendant que la fenêtre était
+        // en arrière-plan viennent d'être lus. Sans ce rattrapage, un message
+        // reçu juste avant le clic ne recevait son accusé de lecture qu'après
+        // avoir quitté la conversation et y être revenu — `switch_conversation`
+        // était le seul déclencheur.
+        if self.window_focused && !was_focused {
+            let conv = self.state.lock_safe().selected_conversation.clone();
+            self.send_read_receipts_for_conversation(conv.clone());
+            if let Some(conv) = conv {
+                self.state.lock_safe().mark_conversation_read(&conv);
+            }
+        }
         self.process_events();
         self.process_media_offers();
         self.periodic_tasks();
