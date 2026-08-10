@@ -6,7 +6,7 @@ Ce document retrace les phases du projet, les audits menés et leurs résultats 
 
 ### Avril 2026 — Première version
 
-Chat LAN fonctionnel mais rudimentaire : découverte UDP, une connexion TCP par paquet, JSON en clair, persistance par réécriture complète de `messages.json`, cinq modules monolithiques, aucun test. Les documents de cette époque (architecture, ADR sur le choix Rust et du P2P) sont dans `old/docs/`.
+Chat LAN fonctionnel mais rudimentaire : découverte UDP, une connexion TCP par paquet, JSON en clair, persistance par réécriture complète de `messages.json`, cinq modules monolithiques, aucun test. Les documents de cette époque (architecture, ADR sur le choix Rust et du P2P) sont dans [`old/`](../old/).
 
 ### Mai–juin 2026 — Fonctionnalités et refonte modulaire
 
@@ -14,7 +14,7 @@ Développement des fonctionnalités de messagerie : architecture découpée en s
 
 ### 23–27 juin 2026 — Audit technique et solidification
 
-Premier audit formel (`old/docs/AUDIT.md`), suivi de quatre sprints :
+Premier audit formel (`old/2026-06-audit-technique.md`), suivi de quatre sprints :
 
 | Sprint | Contenu |
 |---|---|
@@ -29,7 +29,7 @@ Bilan : 130 → 164 tests, robustesse réseau corrigée, CI opérationnelle. Ver
 
 L'application, destinée à tourner en permanence, consommait beaucoup trop au repos. Baseline mesurée : **443 Mo de RAM, 22 % de CPU, 9,7 % de GPU, 15 threads**.
 
-L'audit (`old/docs/06-audit-performance.md`) a identifié les causes structurelles : re-rendu et re-parsing de tout le fil à chaque frame avec repaint permanent, réécriture du JSON complet à chaque message dans le thread UI, caches d'images jamais purgés, dossier `media/` sans limite, réglages de build absents. Le plan d'exécution (`old/docs/07-plan-optimisation.md`) a été réalisé en trois phases :
+L'audit (`old/2026-07-audit-performance.md`) a identifié les causes structurelles : re-rendu et re-parsing de tout le fil à chaque frame avec repaint permanent, réécriture du JSON complet à chaque message dans le thread UI, caches d'images jamais purgés, dossier `media/` sans limite, réglages de build absents. Le plan d'exécution (`old/2026-07-plan-optimisation.md`) a été réalisé en trois phases :
 
 - **A — extinction au repos** : profil release optimisé, réveil de l'UI par événement au lieu du polling à 500 ms, throttle de la progression des transferts, thread audio pérenne ;
 - **B — coût par frame indépendant de l'historique** : compteurs de génération, caches dérivés du fil et de la barre latérale, Markdown memoïsé, fenêtrage du fil avec pagination au scroll ;
@@ -41,7 +41,7 @@ Décisions produit actées à cette occasion : objectifs chiffrés (~0 % CPU au 
 
 ### 4 juillet 2026 (suite) — Seconde passe et sécurisation du transport
 
-La seconde passe (`old/docs/08-seconde-passe-et-securisation.md`) a traité les finitions (découverte silencieuse hors changement d'état, générations contenu/présence scindées, `resvg` optionnel) puis livré les deux gros chantiers :
+La seconde passe (`old/2026-07-seconde-passe-et-securisation.md`) a traité les finitions (découverte silencieuse hors changement d'état, générations contenu/présence scindées, `resvg` optionnel) puis livré les deux gros chantiers :
 
 - **SQLite** : historique complet en base, thread d'écriture dédié, migration automatique des JSON (vérifiée sur 401 messages réels), pagination depuis la base, avatars en BLOB — fin du plafond de 500 messages et du bug des avatars > 64 Ko rejetés par la limite de paquet.
 - **Chiffrement du transport** : identité X25519 par machine, connexions TCP persistantes par pair, handshake Noise XX (chat **et** médias), TOFU avec refus sur clé changée, passphrase de salon optionnelle (`XXpsk3`). TLS et une simple PSK avaient été évalués et écartés (PKI inadaptée au P2P ; pas d'identité ni de forward secrecy).
@@ -52,11 +52,11 @@ L'atlas d'emojis, envisagé, a été abandonné après analyse : le gel du premi
 
 ### 4 juillet 2026 (fin) — Runner résident
 
-Spécification puis implémentation du mode « toujours ouvert » (`old/docs/09-runner-resident.md`) : fermer = se replier dans le tray (un seul processus, le daemon séparé a été écarté), zéro rendu fenêtre cachée avec purge des textures, notifications système natives réglables, badge non-lus, autostart activé par défaut en release. Choix de fiabilité : la politique de rendu ne s'appuie que sur des signaux sûrs (caché / minimisé / focus) — la détection d'occlusion, non fiable, est hors périmètre. Ajusté ensuite : retrait du Dock macOS quand la fenêtre est cachée ; la pause des GIF hors focus, d'abord livrée, a été retirée.
+Spécification puis implémentation du mode « toujours ouvert » (`old/2026-07-spec-runner-resident.md`) : fermer = se replier dans le tray (un seul processus, le daemon séparé a été écarté), zéro rendu fenêtre cachée avec purge des textures, notifications système natives réglables, badge non-lus, autostart activé par défaut en release. Choix de fiabilité : la politique de rendu ne s'appuie que sur des signaux sûrs (caché / minimisé / focus) — la détection d'occlusion, non fiable, est hors périmètre. Ajusté ensuite : retrait du Dock macOS quand la fenêtre est cachée ; la pause des GIF hors focus, d'abord livrée, a été retirée.
 
 ### 5 juillet 2026 — Phase 10 : groupes
 
-Refonte complète des salons (`old/docs/10_groupe.md`, désormais consolidé dans [05 — Fonctionnalités](05-fonctionnalites.md)) : messages réservés aux membres, gestion des membres (ajout, exclusion, départ avec succession du propriétaire, suppression), rattrapage des absents par le propriétaire, politique d'historique « quitter, c'est partir », compteurs non-lus et sourdine par salon.
+Refonte complète des salons (`old/2026-07-spec-groupes.md`, désormais consolidé dans [05 — Fonctionnalités](05-fonctionnalites.md)) : messages réservés aux membres, gestion des membres (ajout, exclusion, départ avec succession du propriétaire, suppression), rattrapage des absents par le propriétaire, politique d'historique « quitter, c'est partir », compteurs non-lus et sourdine par salon.
 
 Corrections apportées par cette phase — l'ancienne implémentation diffusait les messages de salon à **tout le réseau** et le fil des salons restait vide :
 
@@ -91,7 +91,7 @@ effacement d'une conversation, et le lanceur Linux qui ne lançait rien.
 Le protocole passe en **version 3** : l'identifiant de salon entre dans le hash
 des messages, un pair resté en version 2 calculerait d'autres valeurs.
 
-Bilan : 328 tests verts, et un [cahier de tests manuels](10-cahier-de-tests.md)
+Bilan : 329 tests verts, et un [cahier de tests manuels](10-cahier-de-tests.md)
 pour ce que l'automatisation ne peut pas voir.
 
 ## Récapitulatif des mesures
@@ -102,7 +102,7 @@ pour ce que l'automatisation ne peut pas voir.
 | RAM (RSS) | 443 Mo | ~155 Mo |
 | Threads | 15 | 8 |
 | Binaire release | — | ~11 Mo |
-| Tests | 0 | 328 |
+| Tests | 0 | 329 |
 | Transport | JSON en clair, 1 connexion/paquet | Noise XX, connexions persistantes |
 | Persistance | JSON réécrit à chaque message | SQLite WAL, écritures hors thread UI |
 

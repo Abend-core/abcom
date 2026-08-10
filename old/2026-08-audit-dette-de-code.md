@@ -6,7 +6,7 @@
 > Chaque point référence les fichiers concernés ; cocher au fur et à mesure.
 >
 > **Un plan d'exécution détaillé et séquencé — pensé pour être déroulé pas à pas —
-> est dans [`PLAN-MAINTENABILITE.md`](PLAN-MAINTENABILITE-2026-08.md).**
+> est dans [`PLAN-MAINTENABILITE.md`](2026-08-plan-maintenabilite.md).**
 
 ### Revérification du 8 août 2026 (branche `dev`)
 

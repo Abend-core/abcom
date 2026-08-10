@@ -119,3 +119,15 @@ fn group_members_preserved() {
     assert_eq!(decoded.members.len(), 3);
     assert!(decoded.members.contains(&"bob".to_string()));
 }
+
+#[test]
+fn derived_id_matches_the_seed_script() {
+    // Valeur figée, calculée indépendamment par `scripts/seed-demo.py` qui
+    // réimplémente la dérivation en Python. Les deux doivent rester d'accord :
+    // le seed écrit des messages dont la clé de conversation est `#<id>`, et
+    // l'application ne les rattacherait à aucun salon en cas d'écart.
+    assert_eq!(
+        Group::derived_id("alice", "2026-07-04 10:00:00", "projet"),
+        "g8ec89923ef88b8bb"
+    );
+}

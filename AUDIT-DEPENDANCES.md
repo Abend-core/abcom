@@ -10,7 +10,7 @@
 > constat marqué « vérifié » l'a été par lecture de source ou `grep` sur `src/`,
 > pas de mémoire.
 >
-> Compagnon de l'audit de dette de code, exécuté et archivé dans [`old/AUDIT-code-2026-08.md`](old/AUDIT-code-2026-08.md) : ce document-ci ne parle
+> Compagnon de l'audit de dette de code, exécuté et archivé dans [`old/2026-08-audit-dette-de-code.md`](old/2026-08-audit-dette-de-code.md) : ce document-ci ne parle
 > que de l'écart entre ce que nos dépendances offrent et ce qu'on en tire.
 >
 > **Complété le 8 août 2026 (2ᵉ passe)** par une remontée d'historique complète

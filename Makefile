@@ -72,24 +72,19 @@ help:
 ## Installe le binaire + active le service systemd + raccourci menu
 install: release
 	@mkdir -p $(INSTALL_DIR)
-	@if [ -n "$(SYSTEMCTL)" ]; then \
-		systemctl --user stop $(SERVICE_NAME) 2>/dev/null || true; \
-	fi
 	cp target/release/$(BINARY_NAME) $(INSTALL_DIR)/$(BINARY_NAME)
 	chmod +x $(INSTALL_DIR)/$(BINARY_NAME)
 	@mkdir -p $(HOME)/.local/share/applications
 	cp contrib/abcom.desktop $(HOME)/.local/share/applications/abcom.desktop
 	@mkdir -p $(HOME)/.local/share/$(BINARY_NAME)
+	@# Reste d'une installation antérieure : un service systemd doublait le
+	@# démarrage XDG de l'application et lançait une seconde instance.
 	@if [ -n "$(SYSTEMCTL)" ]; then \
-		mkdir -p $(SERVICE_DIR); \
-		cp contrib/$(SERVICE_NAME) $(SERVICE_DIR)/$(SERVICE_NAME); \
-		if [ -n "$(LOGINCTL)" ]; then loginctl enable-linger $(USER) 2>/dev/null || true; fi; \
-		systemctl --user daemon-reload; \
-		systemctl --user enable --now $(SERVICE_NAME); \
-		printf "\n✓ %s installé dans %s\n✓ Raccourci menu créé (Applications → Abcom)\n✓ Service systemd activé (démarrage automatique)\n" "$(BINARY_NAME)" "$(INSTALL_DIR)"; \
-	else \
-		printf "\n✓ %s installé dans %s\n✓ Raccourci menu créé (Applications → Abcom)\n⚠️  systemd non trouvé : installation limitée au binaire et au raccourci\n" "$(BINARY_NAME)" "$(INSTALL_DIR)"; \
+		systemctl --user disable --now $(SERVICE_NAME) 2>/dev/null || true; \
+		rm -f $(SERVICE_DIR)/$(SERVICE_NAME); \
+		systemctl --user daemon-reload 2>/dev/null || true; \
 	fi
+	@printf "\n✓ %s installé dans %s\n✓ Raccourci menu créé (Applications → Abcom)\n✓ Démarrage à l'ouverture de session : réglable dans Paramètres → Général\n" "$(BINARY_NAME)" "$(INSTALL_DIR)"
 
 ## Prépare le binaire pour distribution (copie dans /tmp)
 deploy-bin: release

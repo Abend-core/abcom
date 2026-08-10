@@ -3,9 +3,9 @@
 Projet **abcom** — messagerie P2P LAN (licence **MIT**).
 Dernière mise à jour : 2026-06-23.
 
-- Dépendances **directes** : 15 (déclarées dans [`Cargo.toml`](Cargo.toml)).
+- Dépendances **directes** : 15 (déclarées dans [`Cargo.toml`](../Cargo.toml)).
 - Total du graphe résolu (transitif) : **544** paquets.
-- Génération : `cargo metadata`, versions issues de [`Cargo.lock`](Cargo.lock).
+- Génération : `cargo metadata`, versions issues de [`Cargo.lock`](../Cargo.lock).
 
 ## Dépendances directes
 
@@ -29,7 +29,7 @@ Dernière mise à jour : 2026-06-23.
 
 `rodio` est déclaré par plateforme dans `Cargo.toml` (feature `symphonia-wav`
 sous Windows). `resvg` ré-exporte `usvg` (0.47) et `tiny-skia` (0.11) utilisés
-directement dans [`src/ui/avatar.rs`](src/ui/avatar.rs).
+directement dans [`src/ui/avatar.rs`](../src/ui/avatar.rs).
 
 ## Dépendances transitives notables
 
@@ -66,8 +66,8 @@ le graphe de compilation.
 
 | Ressource | Emplacement | Licence |
 |-----------|-------------|---------|
-| Police **Inter Bold** | [`assets/fonts/Inter-Bold.ttf`](assets/fonts/Inter-Bold.ttf) | SIL **OFL-1.1** ([licence](assets/fonts/Inter-OFL.txt)) |
-| Jeu d'**emojis** | [`assets/emoji/`](assets/emoji/) | voir la source du jeu (Twemoji-like) |
+| Police **Inter Bold** | [`assets/fonts/Inter-Bold.ttf`](../assets/fonts/Inter-Bold.ttf) | SIL **OFL-1.1** ([licence](../assets/fonts/Inter-OFL.txt)) |
+| Jeu d'**emojis** | [`assets/emoji/`](../assets/emoji/) | voir la source du jeu (Twemoji-like) |
 
 L'OFL-1.1 autorise l'intégration et la redistribution de la police, y compris
 embarquée dans le binaire, tant que le fichier de licence accompagne le projet.

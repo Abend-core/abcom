@@ -1,6 +1,6 @@
 # Plan de maintenabilité — exécutable pas à pas
 
-> Compagnon opérationnel de [`AUDIT-code-2026-08.md`](AUDIT-code-2026-08.md). Découpé en **phases
+> Compagnon opérationnel de [`AUDIT-code-2026-08.md`](2026-08-audit-dette-de-code.md). Découpé en **phases
 > indépendantes**, de la moins risquée à la plus structurante. Chaque phase est
 > une unité de travail autonome : une branche, un commit, des critères
 > d'acceptation vérifiables. Dérouler dans l'ordre ; ne pas enchaîner deux phases

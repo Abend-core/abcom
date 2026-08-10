@@ -30,7 +30,7 @@ REPO = Path(__file__).resolve().parent.parent
 
 ALICE, BOB, CAROL = "alice", "bob", "carol"
 INSTANCE = {ALICE: 1, BOB: 2, CAROL: 3}
-GROUP_KEY = "#projet"
+GROUP_NAME = "projet"
 
 # URLs Klipy (WebP hd) déjà utilisées dans l'app : gif, clip et sticker
 # partagent le même transport (kind "gif" + URL, aucun octet streamé).
@@ -55,8 +55,28 @@ def fnv1a(key: bytes) -> int:
     return h
 
 
+def group_id(owner: str, created_at: str, name: str) -> str:
+    """Réplique exacte de Group::derived_id (src/message/group.rs).
+
+    La clé de conversation d'un salon est bâtie sur cet identifiant, jamais sur
+    son nom : c'est ce qui permet de renommer un groupe sans invalider les hashs
+    de ses messages. Le seed doit donc la calculer à l'identique.
+    """
+    return f"g{fnv1a(f'{owner}|{created_at}|{name}'.encode()):016x}"
+
+
 def signed(u64: int) -> int:
     return u64 - (1 << 64) if u64 >= (1 << 63) else u64
+
+
+# Le salon est créé « il y a trois jours » : même base de temps que l'horloge
+# du seed (cf. Seed.__init__), pour que sa date reste cohérente avec les
+# messages. L'identifiant en découle, et la clé de conversation de l'identifiant.
+GROUP_CREATED = time.strftime(
+    "%Y-%m-%d %H:%M:%S", time.localtime(time.time() - 3 * 86400 + 9 * 3600)
+)
+GROUP_ID = group_id(ALICE, GROUP_CREATED, GROUP_NAME)
+GROUP_KEY = f"#{GROUP_ID}"
 
 
 def message_hash(msg: dict) -> int:
@@ -340,13 +360,13 @@ def main() -> None:
     s.msg(BOB, CAROL, "😂 on y va", bc)
 
     # ── Groupes et compteurs de lecture ──────────────────────────────────────
-    created = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(s.clock - 86400))
     groups = {
-        "projet": {
-            "name": "projet",
+        GROUP_NAME: {
+            "id": GROUP_ID,
+            "name": GROUP_NAME,
             "owner": ALICE,
             "members": [ALICE, BOB, CAROL],
-            "created_at": created,
+            "created_at": GROUP_CREATED,
         }
     }
     # Tout est lu, sauf : bob n'a pas lu les derniers messages de carol, et

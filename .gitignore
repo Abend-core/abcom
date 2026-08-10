@@ -29,6 +29,15 @@ lcov.info
 Thumbs.db
 desktop.ini
 
+# Python (scripts/seed-demo.py)
+__pycache__/
+*.py[cod]
+
+# Restes de fusion / sauvegardes d'outils
+*.orig
+*.rej
+*.rs.bk
+
 # Éditeurs
 .vscode/
 .idea/

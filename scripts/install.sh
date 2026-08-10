@@ -3,8 +3,6 @@
 set -euo pipefail
 
 BINARY_DIR="$HOME/.local/bin"
-SERVICE_DIR="$HOME/.config/systemd/user"
-SERVICE_NAME="abcom.service"
 
 echo "╔══════════════════════════════════╗"
 echo "║   Installation de Abcom          ║"
@@ -41,22 +39,12 @@ if [[ ":$PATH:" != *":$BINARY_DIR:"* ]]; then
   echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$HOME/.bashrc"
 fi
 
-# ── 4. Service systemd utilisateur ───────────────────────────────────────────
-mkdir -p "$SERVICE_DIR"
-cp contrib/abcom.service "$SERVICE_DIR/$SERVICE_NAME"
-
-# Activer le service de linger pour que les services user tournent sans session
-loginctl enable-linger "$(whoami)" 2>/dev/null || true
-
-systemctl --user daemon-reload
-systemctl --user enable --now "$SERVICE_NAME"
+# ── 4. Lancement automatique ─────────────────────────────────────────────────
+# Aucun service systemd n'est installé : l'application gère elle-même son
+# démarrage à l'ouverture de session (entrée XDG dans ~/.config/autostart),
+# activable et désactivable depuis Paramètres → Général. Installer les deux
+# lançait deux instances qui se disputaient les mêmes ports.
 
 echo ""
-echo "✓ Service systemd activé : $SERVICE_NAME"
-echo "✓ Abcom démarrera automatiquement à la connexion graphique."
-echo ""
-echo "Commandes utiles :"
-echo "  systemctl --user status abcom    → état du service"
-echo "  systemctl --user restart abcom   → redémarrer"
-echo "  systemctl --user stop abcom      → arrêter"
+echo "✓ Abcom démarrera à l'ouverture de session (réglable dans Paramètres → Général)."
 echo "  journalctl --user -u abcom -f    → voir les logs"

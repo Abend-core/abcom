@@ -1,6 +1,6 @@
 # Cahier de tests
 
-Tests manuels d'abcom. La suite automatique (`make test`, 328 tests) couvre la
+Tests manuels d'abcom. La suite automatique (`make test`, 329 tests) couvre la
 logique pure ; ce cahier couvre ce qu'elle ne peut pas voir : le réseau réel,
 l'interface, le système de fichiers et les trois OS.
 
@@ -147,10 +147,10 @@ instances. Tout doit être identique. Vérifie que la migration en base a suivi.
 | 7.4 | Sans clé API | Retirer `ABCOM_KLIPY_API_KEY` | Message clair, pas de crash | P2 |
 | 7.5 | Emojis | Sélecteur + `:shortcode` | Insertion et complétion | P1 |
 
-> **7.3 est critique.** Le filtre d'URL n'autorise que `https://*.klipy.com`. Si
-> le GIF s'affiche en carte fichier au lieu de s'animer, c'est que le CDN de
-> Klipy est ailleurs : ajouter son domaine à `ALLOWED_MEDIA_URL_HOSTS` dans
-> `src/message/media.rs`.
+> **7.3 est critique.** Le filtre d'URL n'autorise que `https://*.klipy.com` ;
+> le CDN observé est `static.klipy.com`, donc couvert. Si un GIF s'affiche en
+> carte fichier au lieu de s'animer, c'est que Klipy a changé de domaine :
+> l'ajouter à `ALLOWED_MEDIA_URL_HOSTS` dans `src/message/media.rs`.
 
 # 8. Markdown et liens
 
@@ -250,13 +250,15 @@ Le cœur est identique partout ; ces points diffèrent réellement.
 |---|---|---|
 | L1 | `scripts/abcom-install.sh` | Binaire, service systemd et **raccourci menu fonctionnel** |
 | L2 | **Lancer depuis le menu** | L'app démarre. Régression : `%h` n'était pas développé, le raccourci ne lançait rien |
-| L3 | Double démarrage | Vérifier qu'**une seule** instance tourne (`systemctl --user status abcom` + autostart XDG) |
+| L3 | Démarrage unique | Après installation puis reconnexion de session : **une seule** instance tourne. `systemctl --user status abcom` doit répondre que l'unité n'existe pas — le démarrage passe uniquement par `~/.config/autostart/` |
+| L6 | Build minimal | `cargo build --release --no-default-features` sur une machine **sans GTK ni ALSA** : doit compiler. L'app démarre sans tray (fermer la fenêtre quitte) et sans bip |
+| L7 | Alpine / musl | Installer les paquets de [docs/06](06-installation.md), compiler, lancer. Binaire lié dynamiquement à musl |
 | L4 | Wayland et X11 | Tester les deux : tray, notifications, focus (test 3.3) |
 | L5 | Tray selon l'environnement | GNOME demande une extension AppIndicator ; KDE/XFCE fonctionnent nativement |
 
-> L3 vise le double autostart identifié : l'installateur active systemd **et**
-> l'application active l'autostart XDG au premier lancement release. Si deux
-> instances se disputent le port 9000, c'est ça.
+> L3 vérifie la correction du double autostart : les installateurs ne posent
+> plus de service systemd, le démarrage est géré par l'application seule
+> (entrée XDG, réglable dans Paramètres → Général).
 
 ## macOS
 
@@ -304,6 +306,6 @@ pagination après débordement, purge en cascade, framing et handshake Noise,
 signature des annonces, path traversal.
 
 ```bash
-make test          # 328 tests
+make test          # 329 tests
 cargo test --release   # à lancer avant livraison : le debug fausse les temps
 ```

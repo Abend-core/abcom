@@ -1,4 +1,4 @@
-> [🏠 Accueil](../README.md) > [🚚 CICD et déploiement](03-cicd-et-deploiement.md)
+> [🏠 Accueil](../README.md) > [🚚 CICD et déploiement](2026-04-cicd-et-deploiement.md)
 
 > 📅 **Généré le** : 2026-04-28
 > 🔖 **Stack analysée** : Rust 2021, tokio 1, serde 1, serde_json 1, eframe 0.31, egui 0.31, chrono 0.4, anyhow 1
@@ -9,7 +9,7 @@
 ## 🌱 Situation actuelle
 Le dépôt ne contient pas de configuration CI/CD formelle (`.github/workflows`, `gitlab-ci.yml`, etc.). La livraison actuelle repose sur des exécutables locaux et des scripts Docker.
 
-> Pour Windows, voir aussi : [Installation Windows](INSTALL_WINDOWS.md).
+> Pour Windows, voir aussi : [Installation Windows](2026-04-installation-windows.md).
 
 ## 🔧 Déploiement local recommandé
 ### Pour un développeur Linux
