@@ -694,6 +694,9 @@ impl AbcomApp {
         // Emojis : libérés aussi, re-décodés en arrière-plan au retour.
         self.emoji.textures.clear();
         self.chat_cache.invalidate();
+        // Images du chargeur egui_extras (GIF, aperçus Klipy) : elles survivaient
+        // au repli parce que seules les nôtres étaient libérées.
+        ctx.forget_all_images();
         // Libérer ne suffit pas : sans ceci le RSS ne bouge pas.
         release_memory_to_os();
     }

@@ -98,6 +98,19 @@ fn renders_with_messages_and_a_selected_conversation() {
 }
 
 #[test]
+fn survives_a_hide_and_restore_cycle() {
+    let mut app = test_app();
+    let ctx = egui::Context::default();
+    render(&mut app, 1);
+    // Libère textures et images du chargeur.
+    app.hide_to_tray(&ctx);
+    app.show_from_tray(&ctx);
+    // Tout doit se reconstruire : un rendu qui panique ici signalerait qu'on a
+    // libéré une ressource qu'egui croyait encore allouée.
+    render(&mut app, 2);
+}
+
+#[test]
 fn renders_every_modal_and_picker_open() {
     let mut app = test_app();
     app.modals.settings_open = true;

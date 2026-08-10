@@ -102,12 +102,12 @@ fn reactions_round_trip_and_clear() {
 }
 
 #[test]
-fn read_counts_groups_and_peers_round_trip() {
+fn read_marks_groups_and_peers_round_trip() {
     let dir = tmp_dir("tables");
     let mut storage = Storage::open(&dir).unwrap();
 
-    storage.set_read_count("bob", 7).unwrap();
-    storage.set_read_count("bob", 9).unwrap(); // upsert
+    storage.set_read_mark("bob", 7).unwrap();
+    storage.set_read_mark("bob", 9).unwrap(); // upsert
 
     let group = Group {
         name: "equipe".to_string(),
@@ -124,7 +124,7 @@ fn read_counts_groups_and_peers_round_trip() {
     storage.upsert_peer_key("bob", &[9; 32]).unwrap();
 
     let loaded = storage.load_all(INITIAL_WINDOW).unwrap();
-    assert_eq!(loaded.read_counts.get("bob"), Some(&9));
+    assert_eq!(loaded.read_marks.get("bob"), Some(&9));
     assert_eq!(loaded.groups.len(), 1);
     assert_eq!(loaded.groups[0].owner, "alice");
     assert_eq!(loaded.peer_records[0].alias.as_deref(), Some("Bobby"));
@@ -214,7 +214,10 @@ fn migrates_legacy_json_once() {
     assert_eq!(loaded.messages.len(), 1);
     assert_eq!(loaded.messages[0].content, "historique");
     assert_eq!(loaded.reactions.get(&hash).unwrap()[0].emoji, "❤");
-    assert_eq!(loaded.read_counts.get("bob"), Some(&3));
+    // Un ancien compteur de lecture ne se convertit pas en repère de message :
+    // la source est marquée importée sans rien inventer, quitte à ce que la
+    // conversation repasse « non lue » une fois.
+    assert!(loaded.read_marks.is_empty());
 
     // Les fichiers sont retirés (renommés .bak) : pas de double import.
     assert!(!dir.join("messages.json").exists());
@@ -382,7 +385,7 @@ fn malformed_legacy_json_is_not_retired() {
 
     let storage = Storage::open(&dir).unwrap();
     let loaded = storage.load_all(INITIAL_WINDOW).unwrap();
-    assert_eq!(loaded.read_counts.get("bob"), Some(&3));
+    assert!(loaded.read_marks.is_empty());
     assert!(dir.join("messages.json").exists());
     assert!(!dir.join("messages.json.bak").exists());
     assert!(!dir.join("read_counts.json").exists());

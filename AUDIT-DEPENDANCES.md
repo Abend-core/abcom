@@ -706,8 +706,7 @@ la recherche. Points à traiter avant de l'activer :
 6. **D20 + D13** : libellés AccessKit puis `egui_kittest`. Dans cet ordre, parce
    que le second interroge l'arbre produit par le premier.
 7. **D11 + D24** recherche FTS5 en mode contentless-delete — le manque fonctionnel le plus visible, sans dupliquer l'historique sur le disque.
-8. **D4, D5, D6, D7, D12** : remplacer nos réimplémentations par les API d'egui
-   et rfd. Chacune supprime du code au lieu d'en ajouter.
+8. **D4, D5, D6, D7** : appliqués. **D12** reste écarté (cf. §8).
 
 **À arbitrer :**
 

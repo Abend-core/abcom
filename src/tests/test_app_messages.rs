@@ -5,7 +5,7 @@ fn state(username: &str) -> AppState {
     let mut s = AppState::new(username.to_string(), Default::default(), None);
     s.messages.clear();
     s.peers.clear();
-    s.read_counts.clear();
+    s.read_marks.clear();
     s
 }
 
@@ -196,4 +196,43 @@ fn duplicate_receptions_are_detected() {
     let mut other = msg.clone();
     other.nonce = Some(43);
     assert!(!s.has_message(AppState::message_hash(&other)));
+}
+
+#[test]
+fn unread_survives_a_ring_buffer_purge() {
+    let dir = std::env::temp_dir().join(format!("abcom-unread2-{:?}", std::thread::current().id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = AppState::new_with_base("moi", &dir);
+
+    let incoming = |n: u64| ChatMessage {
+        from: "alice".into(),
+        content: format!("m{n}"),
+        timestamp: "12:00".into(),
+        timestamp_epoch: Some(n),
+        to_user: Some("moi".into()),
+        media: None,
+        reply_to: None,
+        nonce: Some(n),
+    };
+
+    for n in 1..=5 {
+        s.add_message(incoming(n));
+    }
+    assert_eq!(s.unread_count("alice"), 5);
+
+    s.mark_conversation_read("alice");
+    assert_eq!(s.unread_count("alice"), 0);
+
+    s.add_message(incoming(6));
+    s.add_message(incoming(7));
+    assert_eq!(s.unread_count("alice"), 2);
+
+    // Purge du début du fil : un compteur aurait désigné un autre ensemble et
+    // affiché un décompte faux. Le repère par hash reste juste.
+    s.messages.drain(0..3);
+    assert_eq!(
+        s.unread_count("alice"),
+        2,
+        "le repère de lecture doit survivre à la purge"
+    );
 }

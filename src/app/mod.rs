@@ -29,7 +29,8 @@ pub struct AppState {
     pub groups: Vec<Group>,
     pub selected_conversation: Option<String>,
     pub typing_users: HashMap<String, SystemTime>,
-    pub read_counts: HashMap<String, usize>,
+    /// Dernier message entrant marqué lu, par conversation.
+    pub read_marks: HashMap<String, u64>,
     pub read_receipts: HashMap<u64, HashSet<String>>,
     /// Qui a envoyé un ACK de livraison, par message (détail « reçu par »
     /// des salons et de « Tous »).
@@ -60,8 +61,6 @@ pub struct AppState {
     storage: Option<std::sync::mpsc::Sender<StorageCmd>>,
     /// Messages en attente d'un destinataire hors ligne, par hash (persistés).
     pub outbox: HashMap<u64, (String, ChatMessage)>,
-    /// Messages entrants par conversation, dérivé une fois par génération (évite un O(n·m) par frame).
-    incoming_counts: std::cell::RefCell<(u64, HashMap<String, usize>)>,
     /// rowid du plus ancien message chargé en mémoire (pagination) ;
     /// `None` = tout l'historique est déjà en mémoire.
     pub oldest_loaded_rowid: Option<i64>,
@@ -96,7 +95,7 @@ impl AppState {
             groups: loaded.groups,
             selected_conversation: None,
             typing_users: HashMap::new(),
-            read_counts: loaded.read_counts,
+            read_marks: loaded.read_marks,
             // Relus depuis la base : coches et détail « … » survivent au redémarrage.
             read_receipts: loaded.read_receipts,
             delivered_receipts: loaded.delivered_receipts,
@@ -111,8 +110,6 @@ impl AppState {
             content_generation: 0,
             presence_generation: 0,
             storage,
-            // `u64::MAX` = jamais calculé.
-            incoming_counts: std::cell::RefCell::new((u64::MAX, HashMap::new())),
             oldest_loaded_rowid: loaded.oldest_rowid,
             history_cap,
             avatar_path: base.join("avatar.png"),
@@ -134,7 +131,7 @@ impl AppState {
             groups: Vec::new(),
             selected_conversation: None,
             typing_users: HashMap::new(),
-            read_counts: HashMap::new(),
+            read_marks: HashMap::new(),
             read_receipts: HashMap::new(),
             delivered_receipts: HashMap::new(),
             outbox: HashMap::new(),
@@ -148,7 +145,6 @@ impl AppState {
             content_generation: 0,
             presence_generation: 0,
             storage: None,
-            incoming_counts: std::cell::RefCell::new((u64::MAX, HashMap::new())),
             oldest_loaded_rowid: None,
             history_cap: storage::INITIAL_WINDOW as usize,
             avatar_path: base.join("avatar.png"),
