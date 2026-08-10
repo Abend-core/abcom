@@ -69,9 +69,10 @@ pub enum StorageCmd {
         hash: u64,
         entries: Vec<ReactionEntry>,
     },
-    SetReadCount {
+    /// Dernier message entrant marqué lu d'une conversation.
+    SetReadMark {
         username: String,
-        count: u64,
+        message_hash: u64,
     },
     ReplaceGroups(Vec<Group>),
     UpsertPeerAlias {
@@ -142,7 +143,7 @@ pub struct LoadedState {
     /// mémoire, plus rien à paginer).
     pub oldest_rowid: Option<i64>,
     pub reactions: HashMap<u64, Vec<ReactionEntry>>,
-    pub read_counts: HashMap<String, usize>,
+    pub read_marks: HashMap<String, u64>,
     pub groups: Vec<Group>,
     pub peer_records: Vec<PeerRecord>,
     pub peer_avatars: HashMap<String, Vec<u8>>,
@@ -200,9 +201,12 @@ impl Storage {
                 username     TEXT    NOT NULL,
                 PRIMARY KEY (message_hash, emoji, username)
             );
-            CREATE TABLE IF NOT EXISTS read_counts (
-                username TEXT PRIMARY KEY,
-                count    INTEGER NOT NULL
+            -- Repère « lu jusqu'à » : un hash de message, pas un compteur.
+            -- Un compteur devenait faux dès qu'une purge changeait l'ensemble
+            -- des messages présents.
+            CREATE TABLE IF NOT EXISTS read_marks (
+                username     TEXT PRIMARY KEY,
+                message_hash INTEGER NOT NULL
             );
             CREATE TABLE IF NOT EXISTS groups (
                 name TEXT PRIMARY KEY,
@@ -419,11 +423,11 @@ impl Storage {
         tx.commit()
     }
 
-    pub fn set_read_count(&self, username: &str, count: u64) -> rusqlite::Result<()> {
+    pub fn set_read_mark(&self, username: &str, message_hash: u64) -> rusqlite::Result<()> {
         self.conn.execute(
-            "INSERT INTO read_counts (username, count) VALUES (?1, ?2)
-             ON CONFLICT(username) DO UPDATE SET count = excluded.count",
-            params![username, count as i64],
+            "INSERT INTO read_marks (username, message_hash) VALUES (?1, ?2)
+             ON CONFLICT(username) DO UPDATE SET message_hash = excluded.message_hash",
+            params![username, message_hash as i64],
         )?;
         Ok(())
     }
@@ -798,10 +802,10 @@ impl Storage {
 
         let mut stmt = self
             .conn
-            .prepare("SELECT username, count FROM read_counts")?;
-        let read_counts = stmt
+            .prepare("SELECT username, message_hash FROM read_marks")?;
+        let read_marks = stmt
             .query_map([], |r| {
-                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as usize))
+                Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64))
             })?
             .collect::<rusqlite::Result<HashMap<_, _>>>()?;
 
@@ -860,7 +864,7 @@ impl Storage {
             messages,
             oldest_rowid,
             reactions,
-            read_counts,
+            read_marks,
             groups,
             peer_records,
             peer_avatars,
@@ -959,14 +963,10 @@ impl Storage {
             }
             imported.push("reactions.json");
         }
-        if let Some(read_counts) = read_counts {
-            for (user, count) in &read_counts {
-                tx.execute(
-                    "INSERT INTO read_counts (username, count) VALUES (?1, ?2)
-                     ON CONFLICT(username) DO UPDATE SET count = excluded.count",
-                    params![user, *count as i64],
-                )?;
-            }
+        if read_counts.is_some() {
+            // Un ancien compteur ne se convertit pas en repère de message :
+            // on marque la source comme importée sans rien inventer, la
+            // conversation repassera simplement « non lue » une fois.
             imported.push("read_counts.json");
         }
         if let Some(groups) = groups {
@@ -1122,9 +1122,10 @@ fn run(
             StorageCmd::ReplaceReactions { hash, entries } => {
                 storage.replace_reactions(hash, &entries)
             }
-            StorageCmd::SetReadCount { username, count } => {
-                storage.set_read_count(&username, count)
-            }
+            StorageCmd::SetReadMark {
+                username,
+                message_hash,
+            } => storage.set_read_mark(&username, message_hash),
             StorageCmd::ReplaceGroups(groups) => storage.replace_groups(&groups),
             StorageCmd::UpsertPeerAlias { username, alias } => {
                 storage.upsert_peer_alias(&username, alias.as_deref())

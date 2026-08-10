@@ -3,14 +3,21 @@ use super::{sound::play_notification_sound, AbcomApp};
 use crate::app::AppState;
 use crate::message::{
     AppEvent, AvatarRequest, ChatMessage, GroupAction, GroupEvent, MessageAck, MessageAckRequest,
-    ReadReceipt, ReadReceiptRequest, SendGroupRequest, SendRequest,
+    NetworkSendRequest, ReadReceipt, ReadReceiptRequest, SendGroupRequest, SendRequest,
 };
 use crate::protocol::media_requires_ack;
 use crate::util::MutexExt;
 
 impl AbcomApp {
-    /// Dépile les événements réseau reçus depuis les tâches tokio
+    /// Dépile les événements réseau reçus depuis les tâches tokio.
+    ///
+    /// **Invariant de verrouillage** : rien n'est émis sur le réseau tant que
+    /// le verrou d'état est tenu. Les requêtes sont accumulées puis envoyées
+    /// après la boucle — le `drop`/relock manuel qui existait ici était la
+    /// source classique de deadlock à la première modification venue.
     pub(crate) fn process_events(&mut self) {
+        let mut outbound: Vec<NetworkSendRequest> = Vec::new();
+        let mut outbox_flush: Vec<(u64, SendRequest)> = Vec::new();
         let mut s = self.state.lock_safe();
         while let Ok(evt) = self.net.event_rx.try_recv() {
             match evt {
@@ -86,14 +93,8 @@ impl AbcomApp {
                                 }
                             }
 
-                            drop(s);
-                            for req in ack_reqs {
-                                self.net.try_send(req);
-                            }
-                            for req in receipt_reqs {
-                                self.net.try_send(req);
-                            }
-                            s = self.state.lock_safe();
+                            outbound.extend(ack_reqs.into_iter().map(Into::into));
+                            outbound.extend(receipt_reqs.into_iter().map(Into::into));
                         }
                     }
 
@@ -174,16 +175,7 @@ impl AbcomApp {
                                 )
                             })
                             .collect();
-                        drop(s);
-                        for (hash, request) in requests {
-                            // La sortie de file suit l'émission, jamais l'inverse.
-                            if self.net.try_send(request.clone()) {
-                                let mut state = self.state.lock_safe();
-                                state.drop_from_outbox(hash);
-                                state.mark_message_sent(hash, request);
-                            }
-                        }
-                        s = self.state.lock_safe();
+                        outbox_flush.extend(requests);
                     }
 
                     // Première découverte (depuis le dernier envoi) : on partage
@@ -343,6 +335,20 @@ impl AbcomApp {
         }
         s.clear_typing_if_old();
         self.typing_active = !s.typing_users.is_empty();
+        drop(s);
+
+        // Verrou relâché : c'est seulement ici qu'on émet.
+        for request in outbound {
+            self.net.try_send(request);
+        }
+        for (hash, request) in outbox_flush {
+            // La sortie de file suit l'émission, jamais l'inverse.
+            if self.net.try_send(request.clone()) {
+                let mut state = self.state.lock_safe();
+                state.drop_from_outbox(hash);
+                state.mark_message_sent(hash, request);
+            }
+        }
     }
 
     /// Récupère les offres de médias volumineux (> 1 Go) en attente d'accord et

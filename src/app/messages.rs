@@ -49,13 +49,24 @@ impl AppState {
     /// Marque une conversation comme lue. `conv` est un nom de pair
     /// (conversation privée) ou une clé de salon `#nom` (groupe).
     pub fn mark_conversation_read(&mut self, conv: &str) {
-        let count = self.incoming_message_count(conv);
-        self.read_counts.insert(conv.to_string(), count);
-        self.persist(super::StorageCmd::SetReadCount {
+        let Some(last) = self.last_incoming_hash(conv) else {
+            return;
+        };
+        self.read_marks.insert(conv.to_string(), last);
+        self.persist(super::StorageCmd::SetReadMark {
             username: conv.to_string(),
-            count: count as u64,
+            message_hash: last,
         });
         self.bump_content();
+    }
+
+    /// Hash du dernier message entrant d'une conversation.
+    fn last_incoming_hash(&self, conv: &str) -> Option<u64> {
+        self.messages
+            .iter()
+            .rev()
+            .find(|m| self.incoming_key(m).as_deref() == Some(conv))
+            .map(Self::message_hash)
     }
 
     /// Messages de la conversation sélectionnée
@@ -86,13 +97,29 @@ impl AppState {
 
     /// Nombre de messages non-lus d'une conversation : nom de pair (privé)
     /// ou clé de salon `#nom` (groupe).
+    /// Non-lus d'une conversation : messages entrants postérieurs au dernier
+    /// marqué lu.
+    ///
+    /// Repère par **hash de message** et non par compteur : après une purge du
+    /// ring-buffer ou un effacement d'historique, un compteur pouvait désigner
+    /// un tout autre ensemble de messages.
     pub fn unread_count(&self, conv: &str) -> usize {
         if self.selected_conversation.as_deref() == Some(conv) {
             return 0;
         }
-        let total = self.incoming_message_count(conv);
-        let read = *self.read_counts.get(conv).unwrap_or(&0);
-        total.saturating_sub(read)
+        let mark = self.read_marks.get(conv).copied();
+        let mut unread = 0;
+        // On remonte le fil : tout ce qui suit le repère est non lu.
+        for msg in self.messages.iter().rev() {
+            if self.incoming_key(msg).as_deref() != Some(conv) {
+                continue;
+            }
+            if Some(Self::message_hash(msg)) == mark {
+                return unread;
+            }
+            unread += 1;
+        }
+        unread
     }
 
     /// Ce message est-il déjà dans la fenêtre mémoire ?
@@ -118,21 +145,6 @@ impl AppState {
         } else {
             None
         }
-    }
-
-    /// Total entrant d'une conversation : un seul parcours du ring-buffer par génération.
-    fn incoming_message_count(&self, conv: &str) -> usize {
-        let mut cache = self.incoming_counts.borrow_mut();
-        if cache.0 != self.content_generation {
-            cache.1.clear();
-            for msg in &self.messages {
-                if let Some(key) = self.incoming_key(msg) {
-                    *cache.1.entry(key).or_insert(0) += 1;
-                }
-            }
-            cache.0 = self.content_generation;
-        }
-        cache.1.get(conv).copied().unwrap_or(0)
     }
 
     pub fn clear_conversation_history(&mut self) {
