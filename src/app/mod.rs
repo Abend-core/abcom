@@ -259,12 +259,24 @@ impl AppState {
         });
     }
 
-    pub fn flush_storage(&self) {
-        if let Some(tx) = &self.storage {
-            let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(1);
-            if tx.send(StorageCmd::Flush(ack_tx)).is_ok() {
-                let _ = ack_rx.recv_timeout(std::time::Duration::from_secs(3));
-            }
+    /// Attend que le thread de stockage ait appliqué tout ce qui précède.
+    ///
+    /// Renvoie `Err` si une écriture a échoué (disque plein, base en lecture
+    /// seule) ou si le thread n'a pas répondu : l'appelant doit le dire à
+    /// l'utilisateur plutôt que de le laisser quitter en croyant son
+    /// historique sauvegardé.
+    pub fn flush_storage(&self) -> Result<(), String> {
+        let Some(tx) = &self.storage else {
+            return Ok(());
+        };
+        let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(1);
+        if tx.send(StorageCmd::Flush(ack_tx)).is_err() {
+            return Err("thread de stockage arrêté".to_string());
+        }
+        match ack_rx.recv_timeout(std::time::Duration::from_secs(3)) {
+            Ok(None) => Ok(()),
+            Ok(Some(error)) => Err(error),
+            Err(_) => Err("le stockage n'a pas répondu".to_string()),
         }
     }
 

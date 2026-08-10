@@ -64,4 +64,11 @@ pub enum AppEvent {
     SendFailed {
         username: String,
     },
+    /// Fin d'une copie vers le dossier Téléchargements. Le travail se fait sur
+    /// un thread dédié — un média peut peser plusieurs Gio et gèlerait l'UI —
+    /// donc le verdict revient par événement.
+    MediaDownloaded {
+        /// Nom du fichier écrit, ou `None` si la copie a échoué.
+        filename: Option<String>,
+    },
 }

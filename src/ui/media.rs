@@ -7,7 +7,9 @@ use std::path::Path;
 
 use eframe::egui;
 
-use crate::message::{extension_lower, ChatMessage, MediaAttachment, MediaKind, MediaProgress};
+use crate::message::{
+    extension_lower, AppEvent, ChatMessage, MediaAttachment, MediaKind, MediaProgress,
+};
 use crate::util::MutexExt;
 
 use super::chat_panel::format_bytes;
@@ -463,7 +465,11 @@ impl AbcomApp {
         id: &str,
         max_px: Option<u32>,
     ) -> Option<egui::TextureHandle> {
-        let bytes = self.state.lock_safe().media_bytes(id)?;
+        // Le chemin se calcule sous verrou, la lecture se fait sans : le
+        // fichier peut peser plusieurs centaines de Mio et `AppState` est le
+        // verrou global — le tenir pendant l'E/S bloquerait tout le reste.
+        let path = self.state.lock_safe().media_path(id);
+        let bytes = std::fs::read(path).ok()?;
         let mut image = crate::util::decode_image_bounded(&bytes)?;
         let name = match max_px {
             Some(max) => {
@@ -503,21 +509,25 @@ impl AbcomApp {
         };
         let src = self.state.lock_safe().media_path(id);
         let dest = unique_destination(&dir, filename);
-        match std::fs::copy(&src, &dest) {
-            Ok(_) => {
-                let name = dest
+        let event_tx = self.net.event_tx.clone();
+        let filename = filename.to_string();
+        // Thread dédié : un média va jusqu'à 2 Gio et `fs::copy` est bloquant.
+        // Sur le thread UI, la fenêtre gèlerait le temps de la copie.
+        std::thread::spawn(move || {
+            let result = std::fs::copy(&src, &dest);
+            let filename = match result {
+                Ok(_) => dest
                     .file_name()
                     .and_then(|n| n.to_str())
-                    .unwrap_or(filename)
-                    .to_string();
-                let msg = format!("{} {}", self.t(i18n::TELECHARGE), name);
-                self.notify_owned(msg);
-            }
-            Err(e) => {
-                tracing::warn!("téléchargement échoué ({}): {}", filename, e);
-                self.notify(self.t(i18n::TELECHARGEMENT_IMPOSSIBLE));
-            }
-        }
+                    .map(str::to_string)
+                    .or(Some(filename)),
+                Err(e) => {
+                    tracing::warn!("téléchargement échoué ({filename}): {e}");
+                    None
+                }
+            };
+            let _ = event_tx.blocking_send(AppEvent::MediaDownloaded { filename });
+        });
     }
 
     /// Visionneuse plein écran : image agrandie + bouton de téléchargement.

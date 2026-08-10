@@ -247,6 +247,13 @@ impl AbcomApp {
                     self.last_notification = Some(format!("{username} : {label}"));
                     self.notification_time = std::time::Instant::now();
                 }
+                AppEvent::MediaDownloaded { filename } => {
+                    self.last_notification = Some(match filename {
+                        Some(name) => format!("{} {name}", self.t(i18n::TELECHARGE)),
+                        None => self.t(i18n::TELECHARGEMENT_IMPOSSIBLE).to_string(),
+                    });
+                    self.notification_time = std::time::Instant::now();
+                }
                 AppEvent::OlderMessagesLoaded {
                     messages,
                     oldest_rowid,
@@ -342,11 +349,12 @@ impl AbcomApp {
             self.net.try_send(request);
         }
         for (hash, request) in outbox_flush {
-            // La sortie de file suit l'émission, jamais l'inverse.
+            // `try_send` ne dit que l'admission dans le canal : ni l'écriture
+            // sur la socket, ni la réception. Le message reste donc dans la
+            // file durable jusqu'à son ACK (cf. `mark_message_acked`), sans
+            // quoi un arrêt au mauvais moment le laisserait en mémoire seule.
             if self.net.try_send(request.clone()) {
-                let mut state = self.state.lock_safe();
-                state.drop_from_outbox(hash);
-                state.mark_message_sent(hash, request);
+                self.state.lock_safe().mark_message_sent(hash, request);
             }
         }
     }

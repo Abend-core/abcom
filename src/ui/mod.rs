@@ -79,6 +79,9 @@ pub(crate) enum GifPickerTab {
 /// typée, le streaming média reste séparé.
 pub(crate) struct NetworkChannels {
     pub(crate) event_rx: mpsc::Receiver<AppEvent>,
+    /// Émetteur d'événements pour le travail lourd déporté hors du thread UI
+    /// (copie d'un média vers Téléchargements), qui doit rendre son verdict.
+    pub(crate) event_tx: mpsc::Sender<AppEvent>,
     pub(crate) send_tx: mpsc::Sender<NetworkSendRequest>,
     pub(crate) send_media_tx: mpsc::Sender<MediaSendJob>,
 }
@@ -119,6 +122,7 @@ impl NetworkChannels {
 /// Canaux créés par le runtime et transférés en bloc à l'interface.
 pub struct UiRuntimeChannels {
     pub event_rx: mpsc::Receiver<AppEvent>,
+    pub event_tx: mpsc::Sender<AppEvent>,
     pub send_tx: mpsc::Sender<NetworkSendRequest>,
     pub send_media_tx: mpsc::Sender<MediaSendJob>,
     pub media_offer_rx: mpsc::Receiver<MediaStreamOffer>,
@@ -391,6 +395,7 @@ impl AbcomApp {
             psk_active,
             net: NetworkChannels {
                 event_rx: channels.event_rx,
+                event_tx: channels.event_tx,
                 send_tx: channels.send_tx,
                 send_media_tx: channels.send_media_tx,
             },
@@ -1001,7 +1006,12 @@ impl eframe::App for AbcomApp {
     /// Flush final du stockage : attend que toutes les écritures en file
     /// soient appliquées avant la fermeture.
     fn on_exit(&mut self) {
-        self.state.lock_safe().flush_storage();
+        if let Err(error) = self.state.lock_safe().flush_storage() {
+            // Dernier instant utile : la fenêtre se ferme, il n'y a plus d'UI
+            // pour prévenir. Le journal garde la trace de ce qui n'a pas été
+            // écrit, au lieu de laisser croire à une sauvegarde réussie.
+            tracing::error!("historique non sauvegardé : {error}");
+        }
     }
 }
 
