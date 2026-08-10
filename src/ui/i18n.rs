@@ -203,7 +203,6 @@ catalog! {
     DOSSIER => ("+ Dossier", "+ Folder"),
     ENVOYER => ("Envoyer", "Send"),
     CLE_API_KLIPY_MANQUANTE_ABCOM_KLIPY => ("Clé API Klipy manquante (ABCOM_KLIPY_API_KEY)", "Klipy API key missing (ABCOM_KLIPY_API_KEY)"),
-    MISE_EN_FORME_BIENTOT_DISPONIBLE => ("Mise en forme bientôt disponible", "Formatting coming soon"),
     AJOUTER_DES_FICHIERS_OU_DOSSIERS => ("Ajouter des fichiers ou dossiers", "Add files or folders"),
     EN_TRAIN_D_ECRIRE => ("en train d'écrire...", "is typing..."),
     AUCUN_DESTINATAIRE_EN_LIGNE_POUR_L => ("Aucun destinataire en ligne pour l'envoi", "No online recipient available"),
