@@ -1,0 +1,94 @@
+name: Release
+
+# Publication d'une GitHub Release sur tag `vX.Y.Z` (y compris les préversions
+# `v1.0.0-beta.1`), avec un binaire par plateforme cible.
+#
+# Limite connue et assumée : le binaire macOS n'est **ni signé ni notarisé**
+# (aucun certificat Developer ID dans les secrets du dépôt). Gatekeeper le
+# bloquera sur une autre machine que celle de build — cf. docs/06-installation.md.
+# Ajouter la signature = fournir les secrets et une étape `codesign`/`notarytool`.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag à publier (ex. v1.0.0-beta.1)
+        required: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: abcom-linux-x86_64.tar.gz
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            archive: abcom-macos-aarch64.tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: abcom-windows-x86_64.zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Dépendances système (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxkbcommon-dev libgtk-3-dev libayatana-appindicator3-dev libxdo-dev
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Build release
+        run: cargo build --release --locked --target ${{ matrix.target }}
+
+      - name: Archive (Unix)
+        if: runner.os != 'Windows'
+        run: tar -czf ${{ matrix.archive }} -C target/${{ matrix.target }}/release abcom
+
+      - name: Archive (Windows)
+        if: runner.os == 'Windows'
+        run: Compress-Archive -Path target/${{ matrix.target }}/release/abcom.exe -DestinationPath ${{ matrix.archive }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive }}
+          path: ${{ matrix.archive }}
+
+  publish:
+    name: Publier la Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Empreintes SHA-256
+        run: (cd artifacts && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt)
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          # Une préversion (`-beta`, `-rc`) n'est pas publiée comme « latest ».
+          prerelease: ${{ contains(inputs.tag || github.ref_name, '-') }}
+          body: |
+            Voir [CHANGELOG.md](https://github.com/Abend-core/abcom/blob/main/CHANGELOG.md).
+
+            ⚠️ Le binaire macOS n'est pas signé : au premier lancement, autoriser
+            l'application dans Réglages → Confidentialité et sécurité.
+          files: artifacts/*

@@ -13,7 +13,7 @@ cargo build
 
 ```bash
 cargo run --release -- <pseudo>       # lancer
-cargo test                            # 264 tests
+cargo test --all-features --locked    # 289 tests
 cargo test app::groups                # un module
 cargo fmt && cargo clippy -- -D warnings   # ce que la CI exigera
 ```
@@ -22,24 +22,62 @@ Le profil release est optimisé pour un binaire compact (`lto = "thin"`, `codege
 
 ## Tests
 
-264 tests automatisés, regroupés dans [src/tests/](../src/tests/) (un fichier par module testé). Points notables :
+289 tests automatisés : 288 tests unitaires regroupés dans [src/tests/](../src/tests/) et un test d'intégration externe dans [tests/p2p_e2e.rs](../tests/p2p_e2e.rs). Points notables :
 
 - les tests réseau utilisent de **vraies sockets** (`TcpListener::bind("127.0.0.1:0")`, UDP réel) — pas de mocks ;
 - le chiffrement est testé par des handshakes Noise complets en mémoire et entre endpoints réels (y compris le rejet d'un client en clair et le refus sur clé changée) ;
 - la migration JSON → SQLite, les règles de groupes (succession, purge d'historique), les accusés et le composer ont chacun leur suite.
 
-`scripts/integration_test.sh` est exécuté par la CI de `main` mais reste sommaire ; un vrai test d'intégration « deux instances se découvrent et échangent » est dans le backlog.
+`scripts/integration_test.sh` exécute exclusivement le scénario P2P headless : handshake Noise, identité applicative et échange d'un message sur une vraie socket. La découverte UDP entre deux processus complets reste un test manuel.
+
+### Convention : les tests vivent dans `src/tests/`
+
+Les tests unitaires ne sont **pas** dans un `mod tests` en fin de fichier source, mais dans un fichier miroir de [src/tests/](../src/tests/) raccordé depuis le module testé :
+
+```rust
+// en bas de src/app/groups.rs
+#[cfg(test)]
+#[path = "../tests/test_app_groups.rs"]
+mod tests;
+```
+
+Le nom du fichier suit le chemin du module (`src/ui/composer/mod.rs` → `src/tests/test_ui_composer_mod.rs`). Les tests gardent l'accès aux éléments privés (c'est un module fils), mais les fichiers sources restent courts et lisibles. **En ajoutant un module, ajouter son fichier de tests au même endroit.** Deux exceptions assumées : les modules dont les tests tiennent en quelques lignes (`protocol.rs`, `metrics.rs`, `ui/outbound.rs`) gardent un `mod tests` inline, et [tests/p2p_e2e.rs](../tests/p2p_e2e.rs) est un test d'intégration externe, qui ne voit donc que l'API publique du crate.
+
+## Scripts
+
+Tous les scripts portent un en-tête `# <nom> — <rôle>` en première ligne utile.
+
+| Script | Rôle | Quand |
+|---|---|---|
+| [run-multi.sh](../scripts/run-multi.sh) | Lance N instances locales (`ABCOM_INSTANCE`) pour tester le P2P | Développement quotidien (`make run2`) |
+| [seed-demo.py](../scripts/seed-demo.py) | Remplit trois instances d'un jeu de données de démonstration | Captures, démos, tests manuels |
+| [integration_test.sh](../scripts/integration_test.sh) | Scénario P2P headless (handshake + message authentifié) | **Exécuté par la CI `main`** |
+| [build-and-distribute.sh](../scripts/build-and-distribute.sh) | Build release + archive de distribution dans `dist/` | Préparation d'une livraison manuelle |
+| [deploy.sh](../scripts/deploy.sh) | Prépare un binaire pour un test multi-machines | Test sur un vrai LAN |
+| [install.sh](../scripts/install.sh) / [abcom-install.sh](../scripts/abcom-install.sh) | Installation Linux (avec / sans service systemd) | Poste utilisateur |
+| [uninstall.sh](../scripts/uninstall.sh) | Désinstallation Linux + service | Poste utilisateur |
+| [install-windows.ps1](../scripts/install-windows.ps1) | Installation et raccourcis Windows | Poste utilisateur Windows |
 
 ## Intégration continue
 
-Deux workflows GitHub Actions :
+Quatre workflows GitHub Actions :
 
 | Workflow | Déclencheur | Étapes |
 |---|---|---|
-| [ci-dev.yml](../.github/workflows/ci-dev.yml) | PR vers `dev` | `cargo fmt --check` · `clippy -D warnings` · `build --release` · `test` (~6 min 30) |
-| [ci-main.yml](../.github/workflows/ci-main.yml) | PR vers `main` | idem + `integration_test.sh` + `cargo audit` |
+| [ci-dev.yml](../.github/workflows/ci-dev.yml) | PR/push vers `dev` | format · Clippy · build · tests sur Linux · `cargo audit` + `cargo deny` · MSRV · checks macOS/Windows |
+| [ci-main.yml](../.github/workflows/ci-main.yml) | PR/push vers `main` | idem + scénario P2P headless |
+| [release.yml](../.github/workflows/release.yml) | tag `v*` | Binaires Linux/macOS/Windows + `SHA256SUMS` attachés à une GitHub Release |
+| [dependencies.yml](../.github/workflows/dependencies.yml) | 1er du mois | Rapport `cargo outdated` + `cargo audit` (informatif) |
 
 Le hook local `.githooks/pre-commit` bloque tout commit mal formaté avant même la CI.
+
+### MSRV
+
+`rust-version` dans [Cargo.toml](../Cargo.toml) déclare la version minimale de Rust, vérifiée par le job `msrv` de la CI `dev`. Elle est actuellement **1.95, c'est-à-dire le dernier stable** : la contrainte ne vient pas du code d'abcom mais du build script de `libsqlite3-sys` (tiré par `rusqlite` 0.40), qui échoue dès 1.94. Elle pourra redescendre à la prochaine montée de `rusqlite` — le job CI le signalera.
+
+### Chaîne d'approvisionnement
+
+`cargo audit` (vulnérabilités RUSTSEC) et `cargo deny` (licences, sources, doublons de crates, configuré dans [deny.toml](../deny.toml)) tournent désormais **sur `dev` comme sur `main`**, à partir de binaires pré-compilés (`taiki-e/install-action`) au lieu d'un `cargo install` recompilé à chaque exécution.
 
 ## Workflow Git
 
@@ -83,12 +121,13 @@ Chaque merge `dev` → `main` correspond à une version SemVer, taguée `v0.x.x`
 
 ## Dépendances
 
-Une quinzaine de dépendances directes ([Cargo.toml](../Cargo.toml)), ~550 paquets dans le graphe résolu. Les principales :
+Les dépendances directes sont déclarées dans [Cargo.toml](../Cargo.toml) et verrouillées par `Cargo.lock`. Les principales :
 
 | Crate | Rôle |
 |---|---|
 | `tokio` (features explicites, pas `full`) | Runtime asynchrone du réseau |
-| `eframe` / `egui` / `egui_extras` 0.31 | Fenêtre native, interface, chargement d'images animées |
+| `eframe` / `egui` / `egui_extras` 0.31 | Fenêtre native, interface, chargement d'images animées — **renderer wgpu**, `glow` explicitement retiré des features (cf. ci-dessous) |
+| `mimalloc` / `libmimalloc-sys` | Allocateur global, et restitution des pages à l'OS au repli dans le tray |
 | `serde` / `serde_json` | Sérialisation des paquets réseau et des données |
 | `rusqlite` (`bundled`) | Stockage SQLite embarqué |
 | `snow` + `blake2` | Handshake Noise, empreintes et dérivation de PSK |
@@ -98,9 +137,21 @@ Une quinzaine de dépendances directes ([Cargo.toml](../Cargo.toml)), ~550 paque
 | `rodio` | Sons de notification |
 | `ehttp`, `chrono`, `anyhow`, `dirs` | Requêtes Klipy, horodatage, erreurs, chemins par plateforme |
 
-**Licences** : le projet est MIT. Le graphe est à ~96 % MIT/Apache-2.0 et assimilés, plus quelques paquets MPL-2.0 (famille resvg, symphonia). La MPL-2.0 est un copyleft au niveau du fichier : comme ces crates sont consommés sans modification, aucune obligation n'en découle. Aucune dépendance GPL/AGPL. Ressources embarquées : police Inter (OFL-1.1, licence dans `assets/fonts/`), jeu d'emojis type Twemoji.
+### Renderer : wgpu, pas OpenGL
 
-Outils d'entretien : `cargo audit` (vulnérabilités — exécuté par la CI de `main`), `cargo license` (inventaire), `cargo update` (mises à jour semver). `Cargo.lock` est versionné : builds reproductibles.
+`eframe` est déclaré avec `default-features = false` **précisément pour retirer `glow`** : OpenGL est déprécié sur macOS et y est émulé au-dessus de Metal, au prix d'un contexte GPU disproportionné pour une interface 2D. Mesures A/B au repos, même machine, même build debug, fenêtre visible :
+
+| | Glow (OpenGL) | wgpu (Metal) | wgpu + mimalloc |
+|---|---|---|---|
+| `IOAccelerator (graphics)` | 29,6 Mo | 6,2 Mo | 3,9 Mo |
+| RSS | 155,8 Mo | 146,0 Mo | 138,9 Mo |
+| Empreinte physique (pic) | 132,4 Mo | 110,8 Mo | 110,6 Mo |
+
+Vérifier après toute montée d'`eframe` que `cargo tree | grep -i glow` ne renvoie **rien** : réintroduire les features par défaut relierait silencieusement le backend OpenGL.
+
+**Licence du projet : AGPL-3.0** — alignée le 08/08/2026. `LICENSE` (texte intégral de la GNU AGPL v3) et l'onglet Licence de l'application faisaient déjà foi ; `Cargo.toml` déclarait `MIT` par erreur et déclare désormais `AGPL-3.0-only`. Ce n'était pas une double licence, juste une incohérence. Ressources embarquées : police Inter (OFL-1.1, licence dans `assets/fonts/`), jeu d'emojis type Twemoji.
+
+Outils d'entretien : `cargo audit` (vulnérabilités) et `cargo deny check` (licences, sources, doublons) — les deux exécutés par la CI `dev` **et** `main` ; `cargo outdated` (rapport mensuel automatique), `cargo update` (mises à jour semver). `Cargo.lock` est versionné : builds reproductibles.
 
 ## Fichiers de suivi
 

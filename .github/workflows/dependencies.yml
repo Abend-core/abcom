@@ -1,0 +1,32 @@
+name: Veille dépendances
+
+# Rapport mensuel (et à la demande) : ce qui est périmé, ce qui est
+# vulnérable. Ne modifie rien — la mise à jour reste une décision humaine,
+# l'objectif est de ne plus la *subir* (cf. AUDIT.md §9).
+
+on:
+  schedule:
+    - cron: "0 6 1 * *" # le 1er de chaque mois, 06:00 UTC
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  report:
+    name: Dépendances périmées et vulnérables
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-outdated,cargo-audit
+
+      - name: Dépendances périmées
+        run: cargo outdated --root-deps-only --exit-code 0
+
+      - name: Vulnérabilités connues
+        run: cargo audit

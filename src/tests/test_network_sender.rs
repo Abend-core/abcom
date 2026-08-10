@@ -49,8 +49,8 @@ async fn pool_sends_over_persistent_encrypted_connection() {
     let pool = ConnectionPool::new(client_ctx);
 
     // Deux envois : le second réutilise la connexion établie par le premier.
-    pool.send(addr, chat("premier")).await;
-    pool.send(addr, chat("second")).await;
+    pool.send("serveur", addr, chat("premier")).await;
+    pool.send("serveur", addr, chat("second")).await;
 
     for expected in ["premier", "second"] {
         let event = tokio::time::timeout(Duration::from_secs(3), rx.recv())
@@ -61,4 +61,25 @@ async fn pool_sends_over_persistent_encrypted_connection() {
     }
     // Aucune alerte côté client.
     assert!(client_rx.try_recv().is_err());
+}
+
+#[tokio::test]
+async fn pool_rejects_an_unexpected_peer_at_the_discovered_address() {
+    let (tx, mut rx) = mpsc::channel(8);
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(crate::network::run_server_on(
+        listener,
+        ctx("serveur", tx.clone()),
+    ));
+
+    let (client_tx, _client_rx) = mpsc::channel(4);
+    let pool = ConnectionPool::new(ctx("alice", client_tx));
+    pool.send("mallory", addr, chat("ne doit pas passer")).await;
+
+    let event = tokio::time::timeout(Duration::from_millis(300), rx.recv()).await;
+    assert!(
+        event.is_err(),
+        "aucun paquet ne doit être envoyé au mauvais pair"
+    );
 }

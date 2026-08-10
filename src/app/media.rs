@@ -1,7 +1,7 @@
 //! Accès au cache local des médias (images et fichiers) attachés aux messages.
 //!
 //! Les octets sont transmis par streaming (cf. `network::media_stream`) et
-//! écrits directement dans `media/<id>` ; l'historique `messages.json` ne
+//! écrits directement dans `media/<id>` ; l'historique SQLite ne
 //! conserve qu'une référence légère (cf. [`crate::message::MediaAttachment`]).
 
 use std::collections::HashSet;

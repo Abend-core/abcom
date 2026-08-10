@@ -1,77 +1,23 @@
-use eframe::egui;
-
+use super::i18n;
 use super::{sound::play_notification_sound, AbcomApp};
 use crate::app::AppState;
 use crate::message::{
     AppEvent, AvatarRequest, ChatMessage, GroupAction, GroupEvent, MessageAck, MessageAckRequest,
-    ReadReceipt, ReadReceiptRequest, SendGroupRequest,
+    NetworkSendRequest, ReadReceipt, ReadReceiptRequest, SendGroupRequest, SendRequest,
 };
+use crate::protocol::media_requires_ack;
 use crate::util::MutexExt;
 
 impl AbcomApp {
-    /// Textures emoji : les PNG sont décodés dans un thread au démarrage
-    /// (cf. `spawn_emoji_decoder`) ; ici on ne fait que récupérer le résultat
-    /// et créer les textures (rapide). Tant qu'il n'est pas prêt, l'UI
-    /// s'affiche sans emojis et repeint brièvement en attendant.
-    pub(crate) fn lazy_load_emoji(&mut self, ctx: &egui::Context) {
-        if self.emoji.textures_loaded {
-            return;
-        }
-        let Some(rx) = &self.emoji.decode_rx else {
-            return;
-        };
-        let images = match rx.try_recv() {
-            Ok(images) => images,
-            Err(std::sync::mpsc::TryRecvError::Empty) => {
-                // Décodage en cours : re-tenter très bientôt.
-                ctx.request_repaint_after(std::time::Duration::from_millis(50));
-                return;
-            }
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.emoji.decode_rx = None;
-                return;
-            }
-        };
-        self.emoji.decode_rx = None;
-
-        self.emoji.textures = images
-            .into_iter()
-            .map(|(ch, color_image)| {
-                let texture = ctx.load_texture(
-                    format!("emoji_{ch}"),
-                    color_image,
-                    egui::TextureOptions::LINEAR,
-                );
-                (ch, texture)
-            })
-            .collect();
-
-        self.emoji.map = self
-            .emoji
-            .textures
-            .iter()
-            .enumerate()
-            .map(|(i, (ch, _))| (ch.clone(), i))
-            .collect();
-        let available: Vec<String> = self
-            .emoji
-            .textures
-            .iter()
-            .map(|(ch, _)| ch.clone())
-            .collect();
-
-        let (alias_to_char, aliases) = super::emoji_picker::build_emoji_shortcode_index(&available);
-        self.emoji.alias_to_char = alias_to_char;
-        self.emoji.aliases = aliases;
-        self.emoji.textures_loaded = true;
-
-        // Les messages parsés avant l'arrivée du registre ont une détection
-        // « emoji seul » erronée : on reconstruit le cache du fil.
-        self.chat_cache.invalidate();
-    }
-
-    /// Dépile les événements réseau reçus depuis les tâches tokio
+    /// Dépile les événements réseau reçus depuis les tâches tokio.
+    ///
+    /// **Invariant de verrouillage** : rien n'est émis sur le réseau tant que
+    /// le verrou d'état est tenu. Les requêtes sont accumulées puis envoyées
+    /// après la boucle — le `drop`/relock manuel qui existait ici était la
+    /// source classique de deadlock à la première modification venue.
     pub(crate) fn process_events(&mut self) {
+        let mut outbound: Vec<NetworkSendRequest> = Vec::new();
+        let mut outbox_flush: Vec<(u64, SendRequest)> = Vec::new();
         let mut s = self.state.lock_safe();
         while let Ok(evt) = self.net.event_rx.try_recv() {
             match evt {
@@ -87,8 +33,11 @@ impl AbcomApp {
                     if let Some(conv) = &group_conv {
                         let known = conv
                             .strip_prefix('#')
-                            .map(|g| s.is_in_group(g))
-                            .unwrap_or(false);
+                            .and_then(|name| s.get_group(name))
+                            .is_some_and(|group| {
+                                group.members.contains(&s.my_username)
+                                    && group.members.contains(&msg.from)
+                            });
                         if !known {
                             continue;
                         }
@@ -119,22 +68,24 @@ impl AbcomApp {
 
                             let mut ack_reqs = Vec::with_capacity(recipients.len());
                             let mut receipt_reqs = Vec::new();
-                            for addr in recipients {
+                            for (recipient, addr) in recipients {
                                 ack_reqs.push(MessageAckRequest {
+                                    to_peer: recipient.clone(),
                                     to_addr: addr,
                                     ack: MessageAck {
                                         from: s.my_username.clone(),
-                                        to: msg.from.clone(),
+                                        to: recipient.clone(),
                                         message_hash: msg_hash,
                                         timestamp: now.clone(),
                                     },
                                 });
                                 if already_reading {
                                     receipt_reqs.push(ReadReceiptRequest {
+                                        to_peer: recipient.clone(),
                                         to_addr: addr,
                                         receipt: ReadReceipt {
                                             from: s.my_username.clone(),
-                                            to: msg.from.clone(),
+                                            to: recipient,
                                             message_hash: msg_hash,
                                             timestamp: now.clone(),
                                         },
@@ -142,15 +93,16 @@ impl AbcomApp {
                                 }
                             }
 
-                            drop(s);
-                            for req in ack_reqs {
-                                let _ = self.net.send_ack_tx.try_send(req);
-                            }
-                            for req in receipt_reqs {
-                                let _ = self.net.send_read_receipt_tx.try_send(req);
-                            }
-                            s = self.state.lock_safe();
+                            outbound.extend(ack_reqs.into_iter().map(Into::into));
+                            outbound.extend(receipt_reqs.into_iter().map(Into::into));
                         }
+                    }
+
+                    // Doublon d'une réémission : l'ACK vient d'être renvoyé
+                    // ci-dessus, il ne reste qu'à ne pas dupliquer le message.
+                    if s.has_message(AppState::message_hash(&msg)) {
+                        tracing::debug!("message déjà reçu ignoré (réémission)");
+                        continue;
                     }
 
                     s.add_message(msg.clone());
@@ -201,98 +153,79 @@ impl AbcomApp {
                         })
                         .collect();
                     for event in sync_events {
-                        let _ = self.net.send_group_tx.try_send(SendGroupRequest {
+                        self.net.try_send(SendGroupRequest {
+                            to_peer: username.clone(),
                             to_addr: addr,
                             event,
                         });
                     }
+                    // Messages écrits pendant son absence : réémis maintenant.
+                    let queued = s.outbox_for(&username);
+                    if !queued.is_empty() {
+                        let requests: Vec<_> = queued
+                            .into_iter()
+                            .map(|(hash, message)| {
+                                (
+                                    hash,
+                                    SendRequest {
+                                        to_peer: username.clone(),
+                                        to_addr: addr,
+                                        message,
+                                    },
+                                )
+                            })
+                            .collect();
+                        outbox_flush.extend(requests);
+                    }
+
                     // Première découverte (depuis le dernier envoi) : on partage
                     // notre avatar pour qu'il s'affiche chez ce pair.
                     if !self.avatar_sent_to.contains(&username) {
                         if let Some(announce) = s.avatar_announce() {
                             let request = AvatarRequest {
+                                to_peer: username.clone(),
                                 to_addr: addr,
                                 announce,
                             };
-                            if self.net.send_avatar_tx.try_send(request).is_ok() {
+                            if self.net.try_send(request) {
                                 self.avatar_sent_to.insert(username);
                             }
                         }
                     }
                 }
                 AppEvent::PeerDisconnected { username } => {
-                    if let Some(peer) = s.peers.iter_mut().find(|p| p.username == username) {
-                        peer.online = false;
-                    }
+                    s.mark_peer_offline(&username);
                     // Réémettre l'avatar à la prochaine reconnexion de ce pair.
                     self.avatar_sent_to.remove(&username);
+                    // Idem accusés de lecture : il a pu manquer ceux émis pendant son absence.
+                    self.read_receipts_sent.remove(&username);
                 }
                 AppEvent::UserTyping(username) => s.set_user_typing(username),
-                AppEvent::GroupEventReceived(evt) => match evt.action {
-                    GroupAction::Create { group } => {
-                        // Création ou re-synchronisation par le propriétaire :
-                        // l'état reçu remplace le nôtre. Un groupe dont nous ne
-                        // sommes pas membre ne nous concerne pas.
-                        if group.members.contains(&s.my_username) {
-                            if let Some(existing) =
-                                s.groups.iter_mut().find(|g| g.name == group.name)
-                            {
-                                *existing = group;
-                            } else {
-                                s.groups.push(group);
-                            }
-                            s.save_groups();
-                        }
-                    }
-                    GroupAction::AddMember {
-                        group_name,
-                        username,
-                    } => {
-                        if let Some(g) = s.groups.iter_mut().find(|g| g.name == group_name) {
-                            if !g.members.contains(&username) {
-                                g.members.push(username);
-                                s.save_groups();
-                            }
-                        }
-                    }
-                    GroupAction::RemoveMember {
-                        group_name,
-                        username,
-                    } => {
-                        // Départ volontaire ou exclusion — même règle de
-                        // succession que localement ; si c'est nous, le salon
-                        // et son historique local disparaissent.
-                        s.apply_member_removal(&group_name, &username);
-                    }
-                    GroupAction::Rename {
-                        group_name,
-                        new_name,
-                    } => {
-                        // Valide et migre l'historique vers la nouvelle clé.
-                        s.apply_group_rename(&group_name, new_name);
-                    }
-                    GroupAction::Delete { group_name } => {
-                        s.apply_group_delete(&group_name);
-                    }
-                },
+                AppEvent::GroupEventReceived { peer, event } => {
+                    apply_group_event(&mut s, &peer, event);
+                }
                 AppEvent::ReadReceiptReceived(receipt) => {
-                    s.mark_message_read(receipt.message_hash, receipt.from.clone());
+                    if s.is_expected_receipt_sender(receipt.message_hash, &receipt.from) {
+                        s.mark_message_read(receipt.message_hash, receipt.from.clone());
+                    }
                 }
                 AppEvent::MessageAckReceived(ack) => {
-                    s.mark_message_acked(ack.message_hash);
-                    // Détail nominatif « reçu par » (popup « … » des salons).
-                    s.mark_message_delivered_by(ack.message_hash, ack.from.clone());
+                    if s.is_expected_ack_sender(ack.message_hash, &ack.from) {
+                        s.mark_message_acked(ack.message_hash, &ack.from);
+                        // Détail nominatif « reçu par » (popup « … » des salons).
+                        s.mark_message_delivered_by(ack.message_hash, ack.from.clone());
+                    }
                 }
                 AppEvent::ReactionReceived(event) => {
                     s.apply_reaction_event(&event);
                 }
-                AppEvent::KeyChanged { username } => {
-                    // Alerte sécurité : la clé du pair ne correspond plus à
-                    // celle épinglée — la connexion a été refusée.
-                    let label = self.tr(
-                        "la clé d'identité a changé, connexion refusée",
-                        "identity key changed, connection refused",
-                    );
+                AppEvent::KeyChanged {
+                    username,
+                    offered_key,
+                } => {
+                    // Clé non concordante : connexion refusée, la modale offre le ré-appairage.
+                    self.modals.key_mismatch = Some((username.clone(), offered_key));
+                    let label = self.t(i18n::LA_CLE_D_IDENTITE_A_CHANGE);
                     self.last_notification = Some(format!("⚠️ {} : {}", username, label));
                     self.notification_time = std::time::Instant::now();
                     if self.window_hidden {
@@ -300,6 +233,19 @@ impl AbcomApp {
                     } else if self.enable_sound_notifications {
                         play_notification_sound();
                     }
+                }
+                AppEvent::SearchResults { query, messages } => {
+                    // Résultat d'une frappe plus ancienne : la requête a changé
+                    // entre-temps, on ignore.
+                    if query == self.search.submitted {
+                        self.search.results = messages;
+                    }
+                }
+                AppEvent::SendFailed { username } => {
+                    // Sans ceci, l'échec disparaît dans les logs d'un binaire sans console.
+                    let label = self.t(i18n::INJOIGNABLE_MESSAGE_NON_ENVOYE);
+                    self.last_notification = Some(format!("{username} : {label}"));
+                    self.notification_time = std::time::Instant::now();
                 }
                 AppEvent::OlderMessagesLoaded {
                     messages,
@@ -341,7 +287,7 @@ impl AbcomApp {
                     };
                     s.add_message(msg.clone());
                     if from != s.my_username {
-                        let label = self.tr("vous envoie un fichier", "is sending you a file");
+                        let label = self.t(i18n::VOUS_ENVOIE_UN_FICHIER);
                         self.last_notification = Some(format!("{} {}", from, label));
                         self.notification_time = std::time::Instant::now();
                         self.has_unread = true;
@@ -355,15 +301,14 @@ impl AbcomApp {
                 AppEvent::MediaProgressed(progress) => {
                     let id = progress.id.clone();
                     if progress.failed {
-                        // Refus ou erreur : on retire la carte, le message et le
-                        // fichier (côté émetteur comme destinataire).
                         self.media.progress.remove(&id);
-                        self.media.textures.remove(&id);
-                        s.remove_media_message(&id);
-                        self.last_notification = Some(
-                            self.tr("Transfert média interrompu", "Media transfer interrupted")
-                                .to_string(),
-                        );
+                        if !progress.outgoing {
+                            // Une réception interrompue n'a aucun fichier utile.
+                            self.media.textures.remove(&id);
+                            s.remove_media_message(&id);
+                        }
+                        self.last_notification =
+                            Some(self.t(i18n::TRANSFERT_MEDIA_INTERROMPU).to_string());
                         self.notification_time = std::time::Instant::now();
                     } else if progress.finished {
                         self.media.progress.remove(&id);
@@ -373,29 +318,61 @@ impl AbcomApp {
                         self.media.progress.insert(id, progress);
                     }
                 }
-                AppEvent::MediaDeclined(header) => {
-                    // Côté émetteur : on retire la carte « en attente » et on
-                    // annote le fil que le fichier a été refusé.
+                AppEvent::MediaDeclined { peer, header } => {
+                    // Un refus ne supprime pas la source : d'autres
+                    // destinataires du groupe peuvent encore la recevoir.
                     self.media.progress.remove(&header.media.id);
-                    self.media.textures.remove(&header.media.id);
-                    s.remove_media_message(&header.media.id);
                     s.add_message(super::media::refused_media_message(
                         &header.from,
                         &header.media.filename,
                         header.to_user.clone(),
                     ));
+                    self.last_notification =
+                        Some(format!("{} : {}", peer, self.t(i18n::FICHIER_REFUSE)));
+                    self.notification_time = std::time::Instant::now();
                 }
             }
         }
         s.clear_typing_if_old();
         self.typing_active = !s.typing_users.is_empty();
+        drop(s);
+
+        // Verrou relâché : c'est seulement ici qu'on émet.
+        for request in outbound {
+            self.net.try_send(request);
+        }
+        for (hash, request) in outbox_flush {
+            // La sortie de file suit l'émission, jamais l'inverse.
+            if self.net.try_send(request.clone()) {
+                let mut state = self.state.lock_safe();
+                state.drop_from_outbox(hash);
+                state.mark_message_sent(hash, request);
+            }
+        }
     }
 
     /// Récupère les offres de médias volumineux (> 1 Go) en attente d'accord et
     /// les ajoute au bandeau d'acceptation.
     pub(crate) fn process_media_offers(&mut self) {
         while let Ok(offer) = self.media.offer_rx.try_recv() {
-            let label = self.tr("vous envoie un fichier", "is sending you a file");
+            if let Some(group_name) = offer.to_user.as_deref().and_then(|to| to.strip_prefix('#')) {
+                let authorized =
+                    group_media_authorized(&self.state.lock_safe(), group_name, &offer.from);
+                if !authorized {
+                    tracing::warn!(
+                        "média de groupe refusé : {} n'est pas membre de #{}",
+                        offer.from,
+                        group_name
+                    );
+                    let _ = offer.decision_tx.send(false);
+                    continue;
+                }
+                if !media_requires_ack(offer.size_bytes) {
+                    let _ = offer.decision_tx.send(true);
+                    continue;
+                }
+            }
+            let label = self.t(i18n::VOUS_ENVOIE_UN_FICHIER);
             self.last_notification = Some(format!("{} {}", offer.from, label));
             self.notification_time = std::time::Instant::now();
             self.has_unread = true;
@@ -415,10 +392,107 @@ impl AbcomApp {
     pub(crate) fn periodic_tasks(&mut self) {
         if self.last_retry_time.elapsed().as_secs_f32() >= 2.0 {
             self.last_retry_time = std::time::Instant::now();
-            let retry_messages = self.state.lock_safe().get_retry_messages();
-            for (_hash, addr) in retry_messages {
-                tracing::debug!("retry message delivery vers {}", addr);
+            let (retry_messages, failed) = self.state.lock_safe().get_retry_messages();
+            for (hash, request) in retry_messages {
+                let addr = request.to_addr;
+                match self.net.send_tx.try_send(request.into()) {
+                    Ok(()) => {
+                        self.state.lock_safe().mark_retry_enqueued(hash);
+                        tracing::debug!("retry message delivery vers {}", addr);
+                    }
+                    Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                        tracing::debug!("retry différé, file d'envoi pleine");
+                    }
+                    Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                        tracing::warn!("retry impossible, canal réseau fermé");
+                    }
+                }
+            }
+            if !failed.is_empty() {
+                self.last_notification =
+                    Some(self.t(i18n::ECHEC_DE_LIVRAISON_D_UN_MESSAGE).to_string());
+                self.notification_time = std::time::Instant::now();
             }
         }
     }
 }
+
+fn group_media_authorized(state: &AppState, group_name: &str, sender: &str) -> bool {
+    state.get_group(group_name).is_some_and(|group| {
+        group.members.contains(&state.my_username)
+            && group.members.iter().any(|member| member == sender)
+    })
+}
+
+fn apply_group_event(s: &mut AppState, peer: &str, event: GroupEvent) {
+    match event.action {
+        GroupAction::Create { group } => {
+            if group.owner != peer || !group.members.contains(&s.my_username) {
+                return;
+            }
+            if let Some(existing) = s.groups.iter_mut().find(|g| g.name == group.name) {
+                if existing.owner != peer {
+                    return;
+                }
+                *existing = group;
+            } else {
+                s.groups.push(group);
+            }
+            s.save_groups();
+        }
+        GroupAction::AddMember {
+            group_name,
+            username,
+        } => {
+            let Some(g) = s
+                .groups
+                .iter_mut()
+                .find(|g| g.name == group_name && g.owner == peer)
+            else {
+                return;
+            };
+            if !g.members.contains(&username) {
+                g.members.push(username);
+                s.save_groups();
+            }
+        }
+        GroupAction::RemoveMember {
+            group_name,
+            username,
+        } => {
+            let allowed = s
+                .groups
+                .iter()
+                .find(|g| g.name == group_name)
+                .is_some_and(|g| g.owner == peer || peer == username);
+            if allowed {
+                s.apply_member_removal(&group_name, &username);
+            }
+        }
+        GroupAction::Rename {
+            group_name,
+            new_name,
+        } => {
+            let allowed = s
+                .groups
+                .iter()
+                .any(|g| g.name == group_name && g.owner == peer);
+            if allowed {
+                s.apply_group_rename(&group_name, new_name);
+            }
+        }
+        GroupAction::Delete { group_name } => {
+            let allowed = s
+                .groups
+                .iter()
+                .any(|g| g.name == group_name && g.owner == peer);
+            if allowed {
+                s.apply_group_delete(&group_name);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[path = "../tests/test_ui_events.rs"]
+mod tests;

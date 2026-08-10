@@ -10,6 +10,7 @@ pub struct TypingIndicator {
 /// Demande d'envoi d'un indicateur de frappe
 #[derive(Clone, Debug)]
 pub struct TypingRequest {
+    pub to_peer: String,
     pub to_addr: SocketAddr,
     pub indicator: TypingIndicator,
 }
@@ -26,6 +27,7 @@ pub struct ReadReceipt {
 /// Demande d'envoi d'un accusé de lecture
 #[derive(Clone, Debug)]
 pub struct ReadReceiptRequest {
+    pub to_peer: String,
     pub to_addr: SocketAddr,
     pub receipt: ReadReceipt,
 }
@@ -42,6 +44,7 @@ pub struct MessageAck {
 /// Demande d'envoi d'un ACK de livraison
 #[derive(Clone, Debug)]
 pub struct MessageAckRequest {
+    pub to_peer: String,
     pub to_addr: SocketAddr,
     pub ack: MessageAck,
 }

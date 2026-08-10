@@ -524,7 +524,7 @@ pub(crate) fn render_parsed_markdown(
     ui: &mut egui::Ui,
     parsed: &ParsedMarkdown,
     emoji_map: &std::collections::HashMap<String, usize>,
-    emoji_textures: &[(String, egui::TextureHandle)],
+    emoji_textures: &super::EmojiTextures,
 ) {
     let emoji_size = if parsed.emoji_only { 44.0 } else { 22.0 };
 
@@ -656,7 +656,7 @@ fn render_spans_with_emoji_size(
     ui: &mut egui::Ui,
     spans: &[MarkdownSpan],
     emoji_map: &std::collections::HashMap<String, usize>,
-    emoji_textures: &[(String, egui::TextureHandle)],
+    emoji_textures: &super::EmojiTextures,
     override_style: Option<SpanOverride>,
     emoji_size: f32,
 ) {
@@ -715,20 +715,12 @@ fn render_blockquote_with_emoji_size(
     ui: &mut egui::Ui,
     spans: &[MarkdownSpan],
     emoji_map: &std::collections::HashMap<String, usize>,
-    emoji_textures: &[(String, egui::TextureHandle)],
+    emoji_textures: &super::EmojiTextures,
     emoji_size: f32,
 ) {
-    let dark_mode = ui.visuals().dark_mode;
-    let bg = if dark_mode {
-        egui::Color32::from_rgb(30, 41, 59)
-    } else {
-        egui::Color32::from_rgb(241, 245, 249)
-    };
-    let border = if dark_mode {
-        egui::Color32::from_rgb(125, 211, 252)
-    } else {
-        egui::Color32::from_rgb(3, 105, 161)
-    };
+    let palette = crate::ui::theme::palette(ui);
+    let bg = palette.block_bg;
+    let border = palette.link;
 
     egui::Frame::NONE
         .fill(bg)
@@ -750,17 +742,9 @@ fn render_blockquote_with_emoji_size(
 }
 
 fn render_inline_code(ui: &mut egui::Ui, text: &str) {
-    let dark_mode = ui.visuals().dark_mode;
-    let bg = if dark_mode {
-        egui::Color32::from_rgb(30, 41, 59)
-    } else {
-        egui::Color32::from_rgb(226, 232, 240)
-    };
-    let text_color = if dark_mode {
-        egui::Color32::from_rgb(248, 250, 252)
-    } else {
-        egui::Color32::from_rgb(15, 23, 42)
-    };
+    let palette = crate::ui::theme::palette(ui);
+    let bg = palette.block_bg;
+    let text_color = palette.block_text;
 
     egui::Frame::NONE
         .fill(bg)
@@ -786,25 +770,13 @@ fn render_table(
     header: &[Vec<MarkdownSpan>],
     rows: &[Vec<Vec<MarkdownSpan>>],
     emoji_map: &std::collections::HashMap<String, usize>,
-    emoji_textures: &[(String, egui::TextureHandle)],
+    emoji_textures: &super::EmojiTextures,
     emoji_size: f32,
 ) {
-    let dark_mode = ui.visuals().dark_mode;
-    let border = if dark_mode {
-        egui::Color32::from_rgb(71, 85, 105)
-    } else {
-        egui::Color32::from_rgb(148, 163, 184)
-    };
-    let header_bg = if dark_mode {
-        egui::Color32::from_rgb(30, 41, 59)
-    } else {
-        egui::Color32::from_rgb(226, 232, 240)
-    };
-    let stripe_bg = if dark_mode {
-        egui::Color32::from_rgb(23, 31, 46)
-    } else {
-        egui::Color32::from_rgb(241, 245, 249)
-    };
+    let palette = crate::ui::theme::palette(ui);
+    let border = palette.block_border;
+    let header_bg = palette.block_bg;
+    let stripe_bg = palette.block_stripe;
 
     let columns = alignments.len().max(1);
 
@@ -857,7 +829,7 @@ fn render_table_row(
     background: Option<egui::Color32>,
     is_header: bool,
     emoji_map: &std::collections::HashMap<String, usize>,
-    emoji_textures: &[(String, egui::TextureHandle)],
+    emoji_textures: &super::EmojiTextures,
     emoji_size: f32,
 ) {
     let mut frame = egui::Frame::NONE.inner_margin(egui::Margin {
@@ -915,24 +887,16 @@ fn render_table_row(
 }
 
 fn render_code_block(ui: &mut egui::Ui, language: Option<&str>, code: &str) {
-    let dark_mode = ui.visuals().dark_mode;
-    let (bg, border, text_color, chip_bg, chip_text) = if dark_mode {
-        (
-            egui::Color32::from_rgb(15, 23, 42),
-            egui::Color32::from_rgb(71, 85, 105),
-            egui::Color32::from_rgb(248, 250, 252),
-            egui::Color32::from_rgb(30, 41, 59),
-            egui::Color32::from_rgb(125, 211, 252),
-        )
-    } else {
-        (
-            egui::Color32::from_rgb(241, 245, 249),
-            egui::Color32::from_rgb(148, 163, 184),
-            egui::Color32::from_rgb(15, 23, 42),
-            egui::Color32::from_rgb(226, 232, 240),
-            egui::Color32::from_rgb(3, 105, 161),
-        )
-    };
+    let palette = crate::ui::theme::palette(ui);
+    // Le bloc est légèrement plus contrasté que le fond de citation, d'où
+    // `block_stripe` en fond et `block_bg` pour la pastille de langage.
+    let (bg, border, text_color, chip_bg, chip_text) = (
+        palette.block_stripe,
+        palette.block_border,
+        palette.block_text,
+        palette.block_bg,
+        palette.link,
+    );
 
     egui::Frame::NONE
         .fill(bg)

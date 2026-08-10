@@ -82,6 +82,20 @@ impl AppState {
             .any(|p| p.username == username && p.online)
     }
 
+    /// Marque un pair hors ligne en maintenant l'invariant d'invalidation du
+    /// cache de présence.
+    pub fn mark_peer_offline(&mut self, username: &str) -> bool {
+        let Some(peer) = self.peers.iter_mut().find(|peer| peer.username == username) else {
+            return false;
+        };
+        if !peer.online {
+            return false;
+        }
+        peer.online = false;
+        self.bump_presence();
+        true
+    }
+
     /// Alias d'un pair s'il en a un, sinon son username
     pub fn peer_display_name(&self, username: &str) -> String {
         self.peer_records

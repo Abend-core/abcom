@@ -47,7 +47,7 @@ peers       (username PRIMARY KEY, alias, avatar BLOB, pubkey BLOB)
 kv          (k PRIMARY KEY, v)                   -- préférences
 ```
 
-Les évolutions de schéma se font par `ALTER TABLE` tolérant (l'erreur « duplicate column » est ignorée sur les bases déjà à jour) — pas de système de migrations versionnées à ce stade.
+Les évolutions de schéma utilisent `PRAGMA user_version` et des migrations transactionnelles. Une migration échouée laisse la version et le schéma précédents intacts.
 
 ### Chargement et pagination
 
@@ -55,7 +55,7 @@ Au démarrage, seule une fenêtre récente est chargée en mémoire (500 message
 
 ### Migration depuis les fichiers JSON
 
-Si `abcom.db` n'existe pas au démarrage et que d'anciens fichiers JSON sont présents (`messages.json`, `reactions.json`, `read_counts.json`, `groups.json`, `peer_records.json`, `peer_avatars.json`), leur contenu est importé puis les fichiers sont renommés en `.bak`. La migration a été vérifiée sur un historique réel de 401 messages. Les hashes de messages sont conservés tels quels (ce sont les identifiants réseau).
+Si `abcom.db` n'existe pas au démarrage et que d'anciens fichiers JSON sont présents (`messages.json`, `reactions.json`, `read_counts.json`, `groups.json`, `peer_records.json`, `peer_avatars.json`), leur contenu est importé transactionnellement. Seuls les fichiers importés avec succès sont renommés en `.bak` ; une erreur conserve les sources actives et annule les écritures partielles.
 
 ## Préférences (table `kv`)
 
@@ -73,3 +73,16 @@ Chaque fichier ou image transféré est stocké sous un identifiant unique dans 
 - puis applique un **plafond de 2 Go** en supprimant les fichiers les plus anciens (mtime) au-delà.
 
 Les GIF Klipy ne sont jamais stockés : ils voyagent par URL et chaque pair les charge depuis le CDN.
+
+## Tables ajoutées le 8 août 2026
+
+| Table | Contenu | Cycle de vie |
+|---|---|---|
+| `receipts` | Accusés nominatifs livré/lu (`message_hash`, `username`, `kind`) | Insertion idempotente ; les accusés orphelins sont purgés à l'ouverture de la base |
+| `outbox` | Messages en attente d'un destinataire hors ligne (`hash`, `to_peer`, `message`) | Vidée pair par pair à leur reconnexion |
+
+**Maintenance.** Paramètres → Général → Données propose la compaction
+(`VACUUM` + `ANALYZE`) — la base ne rend jamais seule l'espace des
+conversations effacées — et l'export texte de la conversation courante. Les
+sauvegardes `*.json.bak` de la migration JSON → SQLite sont supprimées au-delà
+de 30 jours.

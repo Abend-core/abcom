@@ -14,6 +14,30 @@ impl<T> MutexExt<T> for Mutex<T> {
     }
 }
 
+/// Dimensions au-delà desquelles une image reçue est refusée sans être décodée.
+///
+/// `image` plafonne l'allocation à 512 Mo mais ne borne pas les dimensions : un
+/// fichier de quelques kilo-octets peut donc nous faire allouer beaucoup. On lit
+/// l'en-tête d'abord, on décode seulement si c'est raisonnable.
+pub const MAX_IMAGE_SIDE: u32 = 8192;
+
+/// Décode une image reçue du réseau, en refusant les dimensions déraisonnables.
+pub fn decode_image_bounded(bytes: &[u8]) -> Option<image::DynamicImage> {
+    let reader = image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?;
+    let (width, height) = reader.into_dimensions().ok()?;
+    if width > MAX_IMAGE_SIDE || height > MAX_IMAGE_SIDE {
+        tracing::warn!("image refusée : {width}x{height} dépasse {MAX_IMAGE_SIDE}");
+        return None;
+    }
+    image::ImageReader::new(std::io::Cursor::new(bytes))
+        .with_guessed_format()
+        .ok()?
+        .decode()
+        .ok()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

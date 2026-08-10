@@ -2,7 +2,7 @@ use std::sync::mpsc::{sync_channel, Receiver, SyncSender};
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use rodio::{OutputStream, Sink, Source};
+use rodio::{DeviceSinkBuilder, Player, Source};
 
 /// Canal vers le thread audio pérenne, créé au premier bip. Un seul thread et
 /// une seule initialisation du périphérique pour toute la vie du processus —
@@ -27,23 +27,23 @@ pub(crate) fn play_notification_sound() {
 /// Boucle du thread audio : périphérique ouvert une seule fois, réutilisé
 /// pour chaque notification.
 fn audio_loop(rx: Receiver<()>) {
-    let Ok((_stream, stream_handle)) = OutputStream::try_default() else {
+    // rodio ≥ 0.21 : le périphérique est ouvert via un builder et expose un
+    // mixeur ; les `Sink` d'autrefois sont des `Player` branchés dessus.
+    let Ok(device) = DeviceSinkBuilder::open_default_sink() else {
         // Pas de périphérique audio : on draine silencieusement les demandes.
         while rx.recv().is_ok() {}
         return;
     };
     while rx.recv().is_ok() {
-        let Ok(sink) = Sink::try_new(&stream_handle) else {
-            continue;
-        };
+        let player = Player::connect_new(device.mixer());
         let tone1 = rodio::source::SineWave::new(880.0)
             .take_duration(Duration::from_millis(80))
             .amplify(0.15);
         let tone2 = rodio::source::SineWave::new(1100.0)
             .take_duration(Duration::from_millis(80))
             .amplify(0.15);
-        sink.append(tone1);
-        sink.append(tone2);
-        sink.sleep_until_end();
+        player.append(tone1);
+        player.append(tone2);
+        player.sleep_until_end();
     }
 }

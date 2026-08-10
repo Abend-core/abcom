@@ -5,7 +5,7 @@ fn state(username: &str) -> AppState {
     let mut s = AppState::new(username.to_string(), Default::default(), None);
     s.messages.clear();
     s.peers.clear();
-    s.read_counts.clear();
+    s.read_marks.clear();
     s
 }
 
@@ -117,4 +117,122 @@ fn test_message_cap_at_500() {
     s.add_message(msg("bob", None, "overflow"));
     assert_eq!(s.messages.len(), 401);
     assert_eq!(s.messages.last().unwrap().content, "overflow");
+}
+
+#[test]
+fn unread_cache_follows_content_generation() {
+    let dir = std::env::temp_dir().join(format!(
+        "abcom-unread-{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let mut s = AppState::new_with_base("me", &dir);
+
+    let mut incoming = ChatMessage {
+        from: "alice".into(),
+        content: "1".into(),
+        timestamp: "12:00".into(),
+        timestamp_epoch: Some(1),
+        to_user: Some("me".into()),
+        media: None,
+        reply_to: None,
+        nonce: None,
+    };
+    s.add_message(incoming.clone());
+    assert_eq!(s.unread_count("alice"), 1);
+
+    // Le cache dérivé doit suivre chaque nouveau message…
+    incoming.content = "2".into();
+    incoming.timestamp_epoch = Some(2);
+    s.add_message(incoming.clone());
+    assert_eq!(s.unread_count("alice"), 2);
+
+    // …nos propres messages ne comptent pas…
+    s.add_message(ChatMessage {
+        from: "me".into(),
+        content: "reponse".into(),
+        timestamp: "12:01".into(),
+        timestamp_epoch: Some(3),
+        to_user: Some("alice".into()),
+        media: None,
+        reply_to: None,
+        nonce: None,
+    });
+    assert_eq!(s.unread_count("alice"), 2);
+
+    // …et marquer lu remet le compteur à zéro.
+    s.mark_conversation_read("alice");
+    assert_eq!(s.unread_count("alice"), 0);
+}
+
+#[test]
+fn duplicate_receptions_are_detected() {
+    let dir = std::env::temp_dir().join(format!("abcom-dup-{:?}", std::thread::current().id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = AppState::new_with_base("moi", &dir);
+
+    let msg = ChatMessage {
+        from: "alice".into(),
+        content: "une seule fois".into(),
+        timestamp: "12:00".into(),
+        timestamp_epoch: Some(1),
+        to_user: Some("moi".into()),
+        media: None,
+        reply_to: None,
+        nonce: Some(42),
+    };
+    let hash = AppState::message_hash(&msg);
+
+    assert!(!s.has_message(hash));
+    s.add_message(msg.clone());
+    // Réémission après un ACK perdu : le même message doit être reconnu, sinon
+    // le retry en stockait jusqu'à six copies.
+    assert!(s.has_message(hash));
+    assert_eq!(s.messages.len(), 1);
+
+    // Un message au contenu identique mais de nonce différent reste distinct.
+    let mut other = msg.clone();
+    other.nonce = Some(43);
+    assert!(!s.has_message(AppState::message_hash(&other)));
+}
+
+#[test]
+fn unread_survives_a_ring_buffer_purge() {
+    let dir = std::env::temp_dir().join(format!("abcom-unread2-{:?}", std::thread::current().id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = AppState::new_with_base("moi", &dir);
+
+    let incoming = |n: u64| ChatMessage {
+        from: "alice".into(),
+        content: format!("m{n}"),
+        timestamp: "12:00".into(),
+        timestamp_epoch: Some(n),
+        to_user: Some("moi".into()),
+        media: None,
+        reply_to: None,
+        nonce: Some(n),
+    };
+
+    for n in 1..=5 {
+        s.add_message(incoming(n));
+    }
+    assert_eq!(s.unread_count("alice"), 5);
+
+    s.mark_conversation_read("alice");
+    assert_eq!(s.unread_count("alice"), 0);
+
+    s.add_message(incoming(6));
+    s.add_message(incoming(7));
+    assert_eq!(s.unread_count("alice"), 2);
+
+    // Purge du début du fil : un compteur aurait désigné un autre ensemble et
+    // affiché un décompte faux. Le repère par hash reste juste.
+    s.messages.drain(0..3);
+    assert_eq!(
+        s.unread_count("alice"),
+        2,
+        "le repère de lecture doit survivre à la purge"
+    );
 }
