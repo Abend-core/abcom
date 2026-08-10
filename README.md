@@ -13,7 +13,7 @@ Interface graphique native (egui), pensée pour tourner en permanence : la fenê
 - **Conversations** : fil public « Tous », messages privés, salons de groupe avec gestion des membres
 - **Messages riches** : Markdown, emojis (picker + `:shortcodes:`), réactions, réponses citées, indicateur de frappe
 - **Accusés** : livraison (✓✓ gris) et lecture (✓✓ bleu) en privé, avec retransmission automatique
-- **Fichiers et médias** : envoi de fichiers et dossiers (> 1 Go), acceptation par le destinataire, vignettes et visionneuse
+- **Fichiers et médias** : envoi de fichiers et dossiers jusqu'à 2 Gio, acceptation explicite du destinataire au-delà de 50 Mo, vignettes et visionneuse
 - **GIF, mèmes, stickers** : sélecteur Klipy intégré
 - **Sécurité** : identité X25519 par machine, chiffrement Noise XX, épinglage des clés (TOFU), passphrase de salon optionnelle
 - **Résident** : fermeture = repli dans le tray, notifications système, badge non-lus, lancement automatique à l'ouverture de session

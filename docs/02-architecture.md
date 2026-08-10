@@ -6,7 +6,8 @@ Abcom est un binaire unique. Trois mondes cohabitent dans le processus :
 
 - **le thread principal**, occupé par la boucle egui/eframe (rendu et interactions) ;
 - **un runtime tokio à 2 workers**, qui porte toutes les tâches réseau : découverte UDP, serveur TCP, expéditeurs, streaming des médias ;
-- **des threads dédiés** pour ce qui ne doit jamais bloquer l'UI : écritures SQLite, lecture des sons, GC du cache disque des médias, décodage des emojis au démarrage.
+- **des threads dédiés** pour ce qui ne doit jamais bloquer l'UI : écritures SQLite, lecture des sons, GC du cache disque des médias, décodage des emojis au démarrage, copie d'un média vers le dossier Téléchargements ;
+- **un pool borné de préparation média** (4 threads), qui zippe, copie et lit les pièces jointes. Un thread par pièce jointe faisait exploser leur nombre dès qu'on sélectionnait un dossier entier — des centaines de threads se disputant le même disque, pour un débit moindre. La préparation est limitée par les E/S, pas par le processeur.
 
 La communication entre ces mondes passe par des canaux `mpsc` tokio. L'état applicatif (`AppState`) est partagé sous `Arc<Mutex<...>>` entre l'UI et les tâches, mais le rendu par frame n'en dépend plus directement : il lit des caches dérivés reconstruits uniquement quand l'état change (voir plus bas).
 
@@ -95,4 +96,4 @@ Valeurs mesurées en build release sur macOS après la passe d'optimisation de j
 | Threads | 15 | 8 |
 | Binaire release | — | ~11 Mo (LTO thin, strip, `panic=abort`) |
 | Écriture disque par message | réécriture JSON complète dans le thread UI | un INSERT SQLite hors thread UI |
-| Disque `media/` | croissance illimitée | orphelins purgés, plafond 2 Go |
+| Disque `media/` | croissance illimitée | orphelins purgés, plafond 2 Go réappliqué toutes les 15 min |

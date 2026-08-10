@@ -13,7 +13,7 @@ cargo build
 
 ```bash
 cargo run --release -- <pseudo>       # lancer
-cargo test --all-features --locked    # 289 tests
+cargo test --all-features --locked    # 328 tests
 cargo test app::groups                # un module
 cargo fmt && cargo clippy -- -D warnings   # ce que la CI exigera
 ```
@@ -22,7 +22,7 @@ Le profil release est optimisé pour un binaire compact (`lto = "thin"`, `codege
 
 ## Tests
 
-289 tests automatisés : 288 tests unitaires regroupés dans [src/tests/](../src/tests/) et un test d'intégration externe dans [tests/p2p_e2e.rs](../tests/p2p_e2e.rs). Points notables :
+328 tests automatisés : 327 tests unitaires regroupés dans [src/tests/](../src/tests/) et un test d'intégration externe dans [tests/p2p_e2e.rs](../tests/p2p_e2e.rs). Les tests manuels — réseau réel, interface, différences entre OS — sont dans le [cahier de tests](10-cahier-de-tests.md). Points notables :
 
 - les tests réseau utilisent de **vraies sockets** (`TcpListener::bind("127.0.0.1:0")`, UDP réel) — pas de mocks ;
 - le chiffrement est testé par des handshakes Noise complets en mémoire et entre endpoints réels (y compris le rejet d'un client en clair et le refus sur clé changée) ;

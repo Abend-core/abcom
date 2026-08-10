@@ -70,6 +70,30 @@ Corrections apportées par cette phase — l'ancienne implémentation diffusait 
 
 Bilan : 226 tests verts.
 
+## Août 2026 — Audit de correction et refonte des identifiants de salon
+
+Passe d'audit menée sur l'ensemble du code, suivie de son application. Trois
+défauts de fond, tous silencieux :
+
+| Défaut | Effet |
+|---|---|
+| Le nom d'un salon entrait dans le hash des messages | Renommer un groupe orphelinait d'un coup ses réactions, ses accusés et son repère de lecture |
+| Les accusés partaient avant la persistance | L'expéditeur croyait son message livré alors qu'un arrêt avant commit l'avait fait disparaître ; la file d'envoi durable était vidée dès l'admission dans le canal réseau |
+| L'URL d'un média venue d'un pair était chargée sans filtre | Un message devenait une balise de traçage : l'hôte visé apprenait l'IP du destinataire et l'instant exact de sa lecture, hors de tout accusé |
+
+Corrigés dans la foulée : débordement d'entier sur la péremption des pairs
+(horloge reculée), pagination définitivement bloquée après débordement de la
+fenêtre mémoire, erreurs SQLite invisibles, schémas d'URL non filtrés dans les
+liens, seuil d'acceptation des médias ramené de 1 Gio à 50 Mo, dérivation de
+passphrase sans étirement, un thread OS par pièce jointe, orphelins après
+effacement d'une conversation, et le lanceur Linux qui ne lançait rien.
+
+Le protocole passe en **version 3** : l'identifiant de salon entre dans le hash
+des messages, un pair resté en version 2 calculerait d'autres valeurs.
+
+Bilan : 328 tests verts, et un [cahier de tests manuels](10-cahier-de-tests.md)
+pour ce que l'automatisation ne peut pas voir.
+
 ## Récapitulatif des mesures
 
 | Axe | Avril (baseline) | Après optimisation + sécurisation |
@@ -78,7 +102,7 @@ Bilan : 226 tests verts.
 | RAM (RSS) | 443 Mo | ~155 Mo |
 | Threads | 15 | 8 |
 | Binaire release | — | ~11 Mo |
-| Tests | 0 | 226 |
+| Tests | 0 | 328 |
 | Transport | JSON en clair, 1 connexion/paquet | Noise XX, connexions persistantes |
 | Persistance | JSON réécrit à chaque message | SQLite WAL, écritures hors thread UI |
 

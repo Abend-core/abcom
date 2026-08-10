@@ -34,13 +34,15 @@ Le coût réseau au repos est de deux datagrammes (multicast + broadcast) toutes
 
 Chaque annonce porte une clé Ed25519 de vérification, un horodatage et une signature de `(pseudo, port, clé X25519, clé Ed25519, horodatage)`. La clé de signature est **dérivée de l'identité Noise** par BLAKE2s avec un domaine dédié : `identity.key` garde son format, et une identité produit toujours la même clé de signature.
 
+Le nombre de pairs suivis simultanément est plafonné (512) : une annonce signée ne prouve que la possession d'une clé, pas une identité distincte, et une seule machine peut en fabriquer des milliers sous autant de pseudos.
+
 Une annonce dont la signature ne vérifie pas, ou dont l'horodatage s'écarte de plus de 60 secondes de l'heure locale, est ignorée. Cela ferme trois choses : les annonces fabriquées pour une clé qu'on ne possède pas (pairs fantômes injectés sur le LAN), le détournement du port annoncé, et le rejeu d'annonces capturées.
 
 Cela ne ferme **pas** la première rencontre : un pair peut toujours annoncer le pseudo d'un autre avec sa propre clé, correctement signée (voir le modèle de menace). La source de vérité pour la conversation reste la clé présentée pendant le handshake Noise et épinglée par TOFU.
 
 ## Identité et confiance
 
-**Identité.** Au premier lancement, une paire de clés X25519 est générée et stockée dans `identity.key` (permissions 0600) dans le répertoire de données. L'empreinte BLAKE2s de la clé publique est affichée dans Paramètres → Profil ; deux utilisateurs peuvent la comparer de vive voix pour vérifier une identité.
+**Identité.** Au premier lancement, une paire de clés X25519 est générée et stockée dans `identity.key` dans le répertoire de données. Le fichier est **créé directement en 0600** (ACL restreinte sous Windows) et non resserré après coup, ce qui laissait la clé privée brièvement lisible par tous ; une clé existante est également resserrée à chaque chargement, pour rattraper une restauration de sauvegarde ou un fichier écrit par une version antérieure. L'empreinte BLAKE2s de la clé publique est affichée dans Paramètres → Profil ; deux utilisateurs peuvent la comparer de vive voix pour vérifier une identité.
 
 **TOFU (Trust On First Use).** À la première connexion avec un pair, le couple (pseudo, clé publique) est enregistré dans la table `peers` de la base. À chaque connexion suivante, la clé présentée au handshake doit correspondre à la clé épinglée : en cas de divergence, la connexion est refusée et l'UI affiche une alerte « la clé de X a changé », avec une action explicite pour faire confiance à la nouvelle clé (réinstallation légitime, par exemple).
 
@@ -50,7 +52,7 @@ Cela ne ferme **pas** la première rencontre : un pair peut toujours annoncer le
 
 **Handshake Noise XX.** Chaque connexion commence par un handshake `Noise_XX_25519_ChaChaPoly_BLAKE2s` (crate `snow`, 3 messages, 1,5 aller-retour — négligeable sur un LAN). Le `Hello` qui suit porte le pseudo, la version de protocole et les capacités ; une version incompatible est rejetée explicitement. Chaque paquet reçu est ensuite recoupé avec l'auteur authentifié par la session.
 
-**Passphrase de salon (optionnelle).** Si la variable `ABCOM_PASSPHRASE` est définie (environnement ou fichier `.env`), le handshake passe en `XXpsk3` avec un secret pré-partagé dérivé de la passphrase (BLAKE2s). Sans la bonne passphrase, aucun handshake n'aboutit : c'est un moyen simple de cloisonner un groupe de machines sur un réseau partagé. L'état (actif ou non) est visible dans Paramètres → Profil. Tous les pairs doivent partager la même valeur.
+**Passphrase de salon (optionnelle).** Si la variable `ABCOM_PASSPHRASE` est définie (environnement ou fichier `.env`), le handshake passe en `XXpsk3` avec un secret pré-partagé dérivé de la passphrase. La dérivation est **itérée avec un sel de domaine** : un hachage unique se calcule des millions de fois par seconde, si bien qu'un dictionnaire de passphrases courantes tombait au rythme du processeur. L'attaque reste en ligne — XXpsk3 n'autorise pas la vérification hors ligne depuis une capture passive — mais chaque tentative coûte désormais une dérivation complète à l'attaquant, pour un coût nul à l'usage : le calcul n'a lieu qu'au démarrage (~30 ms en release). Sans la bonne passphrase, aucun handshake n'aboutit : c'est un moyen simple de cloisonner un groupe de machines sur un réseau partagé. L'état (actif ou non) est visible dans Paramètres → Profil. Tous les pairs doivent partager la même valeur.
 
 **Médias.** Le port média utilise la même mécanique (handshake Noise, trames chiffrées). Les fichiers sont découpés en tranches de 60 Ko ; la progression est signalée à l'UI au plus toutes les 100 ms pour ne pas plafonner le débit sur la boucle de rendu.
 
@@ -70,7 +72,9 @@ Tous les échanges de chat sont des `NetworkPacket` (enum JSON taggé, [message/
 
 La version de protocole vaut **3** depuis le passage des salons à un identifiant immuable : cet identifiant entre dans le hash des messages, donc un pair resté en version 2 calculerait des hashs différents et ses accusés ne correspondraient à rien. Un pair d'une version différente est rejeté au `Hello`.
 
-Les messages sont identifiés sur le réseau par un hash FNV-1a déterministe de (expéditeur, destinataire, timestamp epoch, contenu) — stable entre machines et plateformes, contrairement au `DefaultHasher` utilisé à l'origine.
+Les messages sont identifiés sur le réseau par un hash FNV-1a déterministe de (expéditeur, destinataire, timestamp epoch, contenu, identifiant du média, nonce) — stable entre machines et plateformes, contrairement au `DefaultHasher` utilisé à l'origine. L'expéditeur le calcule à l'envoi, le destinataire le recalcule à la réception pour son accusé : les deux doivent tomber sur la même valeur.
+
+Pour un salon, le champ « destinataire » porte l'**identifiant** du salon et non son nom. C'est ce qui permet de renommer un groupe sans invalider un seul hash — donc sans orpheliner ses réactions, ses accusés et son repère de lecture.
 
 ## Modèle de menace
 
@@ -83,7 +87,12 @@ Les messages sont identifiés sur le réseau par un hash FNV-1a déterministe de
 - **Métadonnées de découverte** : l'annonce UDP (pseudo + empreinte) est visible par tout le LAN — c'est la fonction même de la découverte.
 - **Événements de groupe non signés** : l'auteur de la session est authentifié et ses droits sont vérifiés localement, mais un événement n'est pas transférable avec une preuve cryptographique hors de cette session.
 - **Identifiants de messages devinables** : les réactions, réponses et accusés ciblent un message par son hash FNV-1a, qui n'est pas cryptographique. Un pair authentifié peut donc forger un identifiant plausible pour cibler un message qu'il n'a pas reçu. L'impact est limité (il faut déjà être un pair authentifié), mais c'est une raison de ne pas transformer ce hash en identifiant de sécurité.
-- **Robustesse d'entrée** : le serveur limite la taille des trames et applique un timeout de lecture ; les paquets invalides sont ignorés sans faire tomber le service.
+- **Robustesse d'entrée** : le serveur limite la taille des trames, plafonne les connexions entrantes simultanées et applique des timeouts de lecture ; les paquets invalides sont ignorés sans faire tomber le service.
+
+**Fermé depuis l'audit d'août 2026** :
+
+- **Traçage par média distant** : le champ `url` d'un média arrive d'un pair et le chargeur d'images déclenche une requête HTTP dès que le message devient visible, sans clic. N'importe quel pair pouvait donc transformer un message en balise : l'hôte visé apprenait l'adresse IP du destinataire et l'instant exact de sa lecture, hors de tout accusé, alors que le reste de l'application ne sort jamais du LAN. Le chargement est désormais restreint à `https://*.klipy.com` (correspondance par suffixe de domaine, identifiants d'URL écartés) ; une URL rejetée retombe sur une carte fichier au lieu d'émettre une requête.
+- **Schémas d'URL dans les messages** : un lien Markdown reçu était rendu cliquable quel que soit son schéma. Seuls `http` et `https` le sont désormais — `file://`, `smb://` (fuite d'empreinte NTLM sous Windows) et les schémas applicatifs enregistrés restent du texte brut.
 
 ### Passphrase de salon : ce qu'elle protège, et ce qu'elle ne protège pas
 
