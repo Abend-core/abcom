@@ -112,7 +112,7 @@ pub async fn run(
 
                 let disconnected: Vec<String> = peer_timestamps
                     .iter()
-                    .filter(|(_, last_seen)| now - *last_seen >= DISCOVERY_TIMEOUT)
+                    .filter(|(_, last_seen)| peer_is_stale(now, **last_seen))
                     .map(|(username, _)| username.clone())
                     .collect();
 
@@ -162,6 +162,16 @@ pub async fn run(
             }
         }
     }
+}
+
+/// Un pair est-il silencieux depuis trop longtemps ?
+///
+/// `saturating_sub` et non `-` : une horloge corrigée en arrière (NTP, réglage
+/// manuel, reprise de VM) rend `last_seen > now`. La soustraction déborderait
+/// alors — tous les pairs seraient déclarés perdus d'un coup en release, et la
+/// tâche de découverte paniquerait en debug, sans jamais redémarrer.
+fn peer_is_stale(now: u64, last_seen: u64) -> bool {
+    now.saturating_sub(last_seen) >= DISCOVERY_TIMEOUT
 }
 
 fn now_epoch() -> u64 {

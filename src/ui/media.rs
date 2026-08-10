@@ -138,7 +138,7 @@ pub(crate) fn render_media_progress(
         .show(ui, |ui| {
             ui.set_width(width);
             if progress.waiting {
-                // En attente de l'acceptation du destinataire (média > 1 Go).
+                // En attente de l'acceptation du destinataire (média au-delà du seuil d'accord).
                 ui.label(
                     egui::RichText::new(format!(
                         "⏳ En attente d'envoi : {}",

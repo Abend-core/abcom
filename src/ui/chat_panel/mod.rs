@@ -659,7 +659,7 @@ impl AbcomApp {
                         }
                     }
 
-                    // Offres de médias volumineux (> 1 Go) à accepter/refuser.
+                    // Offres de médias volumineux (au-delà du seuil d'accord) à accepter/refuser.
                     self.render_media_offers(ui);
                 });
 
@@ -703,7 +703,7 @@ impl AbcomApp {
         });
     }
 
-    /// Bandeaux d'acceptation des médias volumineux (> 1 Go) reçus. Accepter →
+    /// Bandeaux d'acceptation des médias volumineux (au-delà du seuil d'accord) reçus. Accepter →
     /// le pair streame alors le média ; Refuser → l'envoi est abandonné.
     fn render_media_offers(&mut self, ui: &mut egui::Ui) {
         if self.media.pending_offers.is_empty() {

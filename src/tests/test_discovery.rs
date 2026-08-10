@@ -95,3 +95,17 @@ fn a_foreign_key_cannot_sign_for_another_identity() {
     let forged: DiscoveryPacket = serde_json::from_slice(&bytes).unwrap();
     assert!(!super::announcement_is_authentic(&forged, 1_000));
 }
+
+#[test]
+fn a_backward_clock_jump_does_not_drop_every_peer() {
+    // Pair vu à l'instant : pas encore périmé.
+    assert!(!super::peer_is_stale(1_000, 1_000));
+    // Silencieux au-delà du délai : périmé.
+    assert!(super::peer_is_stale(
+        1_000 + super::DISCOVERY_TIMEOUT,
+        1_000
+    ));
+    // Horloge reculée de 100 s : `now - last_seen` déborderait et déclarerait
+    // le pair perdu. Il doit rester considéré comme frais.
+    assert!(!super::peer_is_stale(1_000, 1_100));
+}

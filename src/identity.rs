@@ -24,6 +24,10 @@ impl Identity {
         let path = base.join("identity.key");
         if let Ok(bytes) = std::fs::read(&path) {
             if bytes.len() == 64 {
+                // Une clé restaurée depuis une sauvegarde ou écrite par une
+                // version antérieure peut porter des permissions larges : on
+                // resserre à chaque chargement, pas seulement à la création.
+                restrict_to_owner(&path);
                 return Ok(Self {
                     private: bytes[..32].to_vec(),
                     public: bytes[32..].to_vec(),
@@ -41,8 +45,7 @@ impl Identity {
         let mut bytes = keypair.private.clone();
         bytes.extend_from_slice(&keypair.public);
         std::fs::create_dir_all(base)?;
-        std::fs::write(&path, &bytes)?;
-        restrict_to_owner(&path);
+        write_private(&path, &bytes)?;
         tracing::info!(
             "nouvelle identité générée ({})",
             fingerprint(&keypair.public)
@@ -100,6 +103,28 @@ impl Identity {
 /// Hexadécimal minuscule.
 pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Écrit un secret dans un fichier créé d'emblée restreint à son propriétaire.
+///
+/// `std::fs::write` créerait le fichier selon l'umask (0644 le plus souvent)
+/// et ne le resserrerait qu'ensuite : la clé privée serait lisible par tous
+/// pendant cet intervalle. `mode` ne s'applique qu'à la création, d'où l'appel
+/// à `restrict_to_owner` qui couvre la réécriture d'un fichier existant.
+fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(path)?;
+    file.write_all(bytes)?;
+    restrict_to_owner(path);
+    Ok(())
 }
 
 /// Réserve la clé à son propriétaire : 0600 sur Unix, réécriture d'ACL sur Windows où il est sans effet.
