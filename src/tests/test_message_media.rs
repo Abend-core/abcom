@@ -90,3 +90,27 @@ fn stream_header_round_trip() {
     assert!(back.requires_ack);
     assert_eq!(back.to_user.as_deref(), Some("ellis"));
 }
+
+#[test]
+fn only_klipy_https_urls_are_loadable() {
+    use crate::message::media_url_is_loadable;
+
+    assert!(media_url_is_loadable("https://klipy.com/a.webp"));
+    assert!(media_url_is_loadable("https://cdn.klipy.com/a.webp"));
+    assert!(media_url_is_loadable("https://CDN.KLIPY.COM/a.webp"));
+
+    // Balise de traçage : hôte tiers, chargé sans clic à l'affichage.
+    assert!(!media_url_is_loadable("https://pisteur.example/beacon.gif"));
+    // Suffixe usurpé : un `contains` naïf laisserait passer.
+    assert!(!media_url_is_loadable(
+        "https://klipy.com.pirate.example/a.webp"
+    ));
+    assert!(!media_url_is_loadable("https://notklipy.com/a.webp"));
+    // Identifiants d'URL détournant l'analyse de l'hôte.
+    assert!(!media_url_is_loadable(
+        "https://klipy.com@pirate.example/a.webp"
+    ));
+    // En clair : refusé même sur le bon hôte.
+    assert!(!media_url_is_loadable("http://klipy.com/a.webp"));
+    assert!(!media_url_is_loadable("file:///etc/passwd"));
+}
