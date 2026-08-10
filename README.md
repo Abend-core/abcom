@@ -53,10 +53,10 @@ Installation par plateforme (Linux/systemd, Windows, Docker) : voir [docs/06-ins
 | [09 — Limites et pistes](docs/09-limites-et-pistes.md) | Limites connues et travaux envisagés |
 | [10 — Cahier de tests](docs/10-cahier-de-tests.md) | Tests manuels : fonctionnalités, régressions, spécificités par OS |
 
-Pour contribuer : [CONTRIBUTING.md](CONTRIBUTING.md) (barrière verte, conventions, workflow Git). Le suivi au fil de l'eau est dans [CHANGELOG.md](CHANGELOG.md) et [AVANCEMENT.md](AVANCEMENT.md). Les documents historiques (audits et plans d'origine, ADR, anciennes versions) sont conservés tels quels dans [old/](old/).
+Pour contribuer : [CONTRIBUTING.md](CONTRIBUTING.md) (barrière verte, conventions, workflow Git). Le suivi au fil de l'eau est dans [CHANGELOG.md](CHANGELOG.md). Les documents historiques (audits et plans exécutés, ADR, anciennes versions) sont conservés tels quels dans [old/](old/), indexés par [old/INDEX.md](old/INDEX.md).
 
 ## État du projet
 
-Version **1.0.0-beta.1**, sous licence **AGPL-3.0**. 308 tests automatisés — dont un scénario P2P headless externe et un rendu headless de toute l'interface — et CI GitHub Actions sur Linux, macOS et Windows, avec MSRV, `cargo audit`, `cargo deny` et mesure de couverture.
+Version **1.0.0-beta.1**, sous licence **AGPL-3.0**. 328 tests automatisés — dont un scénario P2P headless externe et un rendu headless de toute l'interface — et CI GitHub Actions sur Linux, macOS et Windows, avec MSRV, `cargo audit`, `cargo deny` et mesure de couverture.
 
-Ce qui reste ouvert est listé dans [AUDIT.md](AUDIT.md) (dette de code) et [AUDIT-DEPENDANCES.md](AUDIT-DEPENDANCES.md) (ce que nos dépendances offrent et qu'on n'exploite pas).
+Ce qui reste ouvert est listé dans [docs/09 — Limites et pistes](docs/09-limites-et-pistes.md) et [AUDIT-DEPENDANCES.md](AUDIT-DEPENDANCES.md) (ce que nos dépendances offrent et qu'on n'exploite pas).

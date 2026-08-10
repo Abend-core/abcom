@@ -1,6 +1,15 @@
 # Documentation historique
 
-Ce dossier conserve, sans modification, la documentation antérieure à la refonte du 5 juillet 2026. Elle a été remplacée par la documentation consolidée de [docs/](../docs/) et n'est **plus tenue à jour** : certains contenus décrivent des états dépassés du projet (persistance JSON, protocole en clair, absence de tests…).
+Ce dossier conserve, sans modification, la documentation antérieure à la refonte du 5 juillet 2026, ainsi que les supports de travail dont l'exécution est terminée. Rien ici n'est **tenu à jour** : certains contenus décrivent des états dépassés du projet (persistance JSON, protocole en clair, absence de tests…), et les liens vers le code pointent vers une arborescence qui a changé depuis.
+
+## Supports de travail exécutés
+
+| Document | Contenu | Repris dans |
+|---|---|---|
+| `AUDIT-code-2026-08.md` | Audit qualité d'août 2026 : checklist de dette de code, 69 des 71 points appliqués | [docs/08](../docs/08-historique-et-audits.md), [docs/09](../docs/09-limites-et-pistes.md) |
+| `PLAN-MAINTENABILITE-2026-08.md` | Plan d'exécution séquencé (phases P1 à P6) de cet audit, déroulé intégralement | [docs/08](../docs/08-historique-et-audits.md) |
+
+## Documentation antérieure à juillet 2026
 
 | Document | Contenu | Repris dans |
 |---|---|---|

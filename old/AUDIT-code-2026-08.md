@@ -6,7 +6,7 @@
 > Chaque point référence les fichiers concernés ; cocher au fur et à mesure.
 >
 > **Un plan d'exécution détaillé et séquencé — pensé pour être déroulé pas à pas —
-> est dans [`PLAN-MAINTENABILITE.md`](PLAN-MAINTENABILITE.md).**
+> est dans [`PLAN-MAINTENABILITE.md`](PLAN-MAINTENABILITE-2026-08.md).**
 
 ### Revérification du 8 août 2026 (branche `dev`)
 
@@ -194,7 +194,7 @@ implémenté.
 - [x] 🟠 `cargo audit` seulement sur `main`, réinstallé à chaque run — **fait
   (08/08)** : job `supply-chain` sur **`dev` et `main`**, binaires pré-compilés
   (`taiki-e/install-action`, plus de `cargo install`), et **`cargo deny`** ajouté
-  (licences, sources, doublons de crates) avec [`deny.toml`](deny.toml).
+  (licences, sources, doublons de crates) avec [`deny.toml`](../deny.toml).
 - [x] 🟠 Collage trop long écrit dans `std::env::temp_dir()` — **fait (08/08)** :
   écrit dans `<données>/scratch/` (dossier 0700, fichier 0600), purgé après 24 h.
   La suppression immédiate après envoi n'est pas possible — le transfert média lit
@@ -292,7 +292,7 @@ implémenté.
 - [x] 🟠 CI seulement sur `ubuntu-latest` — **fait (07/08)** : job `platform-check`
   (`macos-latest`, `windows-latest`) sur `dev` **et** `main`.
 - [x] 🟠 Pas de pipeline de **release** — **fait (08/08)** :
-  [`release.yml`](.github/workflows/release.yml) construit les trois cibles sur tag
+  [`release.yml`](../.github/workflows/release.yml) construit les trois cibles sur tag
   `v*`, publie une GitHub Release avec les archives et `SHA256SUMS.txt`, et marque
   les préversions comme telles. **La signature macOS reste absente** (aucun
   certificat dans les secrets) : la limite est écrite en tête du workflow et dans
@@ -303,7 +303,7 @@ implémenté.
   `libsqlite3-sys` (via `rusqlite` 0.40), qui échoue dès 1.94 — la MSRV est donc
   aujourd'hui égale au dernier stable, et pourra redescendre.
 - [x] 🟢 `cargo outdated` périodique — **fait (08/08)** :
-  [`dependencies.yml`](.github/workflows/dependencies.yml), mensuel, rapport
+  [`dependencies.yml`](../.github/workflows/dependencies.yml), mensuel, rapport
   `cargo outdated` + `cargo audit` sans blocage.
 
 ## 10. Documentation
@@ -376,7 +376,7 @@ points restants ne sont pas du code :
 **Chantiers volontairement abandonnés** (ne pas les rouvrir sans raison
 nouvelle) : `rfd` asynchrone, actions de notification, virtualisation du fil,
 tables `STRICT`, `RETURNING` — justifications dans
-[`AUDIT-DEPENDANCES.md` §8](AUDIT-DEPENDANCES.md). Les items de confort
+[`AUDIT-DEPENDANCES.md` §8](../AUDIT-DEPENDANCES.md). Les items de confort
 (benches criterion, proptest, format binaire du protocole, états vides,
 githooks partagés) ont été retirés de cette liste : ils n'apportaient rien qui
 justifie de rester au tableau.
