@@ -426,16 +426,6 @@ impl AbcomApp {
                                             }
                                         }
 
-                                        let aa_btn = action_button(
-                                            ui,
-                                            egui::RichText::new("Aa")
-                                                .size(11.5)
-                                                .color(crate::ui::theme::palette(ui).text),
-                                            self.t(i18n::MISE_EN_FORME_BIENTOT_DISPONIBLE),
-                                            false,
-                                        );
-                                        aa_btn.clicked();
-
                                         let plus_btn = icon_button(
                                             ui,
                                             self.t(i18n::AJOUTER_DES_FICHIERS_OU_DOSSIERS),
