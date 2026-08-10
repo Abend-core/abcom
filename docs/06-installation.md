@@ -22,7 +22,7 @@ Lues depuis l'environnement ou un fichier `.env` à la racine du répertoire cou
 |---|---|
 | `ABCOM_PASSPHRASE` | Passphrase de salon : seules les machines partageant la même valeur peuvent se connecter entre elles (handshake `XXpsk3`) |
 | `ABCOM_KLIPY_API_KEY` | Clé API Klipy — nécessaire au sélecteur GIF/mèmes/stickers |
-| `ABCOM_INSTANCE` | Numéro d'instance pour lancer plusieurs Abcom sur la même machine (ports et données séparés) |
+| `ABCOM_INSTANCE` | Numéro d'instance pour lancer plusieurs Abcom sur la même machine (ports et données séparés). Plafonné à ce que la plage de ports permet : une valeur trop grande est ramenée au maximum au lieu de déborder sur des ports déjà attribués |
 
 ### Tester le P2P en local
 
@@ -43,7 +43,7 @@ compile en release puis :
 
 - copie le binaire dans `~/.local/bin/abcom` ;
 - installe le service utilisateur [contrib/abcom.service](../contrib/abcom.service) dans `~/.config/systemd/user/` ;
-- crée un lanceur desktop dans `~/.local/share/applications/`.
+- crée un lanceur desktop dans `~/.local/share/applications/`, pointant sur le chemin absolu du binaire (`%h` est un spécificateur systemd : dans un fichier `.desktop` il n'est pas développé et le raccourci ne lance rien).
 
 Activation du service (session graphique requise, aucun droit root) :
 
