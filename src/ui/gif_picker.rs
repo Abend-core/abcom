@@ -6,6 +6,7 @@
 //! Attribution obligatoire ToS Klipy : logo « Powered by KLIPY » en pied
 //! de fenêtre, adapté au thème clair/sombre.
 
+use super::i18n;
 use eframe::egui;
 
 use crate::message::{ChatMessage, MediaAttachment, MediaKind};
@@ -75,7 +76,7 @@ fn show_feed_grid(
                         ui.label(loading_label);
                     }
                     GifStatus::Error(_) => {
-                        ui.colored_label(egui::Color32::from_rgb(220, 110, 110), error_label);
+                        ui.colored_label(crate::ui::theme::palette(ui).danger, error_label);
                     }
                     _ => {
                         ui.weak(empty_label);
@@ -169,18 +170,18 @@ impl AbcomApp {
         }
 
         let tab_gif_label = "GIF";
-        let tab_meme_label = self.tr("Mèmes", "Memes");
+        let tab_meme_label = self.t(i18n::MEMES);
         let tab_sticker_label = "Stickers";
-        let search_hint = self.tr("Search KLIPY", "Search KLIPY");
-        let loading_label = self.tr("Chargement…", "Loading…");
-        let empty_label = self.tr("Aucun résultat", "No results");
-        let error_label = self.tr("Erreur de chargement", "Loading error");
+        let search_hint = self.t(i18n::SEARCH_KLIPY);
+        let loading_label = self.t(i18n::CHARGEMENT);
+        let empty_label = self.t(i18n::AUCUN_RESULTAT);
+        let error_label = self.t(i18n::ERREUR_DE_CHARGEMENT);
 
         let mut picker_rect: Option<egui::Rect> = None;
         let mut chosen: Option<GifItem> = None;
         let mut want_load_more = false;
 
-        let window = egui::Window::new(self.tr("GIF & Stickers", "GIF & Stickers"))
+        let window = egui::Window::new(self.t(i18n::GIF_STICKERS))
             .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-8.0, -60.0))
             .resizable(false)
             .collapsible(false)

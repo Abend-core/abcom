@@ -1,3 +1,4 @@
+use super::i18n;
 use super::{sound::play_notification_sound, AbcomApp};
 use crate::app::AppState;
 use crate::message::{
@@ -232,10 +233,7 @@ impl AbcomApp {
                 } => {
                     // Clé non concordante : connexion refusée, la modale offre le ré-appairage.
                     self.modals.key_mismatch = Some((username.clone(), offered_key));
-                    let label = self.tr(
-                        "la clé d'identité a changé, connexion refusée",
-                        "identity key changed, connection refused",
-                    );
+                    let label = self.t(i18n::LA_CLE_D_IDENTITE_A_CHANGE);
                     self.last_notification = Some(format!("⚠️ {} : {}", username, label));
                     self.notification_time = std::time::Instant::now();
                     if self.window_hidden {
@@ -253,10 +251,7 @@ impl AbcomApp {
                 }
                 AppEvent::SendFailed { username } => {
                     // Sans ceci, l'échec disparaît dans les logs d'un binaire sans console.
-                    let label = self.tr(
-                        "injoignable, message non envoyé",
-                        "unreachable, message not sent",
-                    );
+                    let label = self.t(i18n::INJOIGNABLE_MESSAGE_NON_ENVOYE);
                     self.last_notification = Some(format!("{username} : {label}"));
                     self.notification_time = std::time::Instant::now();
                 }
@@ -300,7 +295,7 @@ impl AbcomApp {
                     };
                     s.add_message(msg.clone());
                     if from != s.my_username {
-                        let label = self.tr("vous envoie un fichier", "is sending you a file");
+                        let label = self.t(i18n::VOUS_ENVOIE_UN_FICHIER);
                         self.last_notification = Some(format!("{} {}", from, label));
                         self.notification_time = std::time::Instant::now();
                         self.has_unread = true;
@@ -320,10 +315,8 @@ impl AbcomApp {
                             self.media.textures.remove(&id);
                             s.remove_media_message(&id);
                         }
-                        self.last_notification = Some(
-                            self.tr("Transfert média interrompu", "Media transfer interrupted")
-                                .to_string(),
-                        );
+                        self.last_notification =
+                            Some(self.t(i18n::TRANSFERT_MEDIA_INTERROMPU).to_string());
                         self.notification_time = std::time::Instant::now();
                     } else if progress.finished {
                         self.media.progress.remove(&id);
@@ -342,11 +335,8 @@ impl AbcomApp {
                         &header.media.filename,
                         header.to_user.clone(),
                     ));
-                    self.last_notification = Some(format!(
-                        "{} : {}",
-                        peer,
-                        self.tr("fichier refusé", "file declined")
-                    ));
+                    self.last_notification =
+                        Some(format!("{} : {}", peer, self.t(i18n::FICHIER_REFUSE)));
                     self.notification_time = std::time::Instant::now();
                 }
             }
@@ -376,7 +366,7 @@ impl AbcomApp {
                     continue;
                 }
             }
-            let label = self.tr("vous envoie un fichier", "is sending you a file");
+            let label = self.t(i18n::VOUS_ENVOIE_UN_FICHIER);
             self.last_notification = Some(format!("{} {}", offer.from, label));
             self.notification_time = std::time::Instant::now();
             self.has_unread = true;
@@ -413,13 +403,8 @@ impl AbcomApp {
                 }
             }
             if !failed.is_empty() {
-                self.last_notification = Some(
-                    self.tr(
-                        "Échec de livraison d'un message privé",
-                        "A private message could not be delivered",
-                    )
-                    .to_string(),
-                );
+                self.last_notification =
+                    Some(self.t(i18n::ECHEC_DE_LIVRAISON_D_UN_MESSAGE).to_string());
                 self.notification_time = std::time::Instant::now();
             }
         }

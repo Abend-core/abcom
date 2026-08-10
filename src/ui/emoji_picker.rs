@@ -1,3 +1,4 @@
+use super::i18n;
 use eframe::egui;
 
 use super::composer;
@@ -88,7 +89,7 @@ impl AbcomApp {
         }
 
         let mut picker_rect: Option<egui::Rect> = None;
-        let picker_window = egui::Window::new(self.tr("Emojis", "Emojis"))
+        let picker_window = egui::Window::new(self.t(i18n::EMOJIS))
             .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-8.0, -60.0))
             .resizable(false)
             .collapsible(false)

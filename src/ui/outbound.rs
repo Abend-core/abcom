@@ -1,3 +1,4 @@
+use super::i18n;
 use tokio::sync::mpsc;
 
 use crate::app::{AppState, ConversationId, TransferTarget};
@@ -58,27 +59,18 @@ impl AbcomApp {
                 state.add_message(message.clone());
                 state.queue_offline(message, peer.clone());
                 drop(state);
-                self.set_enqueue_error(
-                    "Destinataire hors ligne : envoi à sa reconnexion",
-                    "Recipient offline: will be sent when they reconnect",
-                );
+                self.set_enqueue_error(i18n::DESTINATAIRE_HORS_LIGNE_ENVOI_A);
                 return true;
             }
         }
         let requests = match queue_chat_requests(&self.net.send_tx, &targets, &message) {
             Ok(requests) => requests,
             Err(QueueError::Full) => {
-                self.set_enqueue_error(
-                    "File d'envoi pleine, message conservé",
-                    "Send queue full, message kept",
-                );
+                self.set_enqueue_error(i18n::FILE_D_ENVOI_PLEINE_MESSAGE_CONSERVE);
                 return false;
             }
             Err(QueueError::Closed) => {
-                self.set_enqueue_error(
-                    "Réseau indisponible, message conservé",
-                    "Network unavailable, message kept",
-                );
+                self.set_enqueue_error(i18n::RESEAU_INDISPONIBLE_MESSAGE_CONSERVE);
                 return false;
             }
         };
@@ -94,8 +86,8 @@ impl AbcomApp {
         true
     }
 
-    fn set_enqueue_error(&mut self, french: &'static str, english: &'static str) {
-        self.last_notification = Some(self.tr(french, english).to_string());
+    fn set_enqueue_error(&mut self, entry: i18n::Entry) {
+        self.last_notification = Some(self.t(entry).to_string());
         self.notification_time = std::time::Instant::now();
     }
 }

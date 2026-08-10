@@ -1,4 +1,5 @@
 use crate::message::{TypingIndicator, TypingRequest};
+use crate::ui::i18n;
 use crate::util::MutexExt;
 use eframe::egui;
 
@@ -33,10 +34,7 @@ impl AbcomApp {
             Err(err) => {
                 self.last_notification = Some(format!(
                     "{} : {err}",
-                    self.tr(
-                        "Impossible d'écrire le texte collé",
-                        "Could not write pasted text",
-                    )
+                    self.t(i18n::IMPOSSIBLE_D_ECRIRE_LE_TEXTE_COLLE)
                 ));
                 self.notification_time = std::time::Instant::now();
                 return;
@@ -50,21 +48,13 @@ impl AbcomApp {
                     let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
                 }
                 self.composer.pending_attachments.push(path);
-                self.last_notification = Some(
-                    self.tr(
-                        "Texte collé trop long : joint en fichier .txt",
-                        "Pasted text too long: attached as .txt file",
-                    )
-                    .to_string(),
-                );
+                self.last_notification =
+                    Some(self.t(i18n::TEXTE_COLLE_TROP_LONG_JOINT_EN).to_string());
             }
             Err(err) => {
                 self.last_notification = Some(format!(
                     "{} : {err}",
-                    self.tr(
-                        "Impossible d'écrire le texte collé",
-                        "Could not write pasted text",
-                    )
+                    self.t(i18n::IMPOSSIBLE_D_ECRIRE_LE_TEXTE_COLLE)
                 ));
             }
         }
@@ -88,12 +78,9 @@ impl AbcomApp {
                 .show(ui, |ui| {
                     ui.centered_and_justified(|ui| {
                         ui.label(
-                            egui::RichText::new(self.tr(
-                                "🔴 Hors ligne — votre message partira à sa reconnexion",
-                                "🔴 Offline — your message will be sent when they reconnect",
-                            ))
-                            .color(egui::Color32::from_rgb(180, 40, 40))
-                            .small(),
+                            egui::RichText::new(self.t(i18n::HORS_LIGNE_VOTRE_MESSAGE_PARTIRA_A))
+                                .color(crate::ui::theme::palette(ui).danger)
+                                .small(),
                         );
                     });
                 });
@@ -103,8 +90,8 @@ impl AbcomApp {
         let mut gif_button_clicked = false;
         let mut picker_action: Option<AttachmentMenuAction> = None;
         let typing_list = self.sidebar_cache.typing.clone();
-        let add_files_label = self.tr("Ajouter des fichiers", "Add files");
-        let add_folder_label = self.tr("Ajouter un dossier", "Add folder");
+        let add_files_label = self.t(i18n::AJOUTER_DES_FICHIERS);
+        let add_folder_label = self.t(i18n::AJOUTER_UN_DOSSIER);
 
         // Marge uniforme entre les bords du panneau et le cadre du composant
         // (la marge par défaut du panneau est plus large sur les côtés).
@@ -112,10 +99,10 @@ impl AbcomApp {
             .resizable(false)
             .frame(egui::Frame::side_top_panel(&ui.style().clone()).inner_margin(egui::Margin::same(8)))
             .show(ui, |ui| {
-                let gif_label = self.tr("GIF", "GIF");
+                let gif_label = self.t(i18n::GIF);
                 egui::Frame::default()
-                    .fill(egui::Color32::from_rgb(66, 66, 69))
-                    .stroke(egui::Stroke::new(1.0, super::theme::SEPARATOR))
+                    .fill(crate::ui::theme::palette(ui).surface_strong)
+                    .stroke(egui::Stroke::new(1.0, crate::ui::theme::palette(ui).separator))
                     .corner_radius(egui::CornerRadius::same(14))
                     .inner_margin(egui::Margin::symmetric(8, 4))
                     .show(ui, |ui| {
@@ -132,7 +119,7 @@ impl AbcomApp {
                                 )
                             });
                             if let Some((author, snippet, media)) = reply_preview {
-                                let reply_to_label = self.tr("Répondre à", "Replying to");
+                                let reply_to_label = self.t(i18n::REPONDRE_A);
                                 let texture = media
                                     .as_ref()
                                     .filter(|m| m.kind == crate::message::MediaKind::Image)
@@ -141,7 +128,7 @@ impl AbcomApp {
                                 // « Répondre à » discret, nom en gras, extrait
                                 // tronqué, croix collée à droite.
                                 egui::Frame::default()
-                                    .fill(egui::Color32::from_rgb(52, 53, 58))
+                                    .fill(crate::ui::theme::palette(ui).surface)
                                     .corner_radius(egui::CornerRadius::same(10))
                                     .inner_margin(egui::Margin::symmetric(10, 6))
                                     .show(ui, |ui| {
@@ -155,17 +142,17 @@ impl AbcomApp {
                                             ui.painter().rect_filled(
                                                 accent,
                                                 2.0,
-                                                egui::Color32::from_rgb(88, 101, 242),
+                                                crate::ui::theme::palette(ui).accent,
                                             );
                                             ui.label(
                                                 egui::RichText::new(reply_to_label)
                                                     .small()
-                                                    .color(egui::Color32::from_gray(160)),
+                                                    .color(crate::ui::theme::palette(ui).text_muted),
                                             );
                                             ui.label(
                                                 egui::RichText::new(&author)
                                                     .small()
-                                                    .color(egui::Color32::from_rgb(100, 180, 255))
+                                                    .color(crate::ui::theme::palette(ui).receipt_read)
                                                     .family(egui::FontFamily::Name(
                                                         super::BOLD_FAMILY.into(),
                                                     )),
@@ -194,9 +181,7 @@ impl AbcomApp {
                                                                     egui::RichText::new(&snippet)
                                                                         .small()
                                                                         .color(
-                                                                            egui::Color32::from_gray(
-                                                                                150,
-                                                                            ),
+                                                                            crate::ui::theme::palette(ui).text_muted,
                                                                         ),
                                                                 )
                                                                 .truncate(),
@@ -217,11 +202,11 @@ impl AbcomApp {
                                 // (défilement au-delà de quelques lignes).
                                 let count = self.composer.pending_attachments.len();
                                 let attachments_label =
-                                    self.tr("Pièces jointes", "Attachments");
-                                let add_files_btn_label = self.tr("+ Fichiers", "+ Files");
-                                let add_folder_btn_label = self.tr("+ Dossier", "+ Folder");
+                                    self.t(i18n::PIECES_JOINTES);
+                                let add_files_btn_label = self.t(i18n::FICHIERS);
+                                let add_folder_btn_label = self.t(i18n::DOSSIER);
                                 egui::Frame::default()
-                                    .fill(egui::Color32::from_rgb(52, 53, 58))
+                                    .fill(crate::ui::theme::palette(ui).surface)
                                     .corner_radius(egui::CornerRadius::same(10))
                                     .inner_margin(egui::Margin::symmetric(10, 6))
                                     .show(ui, |ui| {
@@ -235,17 +220,17 @@ impl AbcomApp {
                                             ui.painter().rect_filled(
                                                 accent,
                                                 2.0,
-                                                egui::Color32::from_rgb(88, 101, 242),
+                                                crate::ui::theme::palette(ui).accent,
                                             );
                                             ui.label(
                                                 egui::RichText::new(attachments_label)
                                                     .small()
-                                                    .color(egui::Color32::from_gray(160)),
+                                                    .color(crate::ui::theme::palette(ui).text_muted),
                                             );
                                             ui.label(
                                                 egui::RichText::new(count.to_string())
                                                     .small()
-                                                    .color(egui::Color32::from_rgb(100, 180, 255))
+                                                    .color(crate::ui::theme::palette(ui).receipt_read)
                                                     .family(egui::FontFamily::Name(
                                                         super::BOLD_FAMILY.into(),
                                                     )),
@@ -358,7 +343,7 @@ impl AbcomApp {
                             ui.painter().hline(
                                 sep_rect.x_range(),
                                 sep_rect.center().y,
-                                egui::Stroke::new(1.0, super::theme::SEPARATOR),
+                                egui::Stroke::new(1.0, crate::ui::theme::palette(ui).separator),
                             );
                             ui.add_space(3.0);
 
@@ -375,7 +360,7 @@ impl AbcomApp {
 
                                         let send_btn = icon_button(
                                             ui,
-                                            self.tr("Envoyer", "Send"),
+                                            self.t(i18n::ENVOYER),
                                             false,
                                             paint_send_icon,
                                         );
@@ -387,7 +372,7 @@ impl AbcomApp {
                                             if let Some(tex) = self.emoji.textures.get(ui.ctx(), 0) {
                                                 icon_button(
                                                     ui,
-                                                    self.tr("Emojis", "Emoji"),
+                                                    self.t(i18n::BOUTON_EMOJIS),
                                                     self.show_emoji_picker,
                                                     |painter, rect, _| {
                                                         painter.image(
@@ -406,10 +391,10 @@ impl AbcomApp {
                                                     ui,
                                                     egui::RichText::new("Em")
                                                         .size(16.0)
-                                                        .color(egui::Color32::from_rgb(
-                                                            244, 245, 247,
-                                                        )),
-                                                    self.tr("Emojis", "Emoji"),
+                                                        .color(
+                                                            crate::ui::theme::palette(ui).text,
+                                                        ),
+                                                    self.t(i18n::BOUTON_EMOJIS),
                                                     self.show_emoji_picker,
                                                 )
                                             };
@@ -423,7 +408,7 @@ impl AbcomApp {
                                             ui,
                                             egui::RichText::new("GIF")
                                                 .size(10.5)
-                                                .color(egui::Color32::from_rgb(244, 245, 247)),
+                                                .color(crate::ui::theme::palette(ui).text),
                                             gif_label,
                                             self.gif_picker.show,
                                         );
@@ -434,10 +419,7 @@ impl AbcomApp {
                                                 gif_button_clicked = true;
                                             } else {
                                                 self.last_notification = Some(
-                                                    self.tr(
-                                                        "Clé API Klipy manquante (ABCOM_KLIPY_API_KEY)",
-                                                        "Klipy API key missing (ABCOM_KLIPY_API_KEY)",
-                                                    )
+                                                    self.t(i18n::CLE_API_KLIPY_MANQUANTE_ABCOM_KLIPY)
                                                     .to_string(),
                                                 );
                                                 self.notification_time = std::time::Instant::now();
@@ -448,21 +430,15 @@ impl AbcomApp {
                                             ui,
                                             egui::RichText::new("Aa")
                                                 .size(11.5)
-                                                .color(egui::Color32::from_rgb(244, 245, 247)),
-                                            self.tr(
-                                                "Mise en forme bientôt disponible",
-                                                "Formatting coming soon",
-                                            ),
+                                                .color(crate::ui::theme::palette(ui).text),
+                                            self.t(i18n::MISE_EN_FORME_BIENTOT_DISPONIBLE),
                                             false,
                                         );
                                         aa_btn.clicked();
 
                                         let plus_btn = icon_button(
                                             ui,
-                                            self.tr(
-                                                "Ajouter des fichiers ou dossiers",
-                                                "Add files or folders",
-                                            ),
+                                            self.t(i18n::AJOUTER_DES_FICHIERS_OU_DOSSIERS),
                                             self.show_attachment_menu,
                                             paint_plus_icon,
                                         );
@@ -478,9 +454,9 @@ impl AbcomApp {
                                         if input_chars >= composer::MAX_INPUT_CHARS * 8 / 10 {
                                             let color =
                                                 if input_chars >= composer::MAX_INPUT_CHARS {
-                                                    egui::Color32::from_rgb(230, 80, 80)
+                                                    crate::ui::theme::palette(ui).danger
                                                 } else {
-                                                    super::theme::TEXT_MUTED
+                                                    crate::ui::theme::palette(ui).text_muted
                                                 };
                                             ui.label(
                                                 egui::RichText::new(format!(
@@ -503,10 +479,7 @@ impl AbcomApp {
                                                             egui::RichText::new(format!(
                                                                 "{} {}",
                                                                 typing_list.join(", "),
-                                                                self.tr(
-                                                                    "en train d'écrire...",
-                                                                    "is typing...",
-                                                                )
+                                                                self.t(i18n::EN_TRAIN_D_ECRIRE)
                                                             ))
                                                             .color(egui::Color32::WHITE)
                                                             .small(),

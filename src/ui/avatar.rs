@@ -80,7 +80,7 @@ fn rasterize_svg(data: &[u8]) -> anyhow::Result<image::DynamicImage> {
 pub(crate) fn placeholder_color(name: &str) -> egui::Color32 {
     const PALETTE: [egui::Color32; 6] = [
         egui::Color32::from_rgb(88, 101, 242),  // bleu Discord
-        egui::Color32::from_rgb(87, 242, 135),  // vert
+        egui::Color32::from_rgb(80, 200, 120),  // vert
         egui::Color32::from_rgb(254, 231, 92),  // jaune
         egui::Color32::from_rgb(235, 69, 158),  // rose
         egui::Color32::from_rgb(255, 138, 76),  // orange

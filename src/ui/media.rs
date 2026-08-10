@@ -2,6 +2,7 @@
 //! téléchargeable, visionneuse plein écran et téléchargement vers le dossier
 //! Téléchargements du système.
 
+use super::i18n;
 use std::path::Path;
 
 use eframe::egui;
@@ -127,8 +128,11 @@ pub(crate) fn render_media_progress(
     };
     let percent = (ratio * 100.0).round() as u32;
     egui::Frame::default()
-        .fill(egui::Color32::from_rgb(43, 45, 49))
-        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 63, 68)))
+        .fill(crate::ui::theme::palette(ui).surface)
+        .stroke(egui::Stroke::new(
+            1.0,
+            crate::ui::theme::palette(ui).surface_hover,
+        ))
         .corner_radius(egui::CornerRadius::same(10))
         .inner_margin(egui::Margin::symmetric(12, 10))
         .show(ui, |ui| {
@@ -145,7 +149,7 @@ pub(crate) fn render_media_progress(
                 ui.label(
                     egui::RichText::new(format_bytes(progress.total))
                         .small()
-                        .color(super::theme::TEXT_MUTED),
+                        .color(crate::ui::theme::palette(ui).text_muted),
                 );
                 return;
             }
@@ -164,7 +168,7 @@ pub(crate) fn render_media_progress(
                     format_bytes(progress.total)
                 ))
                 .small()
-                .color(super::theme::TEXT_MUTED),
+                .color(crate::ui::theme::palette(ui).text_muted),
             );
         });
 }
@@ -228,8 +232,11 @@ fn file_card(ui: &mut egui::Ui, media: &MediaAttachment) -> Option<MediaAction> 
     let mut action = None;
     let width = FILE_CARD_WIDTH.min(ui.available_width());
     egui::Frame::default()
-        .fill(egui::Color32::from_rgb(43, 45, 49))
-        .stroke(egui::Stroke::new(1.0, egui::Color32::from_rgb(60, 63, 68)))
+        .fill(crate::ui::theme::palette(ui).surface)
+        .stroke(egui::Stroke::new(
+            1.0,
+            crate::ui::theme::palette(ui).surface_hover,
+        ))
         .corner_radius(egui::CornerRadius::same(10))
         .inner_margin(egui::Margin::symmetric(12, 10))
         .show(ui, |ui| {
@@ -242,13 +249,13 @@ fn file_card(ui: &mut egui::Ui, media: &MediaAttachment) -> Option<MediaAction> 
                     ui.add_space(2.0);
                     ui.label(
                         egui::RichText::new(elide(&media.filename, 38))
-                            .color(egui::Color32::from_rgb(120, 170, 255))
+                            .color(crate::ui::theme::palette(ui).link)
                             .strong(),
                     );
                     ui.label(
                         egui::RichText::new(format_bytes(media.size_bytes))
                             .small()
-                            .color(super::theme::TEXT_MUTED),
+                            .color(crate::ui::theme::palette(ui).text_muted),
                     );
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -272,7 +279,7 @@ fn file_badge(ui: &mut egui::Ui, extension: &str) {
     painter.rect_filled(
         rect,
         egui::CornerRadius::same(8),
-        egui::Color32::from_rgb(88, 101, 242),
+        crate::ui::theme::palette(ui).accent,
     );
     let label: String = extension.chars().take(4).collect::<String>().to_uppercase();
     let text = if label.is_empty() {
@@ -299,13 +306,13 @@ fn download_button(ui: &mut egui::Ui) -> bool {
             painter.rect_filled(
                 rect,
                 egui::CornerRadius::same(6),
-                egui::Color32::from_rgb(60, 63, 68),
+                crate::ui::theme::palette(ui).surface_hover,
             );
         }
         let color = if hovered {
             egui::Color32::WHITE
         } else {
-            egui::Color32::from_gray(190)
+            crate::ui::theme::palette(ui).text_muted
         };
         let stroke = egui::Stroke::new(1.7, color);
         let c = rect.center();
@@ -485,10 +492,7 @@ impl AbcomApp {
     /// existant : un suffixe « (n) » est ajouté au besoin).
     pub(crate) fn download_media(&mut self, id: &str, filename: &str) {
         let Some(dir) = dirs::download_dir() else {
-            self.notify(self.tr(
-                "Dossier Téléchargements introuvable",
-                "Downloads folder not found",
-            ));
+            self.notify(self.t(i18n::DOSSIER_TELECHARGEMENTS_INTROUVABLE));
             return;
         };
         let src = self.state.lock_safe().media_path(id);
@@ -500,12 +504,12 @@ impl AbcomApp {
                     .and_then(|n| n.to_str())
                     .unwrap_or(filename)
                     .to_string();
-                let msg = format!("{} {}", self.tr("Téléchargé :", "Downloaded:"), name);
+                let msg = format!("{} {}", self.t(i18n::TELECHARGE), name);
                 self.notify_owned(msg);
             }
             Err(e) => {
                 tracing::warn!("téléchargement échoué ({}): {}", filename, e);
-                self.notify(self.tr("Téléchargement impossible", "Download failed"));
+                self.notify(self.t(i18n::TELECHARGEMENT_IMPOSSIBLE));
             }
         }
     }
@@ -519,9 +523,9 @@ impl AbcomApp {
         };
         let texture = self.viewer_texture_for(ctx, &id);
         let filename = self.media_filename(&id);
-        let title = self.tr("Aperçu", "Preview");
-        let download_label = self.tr("⬇ Télécharger", "⬇ Download");
-        let unavailable = self.tr("Aperçu indisponible", "Preview unavailable");
+        let title = self.t(i18n::APERCU);
+        let download_label = self.t(i18n::TELECHARGER);
+        let unavailable = self.t(i18n::APERCU_INDISPONIBLE);
 
         let mut open = true;
         let mut download = false;

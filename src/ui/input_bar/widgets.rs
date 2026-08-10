@@ -48,7 +48,7 @@ pub(super) fn attachment_label(path: &Path) -> String {
 pub(super) fn attachment_chip(ui: &mut egui::Ui, path: &Path, width: f32) -> bool {
     let mut removed = false;
     egui::Frame::default()
-        .fill(egui::Color32::from_rgb(66, 66, 70))
+        .fill(crate::ui::theme::palette(ui).surface_strong)
         .corner_radius(egui::CornerRadius::same(8))
         .inner_margin(egui::Margin::symmetric(8, 4))
         .show(ui, |ui| {
@@ -65,7 +65,7 @@ pub(super) fn attachment_chip(ui: &mut egui::Ui, path: &Path, width: f32) -> boo
                             egui::Label::new(
                                 egui::RichText::new(attachment_label(path))
                                     .small()
-                                    .color(egui::Color32::from_rgb(244, 245, 247)),
+                                    .color(crate::ui::theme::palette(ui).text),
                             )
                             .truncate(),
                         )
@@ -77,16 +77,16 @@ pub(super) fn attachment_chip(ui: &mut egui::Ui, path: &Path, width: f32) -> boo
     removed
 }
 
-pub(super) fn action_button_chrome(selected: bool) -> (egui::Color32, egui::Stroke) {
+pub(super) fn action_button_chrome(ui: &egui::Ui, selected: bool) -> (egui::Color32, egui::Stroke) {
     let fill = if selected {
-        egui::Color32::from_rgb(88, 122, 255)
+        crate::ui::theme::palette(ui).accent_soft
     } else {
-        egui::Color32::from_rgb(78, 78, 82)
+        crate::ui::theme::palette(ui).surface_strong
     };
     let stroke = if selected {
-        egui::Stroke::new(1.0, egui::Color32::from_rgb(132, 158, 255))
+        egui::Stroke::new(1.0, crate::ui::theme::palette(ui).accent_soft)
     } else {
-        egui::Stroke::new(1.0, egui::Color32::from_rgb(104, 104, 108))
+        egui::Stroke::new(1.0, crate::ui::theme::palette(ui).separator)
     };
     (fill, stroke)
 }
@@ -97,7 +97,7 @@ pub(super) fn action_button(
     tooltip: &str,
     selected: bool,
 ) -> egui::Response {
-    let (fill, stroke) = action_button_chrome(selected);
+    let (fill, stroke) = action_button_chrome(ui, selected);
     ui.add_sized(
         ACTION_BUTTON_SIZE,
         egui::Button::new(label)
@@ -114,7 +114,7 @@ pub(super) fn icon_button(
     selected: bool,
     paint: impl FnOnce(&egui::Painter, egui::Rect, egui::Color32),
 ) -> egui::Response {
-    let (fill, stroke) = action_button_chrome(selected);
+    let (fill, stroke) = action_button_chrome(ui, selected);
     let response = ui
         .add_sized(
             ACTION_BUTTON_SIZE,
@@ -129,7 +129,7 @@ pub(super) fn icon_button(
     paint(
         ui.painter(),
         response.rect.shrink2(egui::vec2(7.0, 7.0)),
-        egui::Color32::from_rgb(244, 245, 247),
+        crate::ui::theme::palette(ui).text,
     );
     response
 }
@@ -141,9 +141,9 @@ pub(super) fn chip_remove_button(ui: &mut egui::Ui) -> bool {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::click());
     if ui.is_rect_visible(rect) {
         let color = if resp.hovered() {
-            egui::Color32::from_rgb(235, 120, 120)
+            crate::ui::theme::palette(ui).danger
         } else {
-            egui::Color32::from_gray(200)
+            crate::ui::theme::palette(ui).text_muted
         };
         let stroke = egui::Stroke::new(1.6, color);
         let c = rect.center();
@@ -216,10 +216,10 @@ pub(super) fn attachment_menu_popup(
 
     area.show(ctx, |ui| {
         egui::Frame::popup(ui.style())
-            .fill(egui::Color32::from_rgb(58, 58, 62))
+            .fill(crate::ui::theme::palette(ui).surface)
             .stroke(egui::Stroke::new(
                 1.0,
-                egui::Color32::from_rgb(102, 102, 108),
+                crate::ui::theme::palette(ui).separator,
             ))
             .corner_radius(egui::CornerRadius::same(12))
             .inner_margin(egui::Margin::symmetric(8, 8))
