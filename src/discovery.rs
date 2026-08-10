@@ -98,7 +98,8 @@ pub async fn run(
     // Tracker les timestamps et adresses des peers découverts (la fraîcheur
     // est gérée ici : l'UI n'est réveillée que sur changement d'état).
     let mut peer_timestamps: HashMap<String, u64> = HashMap::new();
-    let mut peer_addrs: HashMap<String, SocketAddr> = HashMap::new();
+    // Adresse retenue par pair, avec l'instant où elle a donné signe de vie.
+    let mut peer_addrs: HashMap<String, (SocketAddr, u64)> = HashMap::new();
 
     loop {
         tokio::select! {
@@ -144,40 +145,87 @@ pub async fn run(
 
                             // Adresse TCP du pair = IP source + port de chat annoncé
                             let tcp_addr = SocketAddr::new(addr.ip(), pkt.port);
-
-                            // N'émettre PeerDiscovered que sur changement réel
-                            // (nouveau pair, adresse changée, retour après
-                            // déconnexion) : chaque événement réveille l'UI,
-                            // les annonces périodiques ne doivent pas.
-                            // Une seule machine peut signer autant d'annonces
-                            // qu'elle veut, chacune sous un pseudo différent :
-                            // sans plafond, les tables et la liste de l'UI
-                            // enflent au rythme du réseau. Les pairs déjà connus
-                            // continuent d'être rafraîchis.
-                            let is_known = peer_timestamps.contains_key(&pkt.username);
-                            if !is_known && peer_timestamps.len() >= MAX_TRACKED_PEERS {
-                                tracing::warn!(
-                                    "annonce ignorée : plafond de {MAX_TRACKED_PEERS} pairs atteint"
-                                );
-                                continue;
-                            }
-                            let is_new = peer_timestamps.insert(pkt.username.clone(), now).is_none();
-                            if is_new {
-                                crate::metrics::record_peer_seen();
-                            }
-                            let addr_changed = peer_addrs.insert(pkt.username.clone(), tcp_addr)
-                                != Some(tcp_addr);
-                            if is_new || addr_changed {
-                                tracing::debug!("pair découvert : {} @ {tcp_addr}", pkt.username);
+                            let seen = observe_announcement(
+                                &mut peer_timestamps,
+                                &mut peer_addrs,
+                                &pkt.username,
+                                tcp_addr,
+                                now,
+                            );
+                            if let Some(addr) = seen {
+                                tracing::debug!("pair découvert : {} @ {addr}", pkt.username);
                                 let _ = tx.send(AppEvent::PeerDiscovered {
                                     username: pkt.username,
-                                    addr: tcp_addr,
+                                    addr,
                                 }).await;
                             }
                         }
                     }
                 }
             }
+        }
+    }
+}
+
+/// Enregistre une annonce authentifiée et renvoie l'adresse à annoncer à l'UI,
+/// ou `None` si elle n'apprend rien.
+///
+/// N'émettre que sur changement réel (nouveau pair, adresse changée, retour
+/// après déconnexion) : chaque événement réveille l'UI, les annonces
+/// périodiques ne doivent pas. Une seule machine peut par ailleurs signer
+/// autant d'annonces qu'elle veut, chacune sous un pseudo différent : sans
+/// plafond, les tables et la liste de l'UI enflent au rythme du réseau. Les
+/// pairs déjà connus, eux, continuent d'être rafraîchis.
+fn observe_announcement(
+    peer_timestamps: &mut HashMap<String, u64>,
+    peer_addrs: &mut HashMap<String, (SocketAddr, u64)>,
+    username: &str,
+    addr: SocketAddr,
+    now: u64,
+) -> Option<SocketAddr> {
+    let is_known = peer_timestamps.contains_key(username);
+    if !is_known && peer_timestamps.len() >= MAX_TRACKED_PEERS {
+        tracing::warn!("annonce ignorée : plafond de {MAX_TRACKED_PEERS} pairs atteint");
+        return None;
+    }
+    let is_new = peer_timestamps.insert(username.to_string(), now).is_none();
+    if is_new {
+        crate::metrics::record_peer_seen();
+    }
+    let addr_changed = adopt_addr(peer_addrs, username, addr, now);
+    (is_new || addr_changed).then(|| peer_addrs[username].0)
+}
+
+/// Retient l'adresse d'un pair et dit si elle vient de changer.
+///
+/// Chaque annonce part deux fois — multicast et broadcast — et nous revient
+/// donc sous deux adresses source (loopback et LAN, pour deux instances d'une
+/// même machine). Adopter la dernière vue faisait osciller l'adresse du pair
+/// toutes les trois secondes : le pool rouvrait une connexion à chaque
+/// bascule, le pair d'en face refusait cette session en double, et les
+/// messages émis entre-temps partaient dans le vide sans la moindre erreur.
+/// On garde donc la première adresse tant qu'elle donne signe de vie ; un vrai
+/// déménagement (l'ancienne se tait) est adopté après `DISCOVERY_TIMEOUT`.
+fn adopt_addr(
+    known: &mut HashMap<String, (SocketAddr, u64)>,
+    username: &str,
+    addr: SocketAddr,
+    now: u64,
+) -> bool {
+    match known.get_mut(username) {
+        Some((current, last_seen)) if *current == addr => {
+            *last_seen = now;
+            false
+        }
+        Some((current, last_seen)) if peer_is_stale(now, *last_seen) => {
+            *current = addr;
+            *last_seen = now;
+            true
+        }
+        Some(_) => false,
+        None => {
+            known.insert(username.to_string(), (addr, now));
+            true
         }
     }
 }
