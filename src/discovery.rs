@@ -16,6 +16,12 @@ const DISCOVERY_TIMEOUT: u64 = 6; // Un peer est inactif après 6 secondes d'ina
 const CLEANUP_INTERVAL: u64 = 2; // Vérifier les timeouts chaque 2 secondes
 /// Écart maximal toléré entre l'horodatage d'une annonce et l'heure locale.
 const MAX_ANNOUNCE_SKEW: u64 = 60;
+/// Pairs distincts suivis simultanément.
+///
+/// Une annonce signée ne prouve que la possession d'une clé, pas une identité
+/// distincte : une seule machine peut en fabriquer des milliers, chacune sous
+/// un pseudo différent. Le plafond garde la découverte bornée.
+const MAX_TRACKED_PEERS: usize = 512;
 
 /// Groupe multicast de découverte (adresse administrativement scoupée).
 const MULTICAST_GROUP: std::net::Ipv4Addr = std::net::Ipv4Addr::new(239, 255, 42, 98);
@@ -143,6 +149,18 @@ pub async fn run(
                             // (nouveau pair, adresse changée, retour après
                             // déconnexion) : chaque événement réveille l'UI,
                             // les annonces périodiques ne doivent pas.
+                            // Une seule machine peut signer autant d'annonces
+                            // qu'elle veut, chacune sous un pseudo différent :
+                            // sans plafond, les tables et la liste de l'UI
+                            // enflent au rythme du réseau. Les pairs déjà connus
+                            // continuent d'être rafraîchis.
+                            let is_known = peer_timestamps.contains_key(&pkt.username);
+                            if !is_known && peer_timestamps.len() >= MAX_TRACKED_PEERS {
+                                tracing::warn!(
+                                    "annonce ignorée : plafond de {MAX_TRACKED_PEERS} pairs atteint"
+                                );
+                                continue;
+                            }
                             let is_new = peer_timestamps.insert(pkt.username.clone(), now).is_none();
                             if is_new {
                                 crate::metrics::record_peer_seen();
