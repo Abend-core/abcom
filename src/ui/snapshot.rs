@@ -402,15 +402,15 @@ impl SidebarCache {
             .collect();
 
         let mut group_order: Vec<usize> = (0..s.groups.len()).collect();
-        group_order.sort_by_key(|&i| !s.is_pinned(&AppState::group_conv_key(&s.groups[i].name)));
+        group_order.sort_by_key(|&i| !s.is_pinned(&AppState::group_conv_key(&s.groups[i].id)));
         self.groups = Arc::new(group_order.iter().map(|&i| s.groups[i].clone()).collect());
         self.group_unread = group_order
             .iter()
-            .map(|&i| s.unread_count(&AppState::group_conv_key(&s.groups[i].name)))
+            .map(|&i| s.unread_count(&AppState::group_conv_key(&s.groups[i].id)))
             .collect();
         self.group_pinned = group_order
             .iter()
-            .map(|&i| s.is_pinned(&AppState::group_conv_key(&s.groups[i].name)))
+            .map(|&i| s.is_pinned(&AppState::group_conv_key(&s.groups[i].id)))
             .collect();
         self.typing = s.typing_users_list();
         self.selected_conversation = s.selected_conversation.clone();

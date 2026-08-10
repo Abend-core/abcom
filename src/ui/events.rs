@@ -426,11 +426,14 @@ fn group_media_authorized(state: &AppState, group_name: &str, sender: &str) -> b
 
 fn apply_group_event(s: &mut AppState, peer: &str, event: GroupEvent) {
     match event.action {
-        GroupAction::Create { group } => {
+        GroupAction::Create { mut group } => {
             if group.owner != peer || !group.members.contains(&s.my_username) {
                 return;
             }
-            if let Some(existing) = s.groups.iter_mut().find(|g| g.name == group.name) {
+            // Un pair antérieur aux identifiants n'en envoie pas : on le dérive
+            // des champs immuables, à l'identique chez tous les membres.
+            group.ensure_id();
+            if let Some(existing) = s.groups.iter_mut().find(|g| g.id == group.id) {
                 if existing.owner != peer {
                     return;
                 }
@@ -440,14 +443,11 @@ fn apply_group_event(s: &mut AppState, peer: &str, event: GroupEvent) {
             }
             s.save_groups();
         }
-        GroupAction::AddMember {
-            group_name,
-            username,
-        } => {
+        GroupAction::AddMember { group_id, username } => {
             let Some(g) = s
                 .groups
                 .iter_mut()
-                .find(|g| g.name == group_name && g.owner == peer)
+                .find(|g| g.id == group_id && g.owner == peer)
             else {
                 return;
             };
@@ -456,38 +456,26 @@ fn apply_group_event(s: &mut AppState, peer: &str, event: GroupEvent) {
                 s.save_groups();
             }
         }
-        GroupAction::RemoveMember {
-            group_name,
-            username,
-        } => {
+        GroupAction::RemoveMember { group_id, username } => {
             let allowed = s
                 .groups
                 .iter()
-                .find(|g| g.name == group_name)
+                .find(|g| g.id == group_id)
                 .is_some_and(|g| g.owner == peer || peer == username);
             if allowed {
-                s.apply_member_removal(&group_name, &username);
+                s.apply_member_removal(&group_id, &username);
             }
         }
-        GroupAction::Rename {
-            group_name,
-            new_name,
-        } => {
-            let allowed = s
-                .groups
-                .iter()
-                .any(|g| g.name == group_name && g.owner == peer);
+        GroupAction::Rename { group_id, new_name } => {
+            let allowed = s.groups.iter().any(|g| g.id == group_id && g.owner == peer);
             if allowed {
-                s.apply_group_rename(&group_name, new_name);
+                s.apply_group_rename(&group_id, new_name);
             }
         }
-        GroupAction::Delete { group_name } => {
-            let allowed = s
-                .groups
-                .iter()
-                .any(|g| g.name == group_name && g.owner == peer);
+        GroupAction::Delete { group_id } => {
+            let allowed = s.groups.iter().any(|g| g.id == group_id && g.owner == peer);
             if allowed {
-                s.apply_group_delete(&group_name);
+                s.apply_group_delete(&group_id);
             }
         }
     }

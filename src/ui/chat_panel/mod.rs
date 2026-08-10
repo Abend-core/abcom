@@ -38,31 +38,30 @@ impl AbcomApp {
                 .map(str::to_string);
             let is_broadcast = selected_conv.is_none();
 
-            let conversation_title = match &self.chat_cache.private_peer_display {
-                Some(name) => name.clone(),
-                None => selected_conv
-                    .clone()
-                    .unwrap_or_else(|| self.t(i18n::TOUS_2).to_string()),
-            };
-            // Salon sélectionné : nom de groupe (sans `#`) et sous-titre
-            // « N membres » sous le titre.
-            let selected_group_name = selected_conv
+            // Salon sélectionné : la clé porte l'identifiant, jamais le libellé.
+            let selected_group_id = selected_conv
                 .as_deref()
                 .and_then(|c| c.strip_prefix('#'))
                 .map(str::to_string);
-            let group_subtitle = selected_group_name.as_deref().and_then(|name| {
-                self.sidebar_cache
-                    .groups
-                    .iter()
-                    .find(|g| g.name == name)
-                    .map(|g| {
-                        let n = g.members.len();
-                        if n > 1 {
-                            format!("{} {}", n, self.t(i18n::MEMBRES_2))
-                        } else {
-                            format!("{} {}", n, self.t(i18n::MEMBRE))
-                        }
-                    })
+            let selected_group = selected_group_id
+                .as_deref()
+                .and_then(|id| self.sidebar_cache.groups.iter().find(|g| g.id == id));
+            let conversation_title = match (&self.chat_cache.private_peer_display, selected_group) {
+                (Some(name), _) => name.clone(),
+                // Le titre affiche le nom du salon, pas son identifiant.
+                (None, Some(group)) => group.name.clone(),
+                (None, None) => selected_conv
+                    .clone()
+                    .unwrap_or_else(|| self.t(i18n::TOUS_2).to_string()),
+            };
+            // Sous-titre « N membres » sous le titre.
+            let group_subtitle = selected_group.map(|g| {
+                let n = g.members.len();
+                if n > 1 {
+                    format!("{} {}", n, self.t(i18n::MEMBRES_2))
+                } else {
+                    format!("{} {}", n, self.t(i18n::MEMBRE))
+                }
             });
 
             ui.horizontal(|ui| {
@@ -103,9 +102,9 @@ impl AbcomApp {
                             self.modals.participants_open = true;
                             ui.close();
                         }
-                        if let Some(gname) = &selected_group_name {
+                        if let Some(gid) = &selected_group_id {
                             if ui.button(self.t(i18n::GERER_LE_GROUPE)).clicked() {
-                                self.modals.group_manage_target = Some(gname.clone());
+                                self.modals.group_manage_target = Some(gid.clone());
                                 self.modals.group_manage_confirm = None;
                                 ui.close();
                             }
@@ -137,11 +136,6 @@ impl AbcomApp {
 
             // Popup participants (instantané depuis le cache latéral).
             if self.modals.participants_open {
-                let conv_name = self
-                    .sidebar_cache
-                    .selected_conversation
-                    .clone()
-                    .unwrap_or_else(|| self.t(i18n::TOUS_2).to_string());
                 let my_name2 = self.sidebar_cache.my_username.clone();
                 let sel_conv = self.sidebar_cache.selected_conversation.clone();
                 let peers = self.sidebar_cache.peers.clone();
@@ -149,13 +143,20 @@ impl AbcomApp {
                 let group_view = sel_conv
                     .as_deref()
                     .and_then(|c| c.strip_prefix('#'))
-                    .and_then(|name| {
+                    .and_then(|id| {
                         self.sidebar_cache
                             .groups
                             .iter()
-                            .find(|g| g.name == name)
+                            .find(|g| g.id == id)
                             .cloned()
                     });
+                // Un salon s'affiche par son nom : la clé porte un identifiant
+                // qui n'a aucun sens pour l'utilisateur.
+                let conv_name = match (&group_view, &sel_conv) {
+                    (Some(group), _) => format!("#{}", group.name),
+                    (None, Some(conv)) => conv.clone(),
+                    (None, None) => self.t(i18n::TOUS_2).to_string(),
+                };
                 let mut open = self.modals.participants_open;
                 egui::Window::new(self.t(i18n::PARTICIPANTS))
                     .open(&mut open)

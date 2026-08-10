@@ -38,8 +38,10 @@ fn pinned_peer_sorts_before_unpinned() {
 fn pinned_group_sorts_before_unpinned() {
     let mut s = state();
     s.create_group("alpha".to_string(), vec![]);
-    s.create_group("beta".to_string(), vec![]);
-    s.toggle_pinned(&AppState::group_conv_key("beta"));
+    let beta = s
+        .create_group("beta".to_string(), vec![])
+        .expect("création du salon");
+    s.toggle_pinned(&AppState::group_conv_key(&beta.id));
 
     let mut cache = SidebarCache::default();
     cache.refresh(&s);

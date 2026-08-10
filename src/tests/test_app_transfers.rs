@@ -35,11 +35,13 @@ fn selected_transfer_targets_filters_group_members_to_online_peers() {
     let mut s = state("alice");
     s.peers.push(peer("bob", "127.0.0.1:9000", true));
     s.peers.push(peer("carol", "127.0.0.1:9001", false));
-    s.create_group(
-        "team".to_string(),
-        vec!["bob".to_string(), "carol".to_string()],
-    );
-    s.selected_conversation = Some("#team".to_string());
+    let group = s
+        .create_group(
+            "team".to_string(),
+            vec!["bob".to_string(), "carol".to_string()],
+        )
+        .expect("création du salon");
+    s.selected_conversation = Some(AppState::group_conv_key(&group.id));
 
     let targets = s.selected_transfer_targets();
 
