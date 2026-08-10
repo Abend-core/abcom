@@ -376,7 +376,7 @@ points restants ne sont pas du code :
 **Chantiers volontairement abandonnés** (ne pas les rouvrir sans raison
 nouvelle) : `rfd` asynchrone, actions de notification, virtualisation du fil,
 tables `STRICT`, `RETURNING` — justifications dans
-[`AUDIT-DEPENDANCES.md` §8](../AUDIT-DEPENDANCES.md). Les items de confort
+[`2026-08-audit-dependances.md` §8](2026-08-audit-dependances.md). Les items de confort
 (benches criterion, proptest, format binaire du protocole, états vides,
 githooks partagés) ont été retirés de cette liste : ils n'apportaient rien qui
 justifie de rester au tableau.

@@ -152,7 +152,22 @@ Vérifier après toute montée d'`eframe` que `cargo tree | grep -i glow` ne ren
 
 Outils d'entretien : `cargo audit` (vulnérabilités) et `cargo deny check` (licences, sources, doublons) — les deux exécutés par la CI `dev` **et** `main` ; `cargo outdated` (rapport mensuel automatique), `cargo update` (mises à jour semver). `Cargo.lock` est versionné : builds reproductibles.
 
-## Fichiers de suivi
+## Ce qu'il y a à la racine
 
-- [CHANGELOG.md](../CHANGELOG.md) — modifications notables, alimenté en continu, consolidé à chaque release.
-- [old/](../old/) — documentation historique (audits, plans, ADR, anciennes versions), conservée en l'état.
+La racine ne contient que ce qu'un outil exige d'y trouver, plus quatre points
+d'entrée de lecture. Tout le reste vit dans un dossier.
+
+| Élément | Rôle |
+|---|---|
+| `Cargo.toml`, `Cargo.lock` | Manifeste et verrouillage des versions. `Cargo.lock` est versionné : builds reproductibles |
+| `deny.toml` | Configuration de **cargo-deny** : licences autorisées, sources de crates admises, doublons interdits. Vérifié en CI par `cargo deny check licenses sources bans`. Doit rester à la racine, c'est là que l'outil le cherche |
+| `Makefile` | Raccourcis de build, tests, lancement multi-instances et installation |
+| `LICENSE` | Texte intégral de l'AGPL-3.0 |
+| `.githooks/`, `.github/` | Hook pre-commit partagé, workflows CI |
+| `README.md` | Point d'entrée du dépôt |
+| `CONTRIBUTING.md` | Conventions et barrière verte |
+| `CHANGELOG.md` | Modifications notables, alimenté en continu, consolidé à chaque release |
+| `docs/` | Documentation vivante, numérotée de 01 à 10 |
+| `old/` | Archives de documentation — jamais de code, jamais tenues à jour, indexées par [old/README.md](../old/README.md) |
+| `src/`, `tests/` | Code et test d'intégration externe |
+| `scripts/`, `assets/` | Installation et distribution ; ressources embarquées ou packagées |

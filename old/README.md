@@ -54,3 +54,4 @@ projet : monolithe, persistance JSON, sans chiffrement.
 |---|---|---|
 | `2026-08-audit-dette-de-code.md` | Checklist de dette de code, 69 des 71 points appliqués | [docs/08](../docs/08-historique-et-audits.md), [docs/09](../docs/09-limites-et-pistes.md) |
 | `2026-08-plan-maintenabilite.md` | Plan séquencé (phases P1 à P6) de cet audit, déroulé intégralement | [docs/08](../docs/08-historique-et-audits.md) |
+| `2026-08-audit-dependances.md` | Écart entre ce que les dépendances offrent et ce qu'on en tirait — 25 de ses 30 constats appliqués | [docs/08](../docs/08-historique-et-audits.md) ; les 5 restants dans [docs/09](../docs/09-limites-et-pistes.md) |

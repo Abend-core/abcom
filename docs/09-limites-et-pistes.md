@@ -38,6 +38,19 @@ Inventaire honnête de ce que l'application ne fait pas (ou fait imparfaitement)
 | Tray Linux dépendant du shell | Nécessite StatusNotifier/AppIndicator (KDE, XFCE ok ; GNOME avec extension) ; sans tray, la croix quitte normalement (repli sûr) | — |
 | Tray Windows/Linux non testés en réel | Implémentés mais l'environnement de dev est macOS | Passe manuelle §13 du [cahier de tests](10-cahier-de-tests.md) sur machines cibles |
 
+## Dette identifiée, non résorbée
+
+Constats de l'audit d'exploitation des dépendances (archivé dans
+[`old/2026-08-audit-dependances.md`](../old/2026-08-audit-dependances.md), 25 de
+ses 30 points appliqués) délibérément laissés en l'état, avec leur raison.
+
+| Constat | Détail | Pourquoi pas appliqué |
+|---|---|---|
+| Sélecteur de fichiers reporté d'une frame | `rfd::AsyncFileDialog` gérerait lui-même le dispatch sur le thread principal exigé par macOS ; notre code reporte l'ouverture d'une frame à la place | Le `Future` demande un exécuteur dont l'UI n'a pas de handle. Faire remonter le runtime tokio jusqu'à l'interface pour gagner **une frame**, avec pour mode d'échec un sélecteur de fichiers cassé et aucun test automatisé possible : le rapport risque/gain ne le justifie pas |
+| Pas d'actions dans les notifications | `notify-rust` sait poser des boutons (« Répondre ») | Sur macOS, `show()` bloque en attendant la réponse, et les boutons n'apparaissent de façon fiable que depuis un bundle `.app` signé — que nous n'avons pas encore. À reprendre avec la signature macOS |
+| Fenêtrage du fil fait à la main | `ScrollArea::show_rows` suppose des lignes de hauteur uniforme, ce que nos messages n'ont pas (markdown, médias, citations, réactions) ; `show_viewport` exige des offsets connus d'avance | Reviendrait à reconstruire notre fenêtrage sous une autre forme, sans gain |
+| Schéma SQLite non `STRICT` | Les colonnes n'ont pas de typage strict | Différé à une prochaine migration de schéma, pour ne pas cumuler deux réécritures de tables |
+
 ## Rendu et mesures restantes
 
 - Mesures à refaire selon le protocole de l'audit (conservé dans `old/2026-07-audit-performance.md` §6) : GPU au repos, RSS après navigation GIF intensive picker fermé, débit d'un transfert > 1 Go.
