@@ -203,6 +203,16 @@ impl AppState {
     }
 
     /// Envoie une commande au thread de stockage (no-op sans stockage).
+    /// Demande un nettoyage du cache disque des médias.
+    ///
+    /// Le tri des fichiers encore référencés se fait côté stockage : la liste
+    /// est une requête SQL, l'historique en mémoire n'étant qu'une fenêtre.
+    pub(crate) fn request_media_gc(&self) {
+        self.persist(StorageCmd::GcMedia {
+            dir: self.media_dir.clone(),
+        });
+    }
+
     pub(crate) fn persist(&self, cmd: StorageCmd) {
         if let Some(tx) = &self.storage {
             let _ = tx.send(cmd);
