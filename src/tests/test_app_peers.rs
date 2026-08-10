@@ -6,7 +6,7 @@ fn state(username: &str) -> AppState {
     s.peers.clear();
     s.messages.clear();
     s.groups.clear();
-    s.read_counts.clear();
+    s.read_marks.clear();
     s.peer_records.clear();
     s
 }

@@ -82,7 +82,59 @@ fn measure_text_width(ui: &egui::Ui, text: &str) -> f32 {
         .x
 }
 
+/// Une frame demande deux mesures, le clic/glisser une troisième : quatre suffisent.
+const CARET_CACHE_SLOTS: usize = 4;
+
+/// Cache des positions de curseur, rangé dans la mémoire d'egui.
+type CaretCache = Vec<(u64, Vec<egui::Pos2>)>;
+
+/// Tout ce dont dépend le tracé : même signature, même résultat.
+fn caret_signature(text: &str, emoji_size: f32, max_width: f32, pixels_per_point: f32) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    text.hash(&mut hasher);
+    emoji_size.to_bits().hash(&mut hasher);
+    max_width.to_bits().hash(&mut hasher);
+    pixels_per_point.to_bits().hash(&mut hasher);
+    hasher.finish()
+}
+
+/// Positions de curseur mémoïsées : le calcul itère toute la saisie et tournait à chaque frame.
 fn composer_caret_positions(
+    ui: &egui::Ui,
+    text: &str,
+    emoji_map: &std::collections::HashMap<String, usize>,
+    emoji_size: f32,
+    max_width: f32,
+) -> Vec<egui::Pos2> {
+    let cache_id = egui::Id::new("composer_caret_cache");
+    let signature = caret_signature(text, emoji_size, max_width, ui.ctx().pixels_per_point());
+    if let Some(hit) = ui.data(|d| {
+        d.get_temp::<CaretCache>(cache_id).and_then(|cache| {
+            cache
+                .iter()
+                .find(|(sig, _)| *sig == signature)
+                .map(|(_, points)| points.clone())
+        })
+    }) {
+        return hit;
+    }
+
+    let points = compute_caret_positions(ui, text, emoji_map, emoji_size, max_width);
+
+    ui.data_mut(|d| {
+        let cache = d.get_temp_mut_or_default::<CaretCache>(cache_id);
+        cache.retain(|(sig, _)| *sig != signature);
+        cache.push((signature, points.clone()));
+        // Fenêtre glissante.
+        if cache.len() > CARET_CACHE_SLOTS {
+            cache.remove(0);
+        }
+    });
+    points
+}
+
+fn compute_caret_positions(
     ui: &egui::Ui,
     text: &str,
     emoji_map: &std::collections::HashMap<String, usize>,
@@ -313,7 +365,7 @@ pub fn custom_composer_input(
     input_has_focus: &mut bool,
     scroll_lines: &mut f32,
     emoji_map: &std::collections::HashMap<String, usize>,
-    emoji_textures: &[(String, egui::TextureHandle)],
+    emoji_textures: &super::EmojiTextures,
     emoji_alias_to_char: &std::collections::HashMap<String, String>,
     emoji_aliases: &[String],
     shortcode_menu_open: bool,
@@ -440,6 +492,8 @@ pub fn custom_composer_input(
         ui.ctx().output_mut(|o| {
             o.mutable_text_under_cursor = true;
             o.ime = Some(egui::output::IMEOutput {
+                purpose: egui::IMEPurpose::Normal,
+                should_interrupt_composition: false,
                 rect,
                 cursor_rect: egui::Rect::from_min_max(
                     egui::pos2(cursor_x, cursor_top.max(content_rect.top())),
@@ -452,7 +506,7 @@ pub fn custom_composer_input(
         });
 
         if response.hovered() {
-            let wheel_y = ui.input(|i| i.raw_scroll_delta.y + i.smooth_scroll_delta.y);
+            let wheel_y = ui.input(|i| i.smooth_scroll_delta.y);
             if wheel_y.abs() > 0.0 && max_scroll > 0.0 {
                 *scroll_lines = (*scroll_lines - wheel_y / 32.0).clamp(0.0, max_scroll);
             }
@@ -764,7 +818,7 @@ pub fn custom_composer_input(
             egui::Align2::LEFT_CENTER,
             "Send a message... Ctrl/Cmd + Enter ",
             egui::TextStyle::Body.resolve(ui.style()),
-            egui::Color32::from_rgb(185, 187, 192),
+            crate::ui::theme::palette(ui).text_muted,
         );
     } else {
         let painter = ui.painter().with_clip_rect(content_rect);
@@ -795,7 +849,7 @@ pub fn custom_composer_input(
 
             let mut matched = false;
             if let Some((len, idx)) = super::emoji_picker::match_emoji_at(&chars, i, emoji_map) {
-                if let Some((_, tex)) = emoji_textures.get(idx) {
+                if let Some(tex) = emoji_textures.get(ui.ctx(), idx) {
                     if x + 20.0 > right && x > content_rect.left() {
                         x = content_rect.left();
                         y += line_height;
@@ -826,7 +880,7 @@ pub fn custom_composer_input(
                     egui::Align2::LEFT_CENTER,
                     &glyph,
                     egui::TextStyle::Body.resolve(ui.style()),
-                    egui::Color32::from_rgb(244, 245, 247),
+                    crate::ui::theme::palette(ui).text,
                 );
                 x += glyph_w;
                 i += 1;
@@ -894,7 +948,7 @@ pub fn custom_composer_input(
                         egui::pos2(x, top.max(content_rect.top())),
                         egui::pos2(x, bottom),
                     ],
-                    egui::Stroke::new(1.6, egui::Color32::from_rgb(250, 250, 252)),
+                    egui::Stroke::new(1.6, crate::ui::theme::palette(ui).text),
                 );
             }
         }

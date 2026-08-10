@@ -72,9 +72,16 @@ async fn read_frame(stream: &mut TcpStream) -> std::io::Result<Vec<u8>> {
 
 // ── Handshake ────────────────────────────────────────────────────────────
 
+/// Contexte haché dans le handshake : une version différente fait échouer la
+/// poignée de main avant même d'établir la session.
+fn prologue() -> Vec<u8> {
+    format!("abcom-v{}", crate::protocol::PROTOCOL_VERSION).into_bytes()
+}
+
 fn builder<'a>(
     identity: &'a Identity,
     psk: Option<&'a [u8]>,
+    prologue: &'a [u8],
 ) -> Result<Builder<'a>, std::io::Error> {
     let pattern = if psk.is_some() {
         NOISE_PATTERN_PSK
@@ -83,6 +90,8 @@ fn builder<'a>(
     };
     let params = pattern.parse().map_err(to_io)?;
     let mut b = Builder::new(params)
+        .prologue(prologue)
+        .map_err(to_io)?
         .local_private_key(&identity.private)
         .map_err(to_io)?;
     if let Some(psk) = psk {
@@ -102,7 +111,10 @@ pub async fn handshake_initiator(
     identity: &Identity,
     psk: Option<&[u8]>,
 ) -> std::io::Result<(TransportState, Vec<u8>)> {
-    let mut hs = builder(identity, psk)?.build_initiator().map_err(to_io)?;
+    let prologue = prologue();
+    let mut hs = builder(identity, psk, &prologue)?
+        .build_initiator()
+        .map_err(to_io)?;
     let mut buf = vec![0u8; MAX_NOISE_MESSAGE];
 
     // -> e
@@ -129,7 +141,10 @@ pub async fn handshake_responder(
     identity: &Identity,
     psk: Option<&[u8]>,
 ) -> std::io::Result<(TransportState, Vec<u8>)> {
-    let mut hs = builder(identity, psk)?.build_responder().map_err(to_io)?;
+    let prologue = prologue();
+    let mut hs = builder(identity, psk, &prologue)?
+        .build_responder()
+        .map_err(to_io)?;
     let mut buf = vec![0u8; MAX_NOISE_MESSAGE];
     let mut payload = vec![0u8; MAX_NOISE_MESSAGE];
 
@@ -231,19 +246,35 @@ pub async fn exchange_hello(
 ) -> std::io::Result<String> {
     let hello = serde_json::to_vec(&crate::message::Hello {
         username: my_username.to_string(),
+        protocol_version: crate::protocol::PROTOCOL_VERSION,
+        capabilities: Vec::new(),
     })
     .map_err(to_io)?;
     if initiator {
         secure.send(&hello).await?;
         let reply = secure.recv().await?;
         let peer: crate::message::Hello = serde_json::from_slice(&reply).map_err(to_io)?;
-        Ok(peer.username)
+        validate_hello(peer)
     } else {
         let first = secure.recv().await?;
         let peer: crate::message::Hello = serde_json::from_slice(&first).map_err(to_io)?;
         secure.send(&hello).await?;
-        Ok(peer.username)
+        validate_hello(peer)
     }
+}
+
+fn validate_hello(peer: crate::message::Hello) -> std::io::Result<String> {
+    if peer.protocol_version != crate::protocol::PROTOCOL_VERSION {
+        return Err(to_io(format!(
+            "version de protocole incompatible : {} (attendue {})",
+            peer.protocol_version,
+            crate::protocol::PROTOCOL_VERSION
+        )));
+    }
+    if !crate::protocol::valid_username(&peer.username) {
+        return Err(to_io("username distant invalide"));
+    }
+    Ok(peer.username)
 }
 
 // ── TOFU : épinglage username ↔ clé publique ─────────────────────────────
@@ -294,6 +325,25 @@ impl TrustStore {
                 Trust::Pinned
             }
         }
+    }
+
+    /// Épingle **la clé exacte** que l'utilisateur vient d'accepter.
+    ///
+    /// Seul ré-appairage légitime, et toujours déclenché par l'utilisateur.
+    /// On remplace l'épinglage au lieu de simplement l'oublier : un
+    /// désépinglage rouvrirait une fenêtre où n'importe quelle machine du
+    /// réseau pourrait se faire épingler à la place du pair légitime.
+    pub fn repin(&self, username: &str, key: &[u8]) {
+        self.keys
+            .lock_safe()
+            .insert(username.to_string(), key.to_vec());
+        if let Some(tx) = &self.storage_tx {
+            let _ = tx.send(StorageCmd::UpsertPeerKey {
+                username: username.to_string(),
+                pubkey: key.to_vec(),
+            });
+        }
+        tracing::warn!("clé ré-épinglée pour « {username} » à la demande de l'utilisateur");
     }
 }
 

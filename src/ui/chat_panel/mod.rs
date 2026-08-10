@@ -1,728 +1,23 @@
-use chrono::{Datelike, Local, NaiveDate, TimeZone};
+use crate::ui::i18n;
 use eframe::egui;
 
-use crate::message::{ChatMessage, ReactionEntry};
 use crate::util::MutexExt;
 
-use super::{AbcomApp, ReplyTarget, UiLanguage};
+use super::{AbcomApp, ReplyTarget};
 
-/// Diamètre de l'avatar affiché en tête de chaque groupe de messages.
-const AVATAR_SIZE: f32 = 40.0;
-/// Espace horizontal entre l'avatar et le texte du message.
-const AVATAR_GUTTER: f32 = 12.0;
-/// Espace vertical séparant deux groupes de messages.
-const GROUP_SPACING: f32 = 10.0;
-/// Petite marge à droite du fil : évite que les messages (texte, fond de
-/// survol, tableaux) ne collent au bord, pour la même respiration que sous le
-/// dernier message avant la barre de saisie.
-const MESSAGE_RIGHT_MARGIN: f32 = 8.0;
-/// Écart de temps au-delà duquel un nouvel en-tête est ouvert pour un même
-/// auteur (façon Discord/Cinny). Évite que des messages espacés de plusieurs
-/// heures ou jours paraissent envoyés d'un coup. Ajustable.
-const GROUP_BREAK_SECS: u64 = 5 * 60;
-/// Taille (carrée) d'un bouton de la barre d'actions au survol.
-const HOVER_BTN_SIZE: f32 = 26.0;
-/// Taille d'une texture d'emoji peinte dans un bouton de la barre de survol
-/// ou d'une pastille de réaction.
-const HOVER_EMOJI_SIZE: f32 = 16.0;
-/// Couleur du nom pour nos propres messages (conservée partout).
-pub(crate) const OWN_NAME_COLOR: egui::Color32 = egui::Color32::from_rgb(80, 200, 120);
-/// Couleur du nom d'un autre pair en conversation 1-à-1.
-pub(crate) const PEER_NAME_COLOR: egui::Color32 = egui::Color32::from_rgb(100, 180, 255);
+mod row;
+mod toolbar;
 
-/// Palette de couleurs distinctes pour les pairs dans les vues multi-personnes
-/// (groupes et « Tous »), inspirée des couleurs d'utilisateur de Cinny.
-const PEER_PALETTE: [egui::Color32; 8] = [
-    egui::Color32::from_rgb(128, 195, 255),
-    egui::Color32::from_rgb(255, 153, 253),
-    egui::Color32::from_rgb(102, 255, 212),
-    egui::Color32::from_rgb(255, 128, 164),
-    egui::Color32::from_rgb(255, 163, 102),
-    egui::Color32::from_rgb(51, 252, 255),
-    egui::Color32::from_rgb(158, 153, 255),
-    egui::Color32::from_rgb(197, 255, 153),
-];
-
-/// Couleur déterministe attribuée à un pair (même nom → même couleur) pour le
-/// distinguer des autres participants dans une conversation multi-personnes.
-pub(crate) fn peer_color(username: &str) -> egui::Color32 {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    username.hash(&mut hasher);
-    PEER_PALETTE[(hasher.finish() as usize) % PEER_PALETTE.len()]
-}
-
-const MONTHS_FR: [&str; 12] = [
-    "janvier",
-    "février",
-    "mars",
-    "avril",
-    "mai",
-    "juin",
-    "juillet",
-    "août",
-    "septembre",
-    "octobre",
-    "novembre",
-    "décembre",
-];
-const MONTHS_EN: [&str; 12] = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-];
-
-/// Jour local d'un message à partir de son instant Unix (`None` si absent).
-pub(crate) fn message_day(msg: &ChatMessage) -> Option<NaiveDate> {
-    let epoch = msg.timestamp_epoch?;
-    Local
-        .timestamp_opt(epoch as i64, 0)
-        .single()
-        .map(|dt| dt.date_naive())
-}
-
-/// Heure d'en-tête au format 24 h, dérivée de l'instant Unix si présent,
-/// sinon repli sur la chaîne `timestamp` (anciens messages / pairs).
-pub(crate) fn header_time(msg: &ChatMessage) -> String {
-    match msg
-        .timestamp_epoch
-        .and_then(|e| Local.timestamp_opt(e as i64, 0).single())
-    {
-        Some(dt) => dt.format("%H:%M").to_string(),
-        None => msg.timestamp.clone(),
-    }
-}
-
-/// Décide si un message ouvre un nouveau groupe (nouvel en-tête avec avatar).
-/// Vrai si l'auteur change, si le jour change, ou si l'écart de temps dépasse
-/// `GROUP_BREAK_SECS`. Sans instant comparable, on se rabat sur l'auteur seul.
-pub(crate) fn starts_new_group(
-    prev_from: Option<&str>,
-    prev_epoch: Option<u64>,
-    from: &str,
-    epoch: Option<u64>,
-    day_changed: bool,
-) -> bool {
-    if prev_from != Some(from) || day_changed {
-        return true;
-    }
-    match (prev_epoch, epoch) {
-        (Some(prev), Some(now)) => now.saturating_sub(prev) > GROUP_BREAK_SECS,
-        _ => false,
-    }
-}
-
-/// Libellé localisé d'un séparateur de date (« Aujourd'hui », « Hier » ou date
-/// complète selon la langue).
-pub(crate) fn day_divider_label(date: NaiveDate, today: NaiveDate, language: UiLanguage) -> String {
-    if date == today {
-        return match language {
-            UiLanguage::French => "Aujourd'hui".to_string(),
-            UiLanguage::English => "Today".to_string(),
-        };
-    }
-    if Some(date) == today.pred_opt() {
-        return match language {
-            UiLanguage::French => "Hier".to_string(),
-            UiLanguage::English => "Yesterday".to_string(),
-        };
-    }
-    let (day, month, year) = (date.day(), date.month0() as usize, date.year());
-    match language {
-        UiLanguage::French => format!("{} {} {}", day, MONTHS_FR[month], year),
-        UiLanguage::English => format!("{} {}, {}", MONTHS_EN[month], day, year),
-    }
-}
-
-/// Dessine un séparateur de date pleine largeur : une ligne fine traversée par
-/// le libellé centré, façon Discord/Cinny.
-fn render_day_divider(ui: &mut egui::Ui, label: &str) {
-    ui.add_space(14.0);
-    let line_color = egui::Color32::from_gray(80);
-    let text_color = super::theme::TEXT_MUTED;
-    let font = egui::TextStyle::Small.resolve(ui.style());
-
-    let full_width = ui.available_width();
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(full_width, 18.0), egui::Sense::hover());
-    if !ui.is_rect_visible(rect) {
-        return;
-    }
-    let painter = ui.painter();
-    let galley = painter.layout_no_wrap(label.to_string(), font, text_color);
-    let text_w = galley.size().x;
-    let gap = 12.0;
-    let center_y = rect.center().y;
-    let mid_x = rect.center().x;
-
-    let left_end = mid_x - text_w / 2.0 - gap;
-    let right_start = mid_x + text_w / 2.0 + gap;
-    let stroke = egui::Stroke::new(1.0, line_color);
-    painter.line_segment(
-        [
-            egui::pos2(rect.left(), center_y),
-            egui::pos2(left_end, center_y),
-        ],
-        stroke,
-    );
-    painter.line_segment(
-        [
-            egui::pos2(right_start, center_y),
-            egui::pos2(rect.right(), center_y),
-        ],
-        stroke,
-    );
-    painter.galley(
-        egui::pos2(mid_x - text_w / 2.0, center_y - galley.size().y / 2.0),
-        galley,
-        text_color,
-    );
-    ui.add_space(6.0);
-}
-
-/// En-tête d'un groupe de messages : nom coloré suivi, collé à droite, de
-/// l'heure d'envoi (format 24 h) et de l'accusé de lecture — coches pour nos
-/// messages en 1-à-1, bouton « … » (liste nominative reçu/lu) en salon/« Tous ».
-#[allow(clippy::too_many_arguments)]
-fn render_message_header(
-    ui: &mut egui::Ui,
-    display_name: &str,
-    timestamp: &str,
-    name_color: egui::Color32,
-    receipt: Option<(bool, bool)>,
-    receipt_detail: Option<&crate::app::ReceiptDetail>,
-    row_hash: u64,
-    language: UiLanguage,
-) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 6.0;
-        ui.label(
-            egui::RichText::new(display_name)
-                .color(name_color)
-                .family(egui::FontFamily::Name(super::BOLD_FAMILY.into())),
-        );
-        ui.label(
-            egui::RichText::new(timestamp)
-                .small()
-                .color(egui::Color32::from_gray(140)),
-        );
-        if let Some(detail) = receipt_detail {
-            show_receipt_detail_button(ui, detail, row_hash, language);
-        } else if let Some((delivered, read)) = receipt {
-            show_receipt(ui, delivered, read);
-        }
-    });
-}
-
-/// Bouton « … » des salons et de « Tous » : ouvre un popup listant qui a
-/// reçu et qui a lu le message (glyphe ASCII, les coches n'ayant pas de sens
-/// quand chaque membre peut avoir reçu ou lu indépendamment).
-fn show_receipt_detail_button(
-    ui: &mut egui::Ui,
-    detail: &crate::app::ReceiptDetail,
-    row_hash: u64,
-    language: UiLanguage,
-) {
-    let popup_id = ui.make_persistent_id(("receipt_popup", row_hash));
-    let btn = ui.small_button("...");
-    if btn.clicked() {
-        ui.memory_mut(|m| m.toggle_popup(popup_id));
-    }
-    egui::popup_below_widget(
-        ui,
-        popup_id,
-        &btn,
-        egui::PopupCloseBehavior::CloseOnClickOutside,
-        |ui| {
-            ui.set_min_width(160.0);
-            let (delivered_lbl, read_lbl) = match language {
-                UiLanguage::French => ("Reçu par", "Lu par"),
-                UiLanguage::English => ("Delivered to", "Read by"),
-            };
-            ui.label(egui::RichText::new(delivered_lbl).strong());
-            if detail.delivered_by.is_empty() {
-                ui.label(egui::RichText::new("—").weak());
-            } else {
-                for name in &detail.delivered_by {
-                    ui.label(name);
-                }
-            }
-            ui.separator();
-            ui.label(egui::RichText::new(read_lbl).strong());
-            if detail.read_by.is_empty() {
-                ui.label(egui::RichText::new("—").weak());
-            } else {
-                for name in &detail.read_by {
-                    ui.label(name);
-                }
-            }
-        },
-    );
-}
-
-/// Rend le corps d'un message (texte Markdown puis média éventuel). Les
-/// messages très longs (`collapse` présent) s'affichent repliés : aperçu +
-/// « Afficher la suite » ; dépliés, un bouton « Réduire » les referme.
-/// Renvoie (action média éventuelle, bascule replié/déplié cliquée).
-#[allow(clippy::too_many_arguments)]
-fn render_message_body(
-    ui: &mut egui::Ui,
-    msg: &ChatMessage,
-    parsed: &super::markdown::ParsedMarkdown,
-    collapse: Option<&super::snapshot::CollapseInfo>,
-    expanded: bool,
-    language: UiLanguage,
-    emoji_map: &std::collections::HashMap<String, usize>,
-    emoji_textures: &[(String, egui::TextureHandle)],
-    media_textures: &std::collections::HashMap<String, Option<egui::TextureHandle>>,
-    media_progress: &std::collections::HashMap<String, crate::message::MediaProgress>,
-) -> (Option<super::media::MediaAction>, bool) {
-    let mut toggled = false;
-    if !msg.content.is_empty() {
-        match collapse {
-            Some(info) if !expanded => {
-                super::markdown::render_parsed_markdown(
-                    ui,
-                    &info.preview,
-                    emoji_map,
-                    emoji_textures,
-                );
-                let label = match language {
-                    UiLanguage::French => format!(
-                        "Afficher la suite ({} lignes · {} caractères)",
-                        info.total_lines, info.total_chars
-                    ),
-                    UiLanguage::English => format!(
-                        "Show more ({} lines · {} characters)",
-                        info.total_lines, info.total_chars
-                    ),
-                };
-                if ui.small_button(label).clicked() {
-                    toggled = true;
-                }
-            }
-            Some(_) => {
-                super::markdown::render_parsed_markdown(ui, parsed, emoji_map, emoji_textures);
-                let label = match language {
-                    UiLanguage::French => "Réduire",
-                    UiLanguage::English => "Show less",
-                };
-                if ui.small_button(label).clicked() {
-                    toggled = true;
-                }
-            }
-            None => {
-                super::markdown::render_parsed_markdown(ui, parsed, emoji_map, emoji_textures);
-            }
-        }
-    }
-    if let Some(media) = &msg.media {
-        // Pendant le transfert : barre de progression au lieu de la carte.
-        if let Some(progress) = media_progress.get(&media.id) {
-            super::media::render_media_progress(ui, media, progress);
-            return (None, toggled);
-        }
-        let texture = media_textures.get(&media.id).and_then(|t| t.as_ref());
-        return (
-            super::media::render_media_block(ui, media, texture),
-            toggled,
-        );
-    }
-    (None, toggled)
-}
-
-/// Enregistre l'action média choisie (ouverture ou téléchargement) dans les
-/// variables collectées pendant le rendu, traitées après la zone défilante.
-fn apply_media_action(
-    action: super::media::MediaAction,
-    msg: &ChatMessage,
-    view_open: &mut Option<String>,
-    download: &mut Option<(String, String)>,
-) {
-    let Some(media) = &msg.media else { return };
-    match action {
-        super::media::MediaAction::View => *view_open = Some(media.id.clone()),
-        super::media::MediaAction::Download => {
-            *download = Some((media.id.clone(), media.filename.clone()))
-        }
-    }
-}
-
-/// Peint la texture PNG d'un emoji dans `rect` (jamais un glyphe police, cf.
-/// `emoji_picker::render_inline`), ou ne peint rien si la texture est absente
-/// du registre (emoji inconnu/non chargé).
-fn paint_emoji_texture(
-    ui: &egui::Ui,
-    rect: egui::Rect,
-    emoji: &str,
-    emoji_map: &std::collections::HashMap<String, usize>,
-    emoji_textures: &[(String, egui::TextureHandle)],
-) {
-    if let Some((_, texture)) = emoji_map
-        .get(emoji)
-        .and_then(|&idx| emoji_textures.get(idx))
-    {
-        ui.painter().image(
-            texture.id(),
-            rect,
-            egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
-            egui::Color32::WHITE,
-        );
-    }
-}
-
-/// Rend les pastilles de réaction sous un message (emoji + compteur),
-/// surlignées si l'utilisateur courant a réagi. Renvoie l'emoji cliqué ;
-/// l'appelant décide d'ajouter ou de retirer selon l'état actuel (toggle).
-fn render_reaction_pills(
-    ui: &mut egui::Ui,
-    reactions: &[ReactionEntry],
-    my_username: &str,
-    emoji_map: &std::collections::HashMap<String, usize>,
-    emoji_textures: &[(String, egui::TextureHandle)],
-) -> Option<String> {
-    if reactions.is_empty() {
-        return None;
-    }
-    let mut clicked = None;
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
-        for entry in reactions {
-            let mine = entry.users.iter().any(|u| u == my_username);
-            let (rect, resp) = ui.allocate_exact_size(egui::vec2(46.0, 24.0), egui::Sense::click());
-            if !ui.is_rect_visible(rect) {
-                continue;
-            }
-            let fill = if mine {
-                egui::Color32::from_rgb(70, 90, 140)
-            } else if resp.hovered() {
-                ui.visuals().widgets.hovered.bg_fill
-            } else {
-                egui::Color32::from_rgb(50, 52, 58)
-            };
-            let stroke = if mine {
-                egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 150, 255))
-            } else {
-                egui::Stroke::new(1.0, egui::Color32::from_rgb(70, 72, 78))
-            };
-            ui.painter()
-                .rect(rect, 6.0, fill, stroke, egui::StrokeKind::Inside);
-            let emoji_rect = egui::Rect::from_center_size(
-                rect.left_center() + egui::vec2(14.0, 0.0),
-                egui::vec2(HOVER_EMOJI_SIZE, HOVER_EMOJI_SIZE),
-            );
-            paint_emoji_texture(ui, emoji_rect, &entry.emoji, emoji_map, emoji_textures);
-            ui.painter().text(
-                rect.right_center() - egui::vec2(8.0, 0.0),
-                egui::Align2::RIGHT_CENTER,
-                entry.users.len().to_string(),
-                egui::TextStyle::Small.resolve(ui.style()),
-                ui.visuals().text_color(),
-            );
-            let tooltip = entry.users.join(", ");
-            if resp.on_hover_text(tooltip).clicked() {
-                clicked = Some(entry.emoji.clone());
-            }
-        }
-    });
-    clicked
-}
-
-/// Taille du mini-avatar affiché dans une citation de réponse.
-const REPLY_QUOTE_AVATAR: f32 = 16.0;
-/// Durée du flash de surlignage après un saut vers un message (secondes).
-const HIGHLIGHT_SECS: f32 = 2.0;
-
-/// Citation compacte au-dessus d'un message qui répond à un autre (façon
-/// Discord) : ligne de liaison qui part de l'avatar, mini-avatar et nom
-/// coloré de l'auteur d'origine, extrait sur une seule ligne. Cliquable pour
-/// remonter au message d'origine (renvoie `true` au clic). `resolved` est
-/// `None` si le message d'origine a expiré du ring-buffer ou n'a jamais été
-/// reçu par ce pair.
-#[allow(clippy::too_many_arguments)]
-fn render_reply_quote(
-    ui: &mut egui::Ui,
-    row_index: usize,
-    resolved: Option<&ChatMessage>,
-    author_name: &str,
-    author_color: egui::Color32,
-    author_avatar: Option<&egui::TextureHandle>,
-    media_texture: Option<&egui::TextureHandle>,
-    not_found_label: &str,
-) -> bool {
-    let mut clicked = false;
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        let left = ui.cursor().left();
-        let spine_x = left + AVATAR_SIZE / 2.0;
-        ui.add_space(AVATAR_SIZE + AVATAR_GUTTER);
-
-        // Fond arrondi inséré sous le contenu, rempli seulement au survol.
-        let hover_bg = ui.painter().add(egui::Shape::Noop);
-        let rect = ui
-            .horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 5.0;
-                match resolved {
-                    Some(orig) => {
-                        super::avatar::show_avatar(
-                            ui,
-                            author_avatar,
-                            author_name,
-                            REPLY_QUOTE_AVATAR,
-                        );
-                        ui.label(
-                            egui::RichText::new(author_name)
-                                .small()
-                                .color(author_color)
-                                .family(egui::FontFamily::Name(super::BOLD_FAMILY.into())),
-                        );
-                        if orig.media.is_some() {
-                            super::media::render_reply_thumb(ui, media_texture, REPLY_QUOTE_AVATAR);
-                        }
-                        let snippet = if orig.content.is_empty() && orig.media.is_some() {
-                            "📎".to_string()
-                        } else {
-                            super::media::elide(&orig.content, 90)
-                        };
-                        ui.add(
-                            egui::Label::new(
-                                egui::RichText::new(snippet)
-                                    .small()
-                                    .color(egui::Color32::from_gray(165)),
-                            )
-                            .truncate(),
-                        );
-                    }
-                    None => {
-                        ui.label(
-                            egui::RichText::new(not_found_label)
-                                .small()
-                                .italics()
-                                .color(egui::Color32::from_gray(120)),
-                        );
-                    }
-                }
-            })
-            .response
-            .rect;
-
-        // Ligne de liaison : descend du coin arrondi vers l'avatar du message
-        // qui répond, et rejoint horizontalement la citation.
-        let stroke = egui::Stroke::new(2.0, egui::Color32::from_gray(90));
-        let cy = rect.center().y;
-        let corner = 8.0;
-        let painter = ui.painter();
-        painter.line_segment(
-            [
-                egui::pos2(spine_x + corner, cy),
-                egui::pos2(rect.left() - 6.0, cy),
-            ],
-            stroke,
-        );
-        painter.add(egui::epaint::QuadraticBezierShape::from_points_stroke(
-            [
-                egui::pos2(spine_x, cy + corner),
-                egui::pos2(spine_x, cy),
-                egui::pos2(spine_x + corner, cy),
-            ],
-            false,
-            egui::Color32::TRANSPARENT,
-            stroke,
-        ));
-        painter.line_segment(
-            [
-                egui::pos2(spine_x, cy + corner),
-                egui::pos2(spine_x, rect.bottom() + 4.0),
-            ],
-            stroke,
-        );
-
-        if resolved.is_some() {
-            let hit = rect.expand2(egui::vec2(4.0, 2.0));
-            let resp = ui.interact(
-                hit,
-                egui::Id::new(("reply_quote", row_index)),
-                egui::Sense::click(),
-            );
-            if resp.hovered() {
-                ui.painter().set(
-                    hover_bg,
-                    egui::Shape::rect_filled(
-                        hit,
-                        4.0,
-                        egui::Color32::from_rgba_unmultiplied(255, 255, 255, 10),
-                    ),
-                );
-            }
-            clicked = resp
-                .on_hover_cursor(egui::CursorIcon::PointingHand)
-                .clicked();
-        }
-    });
-    ui.add_space(2.0);
-    clicked
-}
-
-/// Résultat d'un rendu de la barre d'actions flottante au survol.
-struct HoverToolbarResult {
-    /// Le pointeur est actuellement au-dessus de la barre elle-même (pour
-    /// éviter que le survol ne « clignote » en passant de la ligne à la
-    /// barre flottante qui la recouvre partiellement).
-    pointer_over_toolbar: bool,
-    reply_clicked: bool,
-    quick_emoji: Option<String>,
-}
-
-impl AbcomApp {
-    /// Barre d'actions flottante affichée au survol d'un message : emojis
-    /// récents, "+" (picker complet de réaction) et "répondre". Pas de
-    /// bouton de transfert. `row_rect` est le rectangle pleine largeur de la
-    /// ligne : la barre est collée au bord droit du fil (position stable
-    /// quel que soit le message) et chevauche le haut de la ligne, façon
-    /// Discord.
-    fn show_hover_toolbar(
-        &mut self,
-        ctx: &egui::Context,
-        row_index: usize,
-        msg_hash: u64,
-        row_rect: egui::Rect,
-        reply_label: &str,
-        add_reaction_label: &str,
-    ) -> HoverToolbarResult {
-        // Lookup indexé via `emoji_map` (pas de recherche linéaire dans les
-        // 323 textures à chaque frame de survol).
-        let textures: Vec<(String, egui::TextureHandle)> = self
-            .recent_reaction_emojis
-            .iter()
-            .filter_map(|e| {
-                self.emoji
-                    .map
-                    .get(e)
-                    .and_then(|&idx| self.emoji.textures.get(idx))
-                    .cloned()
-            })
-            .collect();
-
-        let toolbar_w = HOVER_BTN_SIZE * (textures.len() as f32 + 2.0) + 6.0;
-        let toolbar_h = HOVER_BTN_SIZE + 10.0;
-        let anchor = egui::pos2(
-            row_rect.right() - toolbar_w - 12.0,
-            row_rect.top() - toolbar_h * 0.5,
-        );
-
-        let mut quick_emoji = None;
-        let mut reply_clicked = false;
-        let mut plus_rect = None;
-
-        let area = egui::Area::new(egui::Id::new(("msg_hover_toolbar", row_index)))
-            .order(egui::Order::Foreground)
-            .fixed_pos(anchor);
-        let resp = area.show(ctx, |ui| {
-            egui::Frame::popup(ui.style())
-                .corner_radius(egui::CornerRadius::same(8))
-                .inner_margin(egui::Margin::symmetric(4, 4))
-                .show(ui, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.spacing_mut().item_spacing.x = 2.0;
-                        for (ch, _) in &textures {
-                            let (rect, resp) = ui.allocate_exact_size(
-                                egui::vec2(HOVER_BTN_SIZE, HOVER_BTN_SIZE),
-                                egui::Sense::click(),
-                            );
-                            if resp.hovered() {
-                                ui.painter().rect_filled(
-                                    rect,
-                                    6.0,
-                                    ui.visuals().widgets.hovered.bg_fill,
-                                );
-                            }
-                            let emoji_rect = egui::Rect::from_center_size(
-                                rect.center(),
-                                egui::vec2(HOVER_EMOJI_SIZE, HOVER_EMOJI_SIZE),
-                            );
-                            paint_emoji_texture(
-                                ui,
-                                emoji_rect,
-                                ch,
-                                &self.emoji.map,
-                                &self.emoji.textures,
-                            );
-                            if resp.clicked() {
-                                quick_emoji = Some(ch.clone());
-                            }
-                        }
-
-                        let (plus_r, plus_resp) = ui.allocate_exact_size(
-                            egui::vec2(HOVER_BTN_SIZE, HOVER_BTN_SIZE),
-                            egui::Sense::click(),
-                        );
-                        if plus_resp.hovered() {
-                            ui.painter().rect_filled(
-                                plus_r,
-                                6.0,
-                                ui.visuals().widgets.hovered.bg_fill,
-                            );
-                        }
-                        ui.painter().text(
-                            plus_r.center(),
-                            egui::Align2::CENTER_CENTER,
-                            "+",
-                            egui::FontId::proportional(16.0),
-                            ui.visuals().text_color(),
-                        );
-                        if plus_resp.on_hover_text(add_reaction_label).clicked() {
-                            plus_rect = Some(plus_r);
-                        }
-
-                        let (reply_r, reply_resp) = ui.allocate_exact_size(
-                            egui::vec2(HOVER_BTN_SIZE, HOVER_BTN_SIZE),
-                            egui::Sense::click(),
-                        );
-                        if reply_resp.hovered() {
-                            ui.painter().rect_filled(
-                                reply_r,
-                                6.0,
-                                ui.visuals().widgets.hovered.bg_fill,
-                            );
-                        }
-                        ui.painter().text(
-                            reply_r.center(),
-                            egui::Align2::CENTER_CENTER,
-                            "↩",
-                            egui::FontId::proportional(16.0),
-                            ui.visuals().text_color(),
-                        );
-                        if reply_resp.on_hover_text(reply_label).clicked() {
-                            reply_clicked = true;
-                        }
-                    });
-                });
-        });
-
-        if let Some(rect) = plus_rect {
-            self.reaction_picker_open = Some((msg_hash, rect));
-        }
-
-        let pointer_over_toolbar = ctx
-            .input(|i| i.pointer.interact_pos())
-            .map(|p| resp.response.rect.contains(p))
-            .unwrap_or(false);
-
-        HoverToolbarResult {
-            pointer_over_toolbar,
-            reply_clicked,
-            quick_emoji,
-        }
-    }
-}
+#[cfg(test)]
+pub(crate) use row::GROUP_BREAK_SECS;
+use row::{
+    apply_media_action, render_day_divider, render_message_body, render_message_header,
+    render_reaction_pills, render_reply_quote, AVATAR_GUTTER, AVATAR_SIZE, GROUP_SPACING,
+    HIGHLIGHT_SECS, MESSAGE_RIGHT_MARGIN,
+};
+pub(crate) use row::{
+    day_divider_label, header_time, message_day, peer_color_for, starts_new_group,
+};
 
 impl AbcomApp {
     /// Zone centrale : fil de la conversation sélectionnée. Le rendu
@@ -730,8 +25,10 @@ impl AbcomApp {
     /// verrou sur `AppState`, aucun clone de conversation, aucun re-parse
     /// markdown par frame. Le fil est fenêtré façon Discord : seuls les
     /// derniers messages sont rendus, remonter charge les 100 précédents.
-    pub(crate) fn show_central_panel(&mut self, ctx: &egui::Context) {
-        egui::CentralPanel::default().show(ctx, |ui| {
+    pub(crate) fn show_central_panel(&mut self, ui: &mut egui::Ui) {
+        let ctx = ui.ctx().clone();
+        let ctx = &ctx;
+        egui::CentralPanel::default().show(ui, |ui| {
             let rows = self.chat_cache.rows.clone();
             let my_name = self.chat_cache.my_name.clone();
             let selected_conv: Option<String> = self.chat_cache.conversation().map(str::to_string);
@@ -745,7 +42,7 @@ impl AbcomApp {
                 Some(name) => name.clone(),
                 None => selected_conv
                     .clone()
-                    .unwrap_or_else(|| self.tr("Tous", "All").to_string()),
+                    .unwrap_or_else(|| self.t(i18n::TOUS_2).to_string()),
             };
             // Salon sélectionné : nom de groupe (sans `#`) et sous-titre
             // « N membres » sous le titre.
@@ -761,9 +58,9 @@ impl AbcomApp {
                     .map(|g| {
                         let n = g.members.len();
                         if n > 1 {
-                            format!("{} {}", n, self.tr("membres", "members"))
+                            format!("{} {}", n, self.t(i18n::MEMBRES_2))
                         } else {
-                            format!("{} {}", n, self.tr("membre", "member"))
+                            format!("{} {}", n, self.t(i18n::MEMBRE))
                         }
                     })
             });
@@ -777,25 +74,22 @@ impl AbcomApp {
                     }
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.menu_button(self.tr("Actions", "Actions"), |ui| {
+                    ui.menu_button(self.t(i18n::ACTIONS), |ui| {
                         let sound_text = if self.enable_sound_notifications {
-                            self.tr("🔊 Désactiver tous les sons", "🔊 Disable all sounds")
+                            self.t(i18n::DESACTIVER_TOUS_LES_SONS)
                         } else {
-                            self.tr("🔇 Activer tous les sons", "🔇 Enable all sounds")
+                            self.t(i18n::ACTIVER_TOUS_LES_SONS)
                         };
                         if ui.button(sound_text).clicked() {
                             self.enable_sound_notifications = !self.enable_sound_notifications;
-                            ui.close_menu();
+                            ui.close();
                         }
                         let this_conv = selected_conv.clone();
                         let is_muted = self.muted_conversations.contains(&this_conv);
                         let mute_text = if is_muted {
-                            self.tr(
-                                "🔔 Réactiver les sons de ce salon",
-                                "🔔 Re-enable sounds for this chat",
-                            )
+                            self.t(i18n::REACTIVER_LES_SONS_DE_CE_SALON)
                         } else {
-                            self.tr("🔕 Muet pour ce salon", "🔕 Mute this chat")
+                            self.t(i18n::MUET_POUR_CE_SALON)
                         };
                         if ui.button(mute_text).clicked() {
                             if is_muted {
@@ -803,30 +97,21 @@ impl AbcomApp {
                             } else {
                                 self.muted_conversations.insert(this_conv);
                             }
-                            ui.close_menu();
+                            ui.close();
                         }
-                        if ui
-                            .button(self.tr("👥 Voir les participants", "👥 View participants"))
-                            .clicked()
-                        {
+                        if ui.button(self.t(i18n::VOIR_LES_PARTICIPANTS)).clicked() {
                             self.modals.participants_open = true;
-                            ui.close_menu();
+                            ui.close();
                         }
                         if let Some(gname) = &selected_group_name {
-                            if ui
-                                .button(self.tr("⚙ Gérer le groupe", "⚙ Manage group"))
-                                .clicked()
-                            {
+                            if ui.button(self.t(i18n::GERER_LE_GROUPE)).clicked() {
                                 self.modals.group_manage_target = Some(gname.clone());
                                 self.modals.group_manage_confirm = None;
-                                ui.close_menu();
+                                ui.close();
                             }
                         }
                         if let Some(user) = &private_peer {
-                            if ui
-                                .button(self.tr("Renommer ce contact", "Rename contact"))
-                                .clicked()
-                            {
+                            if ui.button(self.t(i18n::RENOMMER_CE_CONTACT)).clicked() {
                                 self.modals.rename_input = self
                                     .state
                                     .lock()
@@ -837,16 +122,13 @@ impl AbcomApp {
                                     .and_then(|r| r.alias.clone())
                                     .unwrap_or_default();
                                 self.modals.rename_target = Some(user.clone());
-                                ui.close_menu();
+                                ui.close();
                             }
                         }
-                        if !is_broadcast
-                            && ui
-                                .button(self.tr("🗑 Effacer l'historique", "🗑 Clear history"))
-                                .clicked()
+                        if !is_broadcast && ui.button(self.t(i18n::EFFACER_L_HISTORIQUE)).clicked()
                         {
                             self.state.lock_safe().clear_conversation_history();
-                            ui.close_menu();
+                            ui.close();
                         }
                     });
                 });
@@ -859,7 +141,7 @@ impl AbcomApp {
                     .sidebar_cache
                     .selected_conversation
                     .clone()
-                    .unwrap_or_else(|| self.tr("Tous", "All").to_string());
+                    .unwrap_or_else(|| self.t(i18n::TOUS_2).to_string());
                 let my_name2 = self.sidebar_cache.my_username.clone();
                 let sel_conv = self.sidebar_cache.selected_conversation.clone();
                 let peers = self.sidebar_cache.peers.clone();
@@ -875,7 +157,7 @@ impl AbcomApp {
                             .cloned()
                     });
                 let mut open = self.modals.participants_open;
-                egui::Window::new(self.tr("Participants", "Participants"))
+                egui::Window::new(self.t(i18n::PARTICIPANTS))
                     .open(&mut open)
                     .resizable(false)
                     .collapsible(false)
@@ -884,7 +166,7 @@ impl AbcomApp {
                         ui.label(
                             egui::RichText::new(format!(
                                 "{}: {}",
-                                self.tr("Conversation", "Conversation"),
+                                self.t(i18n::CONVERSATION),
                                 conv_name
                             ))
                             .strong(),
@@ -895,12 +177,7 @@ impl AbcomApp {
                                 ui.label(&peer.username);
                             }
                             if peers.is_empty() {
-                                ui.label(
-                                    self.tr(
-                                        "Aucun participant connecté",
-                                        "No connected participant",
-                                    ),
-                                );
+                                ui.label(self.t(i18n::AUCUN_PARTICIPANT_CONNECTE));
                             }
                         } else if let Some(group) = &group_view {
                             // Membres du salon : présence, couronne du
@@ -915,12 +192,12 @@ impl AbcomApp {
                                 }
                                 if *member == my_name2 {
                                     line.push(' ');
-                                    line.push_str(self.tr("(vous)", "(you)"));
+                                    line.push_str(self.t(i18n::VOUS));
                                 }
                                 ui.label(line);
                             }
                         } else {
-                            ui.label(format!("{} ({})", my_name2, self.tr("vous", "you")));
+                            ui.label(format!("{} ({})", my_name2, self.t(i18n::VOUS_3)));
                             if let Some(peer) = sel_conv {
                                 ui.label(&peer);
                             }
@@ -933,11 +210,11 @@ impl AbcomApp {
             if let Some(target) = self.modals.rename_target.clone() {
                 // Libellés calculés avant la closure (évite d'emprunter `self`
                 // pendant qu'on édite `self.modals.rename_input`).
-                let title = self.tr("Renommer le contact", "Rename contact");
-                let lbl_original = self.tr("Nom d'origine", "Original name");
-                let hint = self.tr("Alias (vide = retirer)", "Alias (empty = remove)");
-                let save_lbl = self.tr("Enregistrer", "Save");
-                let clear_lbl = self.tr("Retirer l'alias", "Remove alias");
+                let title = self.t(i18n::RENOMMER_LE_CONTACT);
+                let lbl_original = self.t(i18n::NOM_D_ORIGINE);
+                let hint = self.t(i18n::ALIAS_VIDE_RETIRER);
+                let save_lbl = self.t(i18n::ENREGISTRER);
+                let clear_lbl = self.t(i18n::RETIRER_L_ALIAS);
 
                 let mut open = true;
                 let mut do_save = false;
@@ -972,6 +249,55 @@ impl AbcomApp {
                     self.modals.rename_target = None;
                 } else if !open {
                     self.modals.rename_target = None;
+                }
+            }
+
+            // Alerte TOFU : la clé présentée par un pair ne correspond plus à
+            // celle épinglée. Deux causes possibles — usurpation, ou
+            // réinstallation légitime du pair. On ne tranche pas à sa place :
+            // la connexion reste refusée tant que l'utilisateur n'a pas
+            // explicitement ré-appairé, empreinte vérifiée hors-bande.
+            if let Some((peer, offered_key)) = self.modals.key_mismatch.clone() {
+                let title = self.t(i18n::CLE_D_IDENTITE_MODIFIEE);
+                let explain = self.t(i18n::LA_CLE_DE_CE_PAIR_NE);
+                let trust_lbl = self.t(i18n::FAIRE_CONFIANCE_A_LA_NOUVELLE_CLE);
+                let keep_lbl = self.t(i18n::GARDER_L_ANCIENNE_CLE);
+
+                // `Modal` plutôt que `Window` : voile de fond et focus piégé —
+                // cette alerte ne doit pas pouvoir être ignorée par inadvertance.
+                let modal = egui::Modal::new(egui::Id::new("key_mismatch")).show(ctx, |ui| {
+                    ui.set_max_width(360.0);
+                    ui.heading(format!("⚠️ {title}"));
+                    ui.add_space(6.0);
+                    ui.label(egui::RichText::new(&peer).strong());
+                    ui.add_space(6.0);
+                    ui.label(explain);
+                    ui.add_space(10.0);
+                    ui.horizontal(|ui| {
+                        (
+                            ui.button(trust_lbl).clicked(),
+                            ui.button(keep_lbl).clicked(),
+                        )
+                    })
+                    .inner
+                });
+                let (do_trust, do_keep) = modal.inner;
+                // Clic hors modale ou Échap : on garde la clé actuelle, jamais
+                // le contraire — refuser est toujours le choix sûr.
+                let dismissed = modal.backdrop_response.clicked()
+                    || ui.input(|i| i.key_pressed(egui::Key::Escape));
+
+                if do_trust {
+                    // On épingle la clé effectivement présentée, pas la
+                    // prochaine venue : sinon une autre machine du réseau
+                    // pourrait se glisser dans la fenêtre de ré-appairage.
+                    self.trust.repin(&peer, &offered_key);
+                    self.last_notification =
+                        Some(self.t(i18n::NOUVELLE_CLE_ACCEPTEE_POUR_CE_PAIR).to_string());
+                    self.notification_time = std::time::Instant::now();
+                    self.modals.key_mismatch = None;
+                } else if do_keep || dismissed {
+                    self.modals.key_mismatch = None;
                 }
             }
 
@@ -1010,12 +336,9 @@ impl AbcomApp {
                 }
             }
 
-            let not_found_label = self.tr(
-                "Message d'origine introuvable",
-                "Original message not found",
-            );
-            let reply_label = self.tr("Répondre", "Reply");
-            let add_reaction_label = self.tr("Ajouter une réaction", "Add reaction");
+            let not_found_label = self.t(i18n::MESSAGE_D_ORIGINE_INTROUVABLE);
+            let reply_label = self.t(i18n::REPONDRE);
+            let add_reaction_label = self.t(i18n::AJOUTER_UNE_REACTION);
             let language = self.ui_language;
 
             // Largeur du fil figée AVANT la zone défilante, depuis la largeur
@@ -1040,9 +363,7 @@ impl AbcomApp {
 
                     if rows.is_empty() {
                         ui.add_space(50.0);
-                        ui.label(
-                            egui::RichText::new(self.tr("Aucun message", "No message")).weak(),
-                        );
+                        ui.label(egui::RichText::new(self.t(i18n::AUCUN_MESSAGE)).weak());
                     }
 
                     // Une seule ligne peut revendiquer le survol par frame :
@@ -1261,7 +582,7 @@ impl AbcomApp {
                                     egui::Align2::CENTER_CENTER,
                                     &row.header_time,
                                     egui::TextStyle::Small.resolve(ui.style()),
-                                    egui::Color32::from_gray(140),
+                                    crate::ui::theme::palette(ui).text_muted,
                                 );
                             }
                         }
@@ -1393,17 +714,14 @@ impl AbcomApp {
         for (index, offer) in self.media.pending_offers.iter().enumerate() {
             ui.add_space(6.0);
             egui::Frame::group(ui.style())
-                .fill(egui::Color32::from_rgb(48, 52, 60))
+                .fill(crate::ui::theme::palette(ui).surface_hover)
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.label(
                         egui::RichText::new(format!(
                             "{} {}",
                             offer.from,
-                            self.tr(
-                                "souhaite vous envoyer un fichier",
-                                "wants to send you a file"
-                            )
+                            self.t(i18n::SOUHAITE_VOUS_ENVOYER_UN_FICHIER)
                         ))
                         .strong(),
                     );
@@ -1417,10 +735,10 @@ impl AbcomApp {
                     );
                     ui.add_space(4.0);
                     ui.horizontal(|ui| {
-                        if ui.button(self.tr("Refuser", "Decline")).clicked() {
+                        if ui.button(self.t(i18n::REFUSER)).clicked() {
                             decided = Some((index, false));
                         }
-                        if ui.button(self.tr("Accepter", "Accept")).clicked() {
+                        if ui.button(self.t(i18n::ACCEPTER)).clicked() {
                             decided = Some((index, true));
                         }
                     });
@@ -1447,14 +765,14 @@ impl AbcomApp {
     pub(crate) fn show_notification(&mut self, ctx: &egui::Context) {
         if let Some(notif) = &self.last_notification {
             if self.notification_time.elapsed().as_secs_f32() < 3.0 {
-                egui::Window::new(self.tr("Notification", "Notification"))
+                egui::Window::new(self.t(i18n::NOTIFICATION))
                     .anchor(egui::Align2::RIGHT_TOP, egui::vec2(-10.0, 10.0))
                     .resizable(false)
                     .collapsible(false)
                     .title_bar(false)
                     .show(ctx, |ui| {
                         ui.colored_label(
-                            egui::Color32::from_rgb(255, 200, 100),
+                            crate::ui::theme::palette(ui).accent_soft,
                             egui::RichText::new(notif).text_style(egui::TextStyle::Body),
                         );
                     });
@@ -1488,17 +806,36 @@ pub(crate) fn format_bytes(bytes: u64) -> String {
 /// - ✓  gris  = envoyé, livraison en attente
 /// - ✓✓ gris  = livré (ACK reçu), pas encore lu
 /// - ✓✓ bleu  = lu (ReadReceipt reçu)
-fn show_receipt(ui: &mut egui::Ui, delivered: bool, read: bool) {
+fn show_receipt(ui: &mut egui::Ui, delivered: bool, read: bool, failed: bool) {
+    if failed {
+        ui.label(
+            egui::RichText::new("!")
+                .strong()
+                .color(crate::ui::theme::palette(ui).danger),
+        )
+        .on_hover_text("Échec de livraison / Delivery failed");
+        return;
+    }
     let double = delivered || read;
     let w = if double { 17.0_f32 } else { 9.0_f32 };
-    let (rect, _) = ui.allocate_exact_size(egui::vec2(w, 12.0), egui::Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(w, 12.0), egui::Sense::hover());
+    // Les coches sont peintes : sans libellé, l'état de livraison n'existe
+    // pas pour un lecteur d'écran.
+    let state = if read {
+        "Lu"
+    } else if delivered {
+        "Reçu"
+    } else {
+        "Envoyé"
+    };
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, state));
     if !ui.is_rect_visible(rect) {
         return;
     }
     let color = if read {
-        egui::Color32::from_rgb(80, 180, 255) // bleu = lu
+        crate::ui::theme::palette(ui).receipt_read // bleu = lu
     } else {
-        egui::Color32::from_gray(160) // gris = envoyé ou livré
+        crate::ui::theme::palette(ui).text_muted // gris = envoyé ou livré
     };
     let stroke = egui::Stroke::new(1.5, color);
     let p = ui.painter();
@@ -1519,5 +856,5 @@ fn show_receipt(ui: &mut egui::Ui, delivered: bool, read: bool) {
 }
 
 #[cfg(test)]
-#[path = "../tests/test_ui_chat_panel.rs"]
+#[path = "../../tests/test_ui_chat_panel.rs"]
 mod tests;

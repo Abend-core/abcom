@@ -7,10 +7,10 @@ use tokio::sync::mpsc;
 
 use crate::app::AppState;
 use crate::message::{
-    AppEvent, AvatarRequest, MediaAttachment, MediaProgress, MediaSendJob, MediaStreamOffer,
-    MessageAckRequest, ReactionRequest, ReadReceipt, ReadReceiptRequest, SendGroupRequest,
-    SendRequest, TypingRequest,
+    AppEvent, MediaAttachment, MediaProgress, MediaSendJob, MediaStreamOffer, NetworkSendRequest,
+    ReadReceipt, ReadReceiptRequest,
 };
+use crate::platform::tray;
 use crate::util::MutexExt;
 
 mod avatar;
@@ -20,16 +20,18 @@ mod emoji_picker;
 mod events;
 mod gif_picker;
 mod group_modal;
+mod i18n;
 mod input_bar;
 mod markdown;
 mod media;
+mod outbound;
 mod reactions;
+mod search;
 mod settings;
 mod sidebar;
 mod snapshot;
 mod sound;
 mod theme;
-pub(crate) mod tray;
 
 /// Nombre de messages affichés au départ et pas de chargement du fenêtrage
 /// façon Discord (le fil charge 100 messages de plus en remontant).
@@ -55,13 +57,6 @@ pub(crate) enum UiLanguage {
     English,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum ThemePreference {
-    System,
-    Light,
-    Dark,
-}
-
 /// Onglet actif de la fenêtre Paramètres.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SettingsTab {
@@ -80,30 +75,96 @@ pub(crate) enum GifPickerTab {
     Sticker,
 }
 
-/// Canaux mpsc indépendants vers les tâches réseau/transfert : un récepteur
-/// d'événements entrants et un émetteur par type de requête sortante.
+/// Canaux vers les tâches réseau : les paquets courts partagent une commande
+/// typée, le streaming média reste séparé.
 pub(crate) struct NetworkChannels {
     pub(crate) event_rx: mpsc::Receiver<AppEvent>,
-    pub(crate) send_tx: mpsc::Sender<SendRequest>,
-    pub(crate) send_group_tx: mpsc::Sender<SendGroupRequest>,
-    pub(crate) send_typing_tx: mpsc::Sender<TypingRequest>,
-    pub(crate) send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
-    pub(crate) send_ack_tx: mpsc::Sender<MessageAckRequest>,
-    pub(crate) send_avatar_tx: mpsc::Sender<AvatarRequest>,
-    pub(crate) send_reaction_tx: mpsc::Sender<ReactionRequest>,
+    pub(crate) send_tx: mpsc::Sender<NetworkSendRequest>,
     pub(crate) send_media_tx: mpsc::Sender<MediaSendJob>,
 }
 
-/// Données du picker emoji : textures décodées, index de recherche par
-/// shortcode, et état de navigation du picker/des suggestions. Consommées à
-/// la fois par le picker lui-même et par le rendu inline (fil, composeur,
-/// barre de réactions).
+impl NetworkChannels {
+    fn try_send(&self, request: impl Into<NetworkSendRequest>) -> bool {
+        match self.send_tx.try_send(request.into()) {
+            Ok(()) => true,
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                crate::metrics::record_packet_dropped();
+                tracing::warn!("commande réseau ignorée : file pleine");
+                false
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                crate::metrics::record_packet_dropped();
+                tracing::warn!("commande réseau ignorée : canal fermé");
+                false
+            }
+        }
+    }
+
+    /// Signaux non critiques : perte acceptable, mais comptée pour le diagnostic.
+    fn try_send_best_effort(&self, request: impl Into<NetworkSendRequest>) {
+        match self.send_tx.try_send(request.into()) {
+            Ok(()) => {}
+            Err(mpsc::error::TrySendError::Closed(_)) => {
+                crate::metrics::record_packet_dropped();
+                tracing::debug!("signal réseau abandonné : canal fermé");
+            }
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                crate::metrics::record_packet_dropped();
+                tracing::debug!("signal réseau abandonné : file pleine");
+            }
+        }
+    }
+}
+
+/// Canaux créés par le runtime et transférés en bloc à l'interface.
+pub struct UiRuntimeChannels {
+    pub event_rx: mpsc::Receiver<AppEvent>,
+    pub send_tx: mpsc::Sender<NetworkSendRequest>,
+    pub send_media_tx: mpsc::Sender<MediaSendJob>,
+    pub media_offer_rx: mpsc::Receiver<MediaStreamOffer>,
+    /// Magasin TOFU partagé : l'UI n'y touche que pour le ré-appairage explicite.
+    pub trust: Arc<crate::network::secure::TrustStore>,
+}
+
+/// Textures emoji décodées à la demande, indexées comme `emoji_registry::EMOJI_DATA`.
+///
+/// Les 323 PNG étaient décodés et téléversés en GPU au lancement même si le
+/// sélecteur n'était jamais ouvert. La mutabilité intérieure permet de garder
+/// les emprunts partagés du code de rendu.
+#[derive(Default)]
+pub struct EmojiTextures {
+    cache: std::cell::RefCell<std::collections::HashMap<usize, Option<egui::TextureHandle>>>,
+}
+
+impl EmojiTextures {
+    /// Texture d'un emoji, décodée au premier affichage puis mémorisée.
+    pub fn get(&self, ctx: &egui::Context, index: usize) -> Option<egui::TextureHandle> {
+        if let Some(cached) = self.cache.borrow().get(&index) {
+            return cached.clone();
+        }
+        let decoded = crate::emoji_registry::EMOJI_DATA
+            .get(index)
+            .and_then(|(ch, bytes)| {
+                let rgba = image::load_from_memory(bytes).ok()?.to_rgba8();
+                let (w, h) = rgba.dimensions();
+                let image = egui::ColorImage::from_rgba_unmultiplied(
+                    [w as usize, h as usize],
+                    rgba.as_raw(),
+                );
+                Some(ctx.load_texture(format!("emoji_{ch}"), image, egui::TextureOptions::LINEAR))
+            });
+        self.cache.borrow_mut().insert(index, decoded.clone());
+        decoded
+    }
+
+    pub fn clear(&self) {
+        self.cache.borrow_mut().clear();
+    }
+}
+
+/// Index de recherche emoji et état de navigation du picker.
 pub(crate) struct EmojiPickerState {
-    /// Résultat du décodage des PNG emoji, effectué dans un thread au
-    /// démarrage : le premier frame n'attend plus les 323 décodages.
-    pub(crate) decode_rx: Option<std::sync::mpsc::Receiver<Vec<(String, egui::ColorImage)>>>,
-    pub(crate) textures: Vec<(String, egui::TextureHandle)>,
-    pub(crate) textures_loaded: bool,
+    pub(crate) textures: EmojiTextures,
     pub(crate) category: usize,
     pub(crate) map: std::collections::HashMap<String, usize>,
     pub(crate) alias_to_char: std::collections::HashMap<String, String>,
@@ -120,11 +181,11 @@ pub(crate) struct GifPickerState {
     /// Texte courant de la barre de recherche du sélecteur.
     pub(crate) query: String,
     /// Feed GIF — tendances et recherche Klipy /gifs/*.
-    pub(crate) feed: crate::klipy::GifFeed,
+    pub(crate) feed: crate::services::klipy::GifFeed,
     /// Feed Mèmes — tendances et recherche Klipy /static-memes/*.
-    pub(crate) meme_feed: crate::klipy::GifFeed,
+    pub(crate) meme_feed: crate::services::klipy::GifFeed,
     /// Feed Stickers — tendances et recherche Klipy /stickers/*.
-    pub(crate) sticker_feed: crate::klipy::GifFeed,
+    pub(crate) sticker_feed: crate::services::klipy::GifFeed,
     /// Dernière frappe dans la recherche (anti-rebond avant requête).
     pub(crate) last_input: std::time::Instant,
     /// Le picker était ouvert à la frame précédente (détection de la
@@ -145,6 +206,18 @@ pub(crate) struct ComposerState {
     pub(crate) pending_attachments: Vec<PathBuf>,
 }
 
+/// Recherche plein texte dans l'historique (Cmd/Ctrl+F).
+#[derive(Default)]
+pub(crate) struct SearchState {
+    pub(crate) open: bool,
+    pub(crate) query: String,
+    /// Le champ doit prendre le focus au prochain rendu.
+    pub(crate) focus_requested: bool,
+    /// Requête déjà envoyée au stockage (évite de la relancer par frame).
+    pub(crate) submitted: String,
+    pub(crate) results: Vec<crate::message::ChatMessage>,
+}
+
 /// État des modales et panneaux superposés : création/gestion de salon,
 /// renommage de contact, paramètres, liste des participants.
 pub(crate) struct ModalsState {
@@ -161,6 +234,9 @@ pub(crate) struct ModalsState {
     pub(crate) rename_input: String,
     pub(crate) settings_open: bool,
     pub(crate) settings_tab: SettingsTab,
+    /// Pair dont la clé a changé (TOFU `Mismatch`) et clé qu'il a présentée :
+    /// la modale propose de ré-épingler **celle-ci**. None = aucune alerte.
+    pub(crate) key_mismatch: Option<(String, Vec<u8>)>,
 }
 
 /// État des médias du fil : caches de textures (éviction LRU), visionneuse
@@ -227,14 +303,17 @@ pub(crate) struct AbcomApp {
     /// 0 = none, 1 = pick files, 2 = pick folder (deferred to next frame to avoid AppKit conflict)
     pub(crate) pending_picker: u8,
     pub(crate) ui_language: UiLanguage,
-    pub(crate) theme_preference: ThemePreference,
-    pub(crate) system_dark_mode: Option<bool>,
+    /// Préférence de thème : egui suit le système et détecte ses changements
+    /// en cours d'exécution, ce que notre détection au démarrage ne faisait pas.
+    pub(crate) theme_preference: egui::ThemePreference,
     /// Textures d'avatars, indexées par nom d'utilisateur (cache de rendu).
     pub(crate) avatar_textures: std::collections::HashMap<String, egui::TextureHandle>,
     /// Pairs auxquels notre avatar a déjà été envoyé (évite les répétitions).
     pub(crate) avatar_sent_to: std::collections::HashSet<String>,
     /// Sélection d'image de profil différée (sélecteur natif, voir `update`).
     pub(crate) pending_avatar_pick: bool,
+    /// Export de conversation demandé : sélecteur natif ouvert à la frame suivante.
+    pub(crate) pending_export: bool,
     pub(crate) media: MediaState,
     /// Ligne dont la barre d'actions au survol est affichée : (index absolu
     /// dans le fil, hash du message). L'index désambiguïse les messages au
@@ -259,9 +338,6 @@ pub(crate) struct AbcomApp {
     /// `process_events`) : impose un repaint de repli court pour faire
     /// expirer l'indicateur même sans nouvel événement réseau.
     pub(crate) typing_active: bool,
-    /// Dernier mode sombre effectivement appliqué à egui (évite de
-    /// reconstruire les `Visuals` à chaque frame).
-    pub(crate) applied_dark_mode: Option<bool>,
     /// Cache dérivé du fil (lignes pré-calculées, markdown memoïsé).
     pub(crate) chat_cache: snapshot::ChatCache,
     /// Cache dérivé de la barre latérale et de la barre de saisie.
@@ -274,30 +350,32 @@ pub(crate) struct AbcomApp {
     /// Une page d'historique plus ancienne est en cours de chargement
     /// (évite les demandes répétées pendant le vol de la requête).
     pub(crate) loading_older: bool,
+    pub(crate) search: SearchState,
+    /// Magasin TOFU, pour le seul ré-appairage explicite (cf. `modals.key_mismatch`).
+    pub(crate) trust: Arc<crate::network::secure::TrustStore>,
+    /// Accusés déjà émis par destinataire : sans ce mémo, chaque ouverture rediffusait toute la fenêtre.
+    pub(crate) read_receipts_sent:
+        std::collections::HashMap<String, std::collections::HashSet<u64>>,
 }
 
 impl AbcomApp {
-    // Câblage des canaux mpsc indépendants vers les tâches réseau/transfert.
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         state: Arc<Mutex<AppState>>,
         identity_fingerprint: String,
         psk_active: bool,
-        event_rx: mpsc::Receiver<AppEvent>,
-        send_tx: mpsc::Sender<SendRequest>,
-        send_group_tx: mpsc::Sender<SendGroupRequest>,
-        send_typing_tx: mpsc::Sender<TypingRequest>,
-        send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
-        send_ack_tx: mpsc::Sender<MessageAckRequest>,
-        send_avatar_tx: mpsc::Sender<AvatarRequest>,
-        send_reaction_tx: mpsc::Sender<ReactionRequest>,
-        send_media_tx: mpsc::Sender<MediaSendJob>,
-        media_offer_rx: mpsc::Receiver<MediaStreamOffer>,
+        channels: UiRuntimeChannels,
     ) -> Self {
-        // Décodage des emojis en arrière-plan dès la création : les textures
-        // seront créées (rapide) quand le résultat arrive, sans geler l'UI.
-        let emoji_decode_rx = Some(spawn_emoji_decoder());
-
+        // Index emoji construit sur le registre statique : aucun décodage ici.
+        let characters: Vec<String> = crate::emoji_registry::EMOJI_DATA
+            .iter()
+            .map(|(ch, _)| (*ch).to_string())
+            .collect();
+        let emoji_map: std::collections::HashMap<String, usize> = characters
+            .iter()
+            .enumerate()
+            .map(|(i, ch)| (ch.clone(), i))
+            .collect();
+        let (alias_to_char, aliases) = emoji_picker::build_emoji_shortcode_index(&characters);
         // Préférences persistées (table kv).
         let (notif_preview, autostart_enabled) = {
             let s = state.lock_safe();
@@ -312,20 +390,14 @@ impl AbcomApp {
             identity_fingerprint,
             psk_active,
             net: NetworkChannels {
-                event_rx,
-                send_tx,
-                send_group_tx,
-                send_typing_tx,
-                send_read_receipt_tx,
-                send_ack_tx,
-                send_avatar_tx,
-                send_reaction_tx,
-                send_media_tx,
+                event_rx: channels.event_rx,
+                send_tx: channels.send_tx,
+                send_media_tx: channels.send_media_tx,
             },
             media: MediaState {
                 textures: std::collections::HashMap::new(),
                 viewer: None,
-                offer_rx: media_offer_rx,
+                offer_rx: channels.media_offer_rx,
                 pending_offers: Vec::new(),
                 progress: std::collections::HashMap::new(),
                 known_gif_urls: std::collections::HashSet::new(),
@@ -347,9 +419,15 @@ impl AbcomApp {
                 show: false,
                 tab: GifPickerTab::Gif,
                 query: String::new(),
-                feed: crate::klipy::GifFeed::new(crate::klipy::ContentKind::Gif),
-                meme_feed: crate::klipy::GifFeed::new(crate::klipy::ContentKind::Meme),
-                sticker_feed: crate::klipy::GifFeed::new(crate::klipy::ContentKind::Sticker),
+                feed: crate::services::klipy::GifFeed::new(
+                    crate::services::klipy::ContentKind::Gif,
+                ),
+                meme_feed: crate::services::klipy::GifFeed::new(
+                    crate::services::klipy::ContentKind::Meme,
+                ),
+                sticker_feed: crate::services::klipy::GifFeed::new(
+                    crate::services::klipy::ContentKind::Sticker,
+                ),
                 last_input: std::time::Instant::now(),
                 was_open: false,
             },
@@ -359,13 +437,11 @@ impl AbcomApp {
             has_unread: false,
             window_focused: true,
             emoji: EmojiPickerState {
-                decode_rx: emoji_decode_rx,
-                textures: Vec::new(),
-                textures_loaded: false,
+                textures: EmojiTextures::default(),
                 category: 0,
-                map: std::collections::HashMap::new(),
-                alias_to_char: std::collections::HashMap::new(),
-                aliases: Vec::new(),
+                map: emoji_map,
+                alias_to_char,
+                aliases,
                 shortcode_selected: 0,
             },
             modals: ModalsState {
@@ -379,17 +455,18 @@ impl AbcomApp {
                 rename_input: String::new(),
                 settings_open: false,
                 settings_tab: SettingsTab::General,
+                key_mismatch: None,
             },
             last_typing_broadcast: std::time::Instant::now(),
             last_retry_time: std::time::Instant::now(),
             muted_conversations: std::collections::HashSet::new(),
             pending_picker: 0,
             ui_language: UiLanguage::French,
-            theme_preference: ThemePreference::System,
-            system_dark_mode: None,
+            theme_preference: egui::ThemePreference::System,
             avatar_textures: std::collections::HashMap::new(),
             avatar_sent_to: std::collections::HashSet::new(),
             pending_avatar_pick: false,
+            pending_export: false,
             hover_toolbar_target: None,
             reaction_picker_open: None,
             recent_reaction_emojis: DEFAULT_RECENT_EMOJIS
@@ -401,7 +478,6 @@ impl AbcomApp {
             highlight_message: None,
             expanded_messages: std::collections::HashSet::new(),
             typing_active: false,
-            applied_dark_mode: None,
             tray: None,
             tray_init_failed: false,
             window_hidden: false,
@@ -413,14 +489,15 @@ impl AbcomApp {
             chat_visible_count: CHAT_WINDOW_STEP,
             chat_prepend_fix: None,
             loading_older: false,
+            search: SearchState::default(),
+            trust: channels.trust,
+            read_receipts_sent: std::collections::HashMap::new(),
         }
     }
 
-    pub(crate) fn tr(&self, french: &'static str, english: &'static str) -> &'static str {
-        match self.ui_language {
-            UiLanguage::French => french,
-            UiLanguage::English => english,
-        }
+    /// Libellé du catalogue dans la langue active.
+    pub(crate) fn t(&self, entry: i18n::Entry) -> &'static str {
+        entry.get(self.ui_language)
     }
 
     /// Sauvegarde le texte courant dans les drafts pour la conversation active
@@ -457,6 +534,84 @@ impl AbcomApp {
         self.send_read_receipts_for_conversation(new_conversation);
     }
 
+    /// Applique les raccourcis globaux. Appelé avant le rendu des panneaux
+    /// pour que la combinaison soit consommée avant qu'un widget la voie.
+    pub(crate) fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        if ctx.input_mut(|i| i.consume_shortcut(&shortcuts::SETTINGS)) {
+            self.modals.settings_open = !self.modals.settings_open;
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&shortcuts::SEARCH)) {
+            self.search.open = true;
+            self.search.focus_requested = true;
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&shortcuts::CLOSE_OVERLAY)) {
+            self.close_topmost_overlay();
+        }
+
+        let step = if ctx.input_mut(|i| i.consume_shortcut(&shortcuts::NEXT_CONVERSATION)) {
+            1
+        } else if ctx.input_mut(|i| i.consume_shortcut(&shortcuts::PREV_CONVERSATION)) {
+            -1
+        } else {
+            0
+        };
+        if step != 0 {
+            self.cycle_conversation(step);
+        }
+    }
+
+    /// Ferme la surcouche visible la plus haute, dans l'ordre où l'utilisateur
+    /// s'attend à les voir disparaître.
+    fn close_topmost_overlay(&mut self) {
+        if self.media.viewer.take().is_some() {
+            return;
+        }
+        for open in [
+            &mut self.gif_picker.show,
+            &mut self.show_emoji_picker,
+            &mut self.modals.settings_open,
+            &mut self.modals.group_modal_open,
+            &mut self.search.open,
+        ] {
+            if *open {
+                *open = false;
+                return;
+            }
+        }
+        self.modals.rename_target = None;
+        self.modals.group_manage_target = None;
+    }
+
+    /// Passe à la conversation suivante ou précédente de la barre latérale.
+    fn cycle_conversation(&mut self, step: isize) {
+        // Même ordre que la sidebar : « Tous », puis les pairs, puis les salons.
+        let mut keys: Vec<Option<String>> = vec![None];
+        keys.extend(
+            self.sidebar_cache
+                .peers
+                .iter()
+                .map(|peer| Some(peer.username.clone())),
+        );
+        keys.extend(
+            self.sidebar_cache
+                .groups
+                .iter()
+                .map(|group| Some(format!("#{}", group.name))),
+        );
+        if keys.len() < 2 {
+            return;
+        }
+
+        let current = self.state.lock_safe().selected_conversation.clone();
+        let index = keys.iter().position(|k| *k == current).unwrap_or(0) as isize;
+        let next = (index + step).rem_euclid(keys.len() as isize) as usize;
+        let target = keys[next].clone();
+        self.switch_conversation(target.clone());
+        if let Some(conv) = target {
+            self.state.lock_safe().mark_conversation_read(&conv);
+        }
+    }
+
     /// Envoie un ReadReceipt pour chaque message reçu d'un autre pair dans la
     /// conversation donnée : pair (privé), `#nom` (salon) ou `None` (« Tous »).
     /// En salon/« Tous », l'accusé est diffusé à tous les membres en ligne
@@ -478,12 +633,22 @@ impl AbcomApp {
                 continue;
             }
             let hash = crate::app::AppState::message_hash(m);
-            for addr in s.receipt_recipients(m) {
+            for (recipient, addr) in s.receipt_recipients(m) {
+                // Delta : ce destinataire a-t-il déjà reçu cet accusé ?
+                if !self
+                    .read_receipts_sent
+                    .entry(recipient.clone())
+                    .or_default()
+                    .insert(hash)
+                {
+                    continue;
+                }
                 receipts.push(ReadReceiptRequest {
+                    to_peer: recipient.clone(),
                     to_addr: addr,
                     receipt: ReadReceipt {
                         from: my_name.clone(),
-                        to: m.from.clone(),
+                        to: recipient,
                         message_hash: hash,
                         timestamp: now.clone(),
                     },
@@ -493,7 +658,7 @@ impl AbcomApp {
         drop(s);
 
         for req in receipts {
-            let _ = self.net.send_read_receipt_tx.try_send(req);
+            self.net.try_send(req);
         }
     }
 }
@@ -528,10 +693,12 @@ impl AbcomApp {
         self.forget_gif_previews(ctx);
         // Emojis : libérés aussi, re-décodés en arrière-plan au retour.
         self.emoji.textures.clear();
-        self.emoji.map.clear();
-        self.emoji.textures_loaded = false;
-        self.emoji.decode_rx = None;
         self.chat_cache.invalidate();
+        // Images du chargeur egui_extras (GIF, aperçus Klipy) : elles survivaient
+        // au repli parce que seules les nôtres étaient libérées.
+        ctx.forget_all_images();
+        // Libérer ne suffit pas : sans ceci le RSS ne bouge pas.
+        release_memory_to_os();
     }
 
     /// Restaure la fenêtre depuis le tray et resynchronise l'affichage
@@ -548,7 +715,6 @@ impl AbcomApp {
         #[cfg(not(windows))]
         ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-        self.emoji.decode_rx = Some(spawn_emoji_decoder());
         self.chat_cache.invalidate();
         ctx.request_repaint();
     }
@@ -574,13 +740,14 @@ impl AbcomApp {
         if self.notif_preview {
             media::elide(content, 120)
         } else {
-            self.tr("Nouveau message", "New message").to_string()
+            self.t(i18n::NOUVEAU_MESSAGE).to_string()
         }
     }
 }
 
 impl eframe::App for AbcomApp {
-    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+    /// État et notifications : appelé aussi quand la fenêtre est repliée, sans aucune passe egui.
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // HWND natif capté une fois : permet de replier/restaurer la fenêtre
         // au niveau OS sous Windows (voir tray::win).
         #[cfg(windows)]
@@ -591,10 +758,7 @@ impl eframe::App for AbcomApp {
         // Icône résidente, créée paresseusement (macOS impose le thread
         // principal avec l'event loop démarrée — c'est le cas ici).
         if self.tray.is_none() && !self.tray_init_failed {
-            self.tray = tray::Tray::new(
-                self.tr("Ouvrir Abcom", "Open Abcom"),
-                self.tr("Quitter", "Quit"),
-            );
+            self.tray = tray::Tray::new(self.t(i18n::OUVRIR_ABCOM), self.t(i18n::QUITTER));
             if self.tray.is_none() {
                 self.tray_init_failed = true;
                 tracing::warn!("icône résidente indisponible : la croix quittera l'application");
@@ -635,27 +799,32 @@ impl eframe::App for AbcomApp {
         if let Some(t) = &mut self.tray {
             t.set_unread(unread);
         }
+    }
 
-        // Cachée ou minimisée : l'état et SQLite sont à jour, les
-        // notifications natives sont parties — aucun rendu, aucun repaint
-        // programmé (CPU/GPU ~0). Le prochain réveil viendra du réseau, du
-        // tray ou de la restauration de la fenêtre.
+    /// Rendu : jamais appelé fenêtre repliée, la logique vit dans [`Self::logic`].
+    fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = root.ctx().clone();
+        let ctx = &ctx;
+
+        // Minimisée : l'état est à jour, rien à peindre et aucun repaint programmé.
         let minimized = ctx.input(|i| i.viewport().minimized.unwrap_or(false));
         if self.window_hidden || minimized {
             return;
         }
 
-        self.apply_theme_preference(ctx);
-        self.lazy_load_emoji(ctx);
+        ctx.set_theme(self.theme_preference);
 
         // Rafraîchit les caches dérivés si l'état a changé (génération) —
         // sinon la frame se rend sans reprendre le verrou ni rien re-dériver.
         {
             let s = self.state.lock_safe();
             self.sidebar_cache.refresh(&s);
-            let rebuilt = self
-                .chat_cache
-                .refresh(&s, self.ui_language, &self.emoji.map);
+            let rebuilt = self.chat_cache.refresh(
+                &s,
+                self.ui_language,
+                &self.emoji.map,
+                ctx.theme() == egui::Theme::Dark,
+            );
             drop(s);
             if let Some(conv_changed) = rebuilt {
                 if conv_changed {
@@ -690,10 +859,10 @@ impl eframe::App for AbcomApp {
             let kind = self.pending_picker;
             self.pending_picker = 0;
             let (files_title, folder_title, files_added, folder_added) = (
-                self.tr("Ajouter des fichiers", "Add files"),
-                self.tr("Ajouter un dossier", "Add folder"),
-                self.tr("Fichiers ajoutés", "Files added"),
-                self.tr("Dossier ajouté", "Folder added"),
+                self.t(i18n::AJOUTER_DES_FICHIERS),
+                self.t(i18n::AJOUTER_UN_DOSSIER),
+                self.t(i18n::FICHIERS_AJOUTES),
+                self.t(i18n::DOSSIER_AJOUTE),
             );
             match kind {
                 1 => {
@@ -722,13 +891,56 @@ impl eframe::App for AbcomApp {
             }
         }
 
+        // Fichiers déposés dans la fenêtre : egui les expose, il ne restait
+        // qu'à les brancher sur le pipeline de pièces jointes existant.
+        let dropped: Vec<PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .map(|f| f.path().to_path_buf())
+                .collect()
+        });
+        if !dropped.is_empty() {
+            let added = self.t(i18n::FICHIERS_AJOUTES);
+            for path in dropped {
+                if !self.composer.pending_attachments.contains(&path) {
+                    self.composer.pending_attachments.push(path);
+                }
+            }
+            self.last_notification = Some(added.to_string());
+            self.notification_time = std::time::Instant::now();
+        }
+
+        // Export de conversation : même report que les autres sélecteurs natifs.
+        if self.pending_export {
+            self.pending_export = false;
+            let title = self.t(i18n::EXPORTER_LA_CONVERSATION);
+            let done = self.t(i18n::CONVERSATION_EXPORTEE);
+            let name = {
+                let state = self.state.lock_safe();
+                match &state.selected_conversation {
+                    Some(conv) => conv.trim_start_matches('#').to_string(),
+                    None => "tous".to_string(),
+                }
+            };
+            if let Some(path) = rfd::FileDialog::new()
+                .set_title(title)
+                .set_file_name(format!("abcom-{name}.txt"))
+                .save_file()
+            {
+                self.state.lock_safe().export_selected_conversation(path);
+                self.last_notification = Some(done.to_string());
+                self.notification_time = std::time::Instant::now();
+            }
+        }
+
         // Sélection de l'image de profil (différée comme les autres sélecteurs
         // natifs pour éviter un conflit avec la run-loop AppKit sur macOS).
         if self.pending_avatar_pick {
             self.pending_avatar_pick = false;
             let (pick_title, error_msg) = (
-                self.tr("Choisir une image de profil", "Choose a profile picture"),
-                self.tr("Image de profil invalide", "Invalid profile picture"),
+                self.t(i18n::CHOISIR_UNE_IMAGE_DE_PROFIL),
+                self.t(i18n::IMAGE_DE_PROFIL_INVALIDE),
             );
             if let Some(path) = rfd::FileDialog::new()
                 .set_title(pick_title)
@@ -751,17 +963,24 @@ impl eframe::App for AbcomApp {
             }
         }
 
-        self.show_sidebar_panel(ctx);
-        let (emoji_btn_clicked, gif_btn_clicked) = self.show_input_bar(ctx);
+        // Avant les panneaux : une combinaison consommée ici ne sera pas
+        // réinterprétée par un widget dans la même frame.
+        self.handle_shortcuts(ctx);
+        self.submit_search();
+
+        // Ordre imposé par egui : panneaux latéraux, puis bas, puis central.
+        self.show_sidebar_panel(root);
+        let (emoji_btn_clicked, gif_btn_clicked) = self.show_input_bar(root);
         self.show_notification(ctx);
         self.show_emoji_picker_window(ctx, emoji_btn_clicked);
         self.show_gif_picker_window(ctx, gif_btn_clicked);
         self.render_group_modal(ctx);
         self.render_group_manage_modal(ctx);
-        self.show_central_panel(ctx);
+        self.show_central_panel(root);
         self.show_reaction_emoji_picker(ctx);
         self.render_settings(ctx);
         self.show_media_viewer(ctx);
+        self.show_search(ctx);
 
         // Repaint de repli : les événements réseau réveillent déjà l'UI
         // (cf. notify.rs), il ne reste à couvrir que les états transitoires
@@ -781,7 +1000,7 @@ impl eframe::App for AbcomApp {
 
     /// Flush final du stockage : attend que toutes les écritures en file
     /// soient appliquées avant la fermeture.
-    fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+    fn on_exit(&mut self) {
         self.state.lock_safe().flush_storage();
     }
 }
@@ -839,24 +1058,13 @@ fn app_icon_data() -> Option<egui::IconData> {
     }
 }
 
-/// Point d'entrée de l'interface graphique
-// Câblage des canaux mpsc indépendants transmis tels quels à `AbcomApp::new`.
-#[allow(clippy::too_many_arguments)]
+/// Point d'entrée de l'interface graphique.
 pub fn run(
     state: Arc<Mutex<AppState>>,
-    ui_ctx: crate::notify::UiContext,
+    ui_ctx: crate::platform::notify::UiContext,
     identity_fingerprint: String,
     psk_active: bool,
-    event_rx: mpsc::Receiver<AppEvent>,
-    send_tx: mpsc::Sender<SendRequest>,
-    send_group_tx: mpsc::Sender<SendGroupRequest>,
-    send_typing_tx: mpsc::Sender<TypingRequest>,
-    send_read_receipt_tx: mpsc::Sender<ReadReceiptRequest>,
-    send_ack_tx: mpsc::Sender<MessageAckRequest>,
-    send_avatar_tx: mpsc::Sender<AvatarRequest>,
-    send_reaction_tx: mpsc::Sender<ReactionRequest>,
-    send_media_tx: mpsc::Sender<MediaSendJob>,
-    media_offer_rx: mpsc::Receiver<MediaStreamOffer>,
+    channels: UiRuntimeChannels,
 ) -> anyhow::Result<()> {
     // Handlers tray/menu globaux : chaque événement réveille l'UI via le
     // contexte partagé (fonctionne même fenêtre cachée, sans rendu).
@@ -864,7 +1072,16 @@ pub fn run(
 
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("Abcom")
-        .with_inner_size([860.0, 600.0]);
+        .with_inner_size([860.0, 600.0])
+        // En dessous, la barre latérale seule occupe toute la fenêtre.
+        .with_min_inner_size([560.0, 360.0]);
+
+    // Windows : le glisser-déposer OLE de winit entre en conflit avec les
+    // boîtes de dialogue COM de rfd. À revoir si rfd passe en asynchrone.
+    #[cfg(windows)]
+    {
+        viewport = viewport.with_drag_and_drop(false);
+    }
 
     if let Some(icon) = app_icon_data() {
         viewport = viewport.with_icon(icon);
@@ -872,7 +1089,10 @@ pub fn run(
 
     let options = eframe::NativeOptions {
         viewport,
-        renderer: eframe::Renderer::Glow,
+        renderer: eframe::Renderer::Wgpu,
+        // Le défaut d'egui-wgpu est `HighPerformance`, ce qui réveille le GPU
+        // dédié d'un portable pour peindre du texte et des rectangles.
+        wgpu_options: low_power_wgpu(),
         ..Default::default()
     };
 
@@ -887,20 +1107,14 @@ pub fn run(
             // Loaders d'images egui_extras : HTTP (récupération depuis le CDN
             // Klipy) + décodage GIF/WebP animés pour les vignettes et le fil.
             egui_extras::install_image_loaders(&cc.egui_ctx);
+            // Libère la copie CPU des images une fois téléversées en GPU.
+            cc.egui_ctx
+                .options_mut(|options| options.reduce_texture_memory = true);
             Ok(Box::new(AbcomApp::new(
                 state,
                 identity_fingerprint,
                 psk_active,
-                event_rx,
-                send_tx,
-                send_group_tx,
-                send_typing_tx,
-                send_read_receipt_tx,
-                send_ack_tx,
-                send_avatar_tx,
-                send_reaction_tx,
-                send_media_tx,
-                media_offer_rx,
+                channels,
             )))
         }),
     )
@@ -913,31 +1127,39 @@ pub fn run(
     Ok(())
 }
 
-/// Décode les PNG du registre d'emojis dans un thread dédié (le premier
-/// frame de l'UI n'attend plus ~323 décodages d'images).
-fn spawn_emoji_decoder() -> std::sync::mpsc::Receiver<Vec<(String, egui::ColorImage)>> {
-    let (tx, rx) = std::sync::mpsc::channel();
-    std::thread::Builder::new()
-        .name("abcom-emoji".into())
-        .spawn(move || {
-            let images: Vec<(String, egui::ColorImage)> = crate::emoji_registry::EMOJI_DATA
-                .iter()
-                .filter_map(|(ch, bytes)| {
-                    image::load_from_memory(bytes).ok().map(|img| {
-                        let rgba = img.to_rgba8();
-                        let (w, h) = rgba.dimensions();
-                        let color_image = egui::ColorImage::from_rgba_unmultiplied(
-                            [w as usize, h as usize],
-                            rgba.as_raw(),
-                        );
-                        (ch.to_string(), color_image)
-                    })
-                })
-                .collect();
-            let _ = tx.send(images);
-        })
-        .ok();
-    rx
+/// Raccourcis globaux de l'application, déclarés en un seul endroit.
+///
+/// `consume_shortcut` réserve la combinaison pour nous et empêche qu'un autre
+/// widget la traite dans la même frame — ce que notre filtrage manuel de
+/// touches, cantonné au composeur, ne savait pas faire.
+pub mod shortcuts {
+    use eframe::egui::{Key, KeyboardShortcut, Modifiers};
+
+    pub const SETTINGS: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::Comma);
+    pub const NEXT_CONVERSATION: KeyboardShortcut =
+        KeyboardShortcut::new(Modifiers::CTRL, Key::Tab);
+    pub const PREV_CONVERSATION: KeyboardShortcut =
+        KeyboardShortcut::new(Modifiers::CTRL.plus(Modifiers::SHIFT), Key::Tab);
+    pub const SEARCH: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::F);
+    pub const CLOSE_OVERLAY: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::Escape);
+}
+
+/// Configuration wgpu privilégiant le GPU intégré : le défaut d'egui-wgpu est
+/// `HighPerformance`, ce qui réveille la carte dédiée pour une interface 2D.
+fn low_power_wgpu() -> eframe::egui_wgpu::WgpuConfiguration {
+    let mut options = eframe::egui_wgpu::WgpuConfiguration::default();
+    if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_setup {
+        setup.power_preference = eframe::wgpu::PowerPreference::LowPower;
+    }
+    options
+}
+
+/// Rend à l'OS les pages libérées mais retenues par l'allocateur (sans effet hors mimalloc).
+pub(crate) fn release_memory_to_os() {
+    // SAFETY : mi_collect est thread-safe et sans précondition ; force = true rend les pages.
+    unsafe {
+        libmimalloc_sys::mi_collect(true);
+    }
 }
 
 /// macOS : montre/retire l'icône du Dock. Repliée dans la barre de menus,
@@ -946,7 +1168,8 @@ fn spawn_emoji_decoder() -> std::sync::mpsc::Receiver<Vec<(String, egui::ColorIm
 /// Doit être appelé sur le thread principal (c'est le cas dans `update`).
 #[cfg(target_os = "macos")]
 fn set_dock_visible(visible: bool) {
-    use objc2::ClassType;
+    // objc2 0.6 : `alloc()` vient du trait `AnyThread` (ex-`ClassType`).
+    use objc2::AnyThread;
     use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy, NSImage};
     use objc2_foundation::NSData;
     let Some(mtm) = objc2_foundation::MainThreadMarker::new() else {
@@ -976,3 +1199,7 @@ fn set_dock_visible(visible: bool) {
 
 #[cfg(not(target_os = "macos"))]
 fn set_dock_visible(_visible: bool) {}
+
+#[cfg(test)]
+#[path = "../tests/test_ui_app.rs"]
+mod app_tests;

@@ -17,7 +17,7 @@ pub enum MediaKind {
 ///
 /// Métadonnée uniquement : les octets ne transitent jamais dans le message, ils
 /// sont transmis à part par streaming (voir `network::media_stream`) et écrits
-/// dans le dossier `media/<id>`. L'historique `messages.json` reste donc léger.
+/// dans le dossier `media/<id>`. L'historique SQLite reste donc léger.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct MediaAttachment {
     /// Identifiant unique servant aussi de nom de fichier en cache
@@ -59,13 +59,16 @@ pub struct MediaStreamHeader {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timestamp_epoch: Option<u64>,
     pub media: MediaAttachment,
-    /// Vrai si le destinataire doit accepter avant la réception (> 1 Go).
+    /// Indication de l'émetteur. Le destinataire la recalcule depuis la taille
+    /// et le seuil du protocole avant de décider si un accord est nécessaire.
     pub requires_ack: bool,
 }
 
 /// Tâche d'envoi d'un média en streaming vers un destinataire (canal interne).
 #[derive(Clone, Debug)]
 pub struct MediaSendJob {
+    /// Username attendu après le handshake Noise.
+    pub to_peer: String,
     /// Adresse de chat du destinataire ; le port média vaut `+1`.
     pub to_addr: std::net::SocketAddr,
     /// Fichier source à streamer (fichier original ou archive d'un dossier).
@@ -77,6 +80,7 @@ pub struct MediaSendJob {
 /// décision avant d'écrire le moindre octet.
 pub struct MediaStreamOffer {
     pub from: String,
+    pub to_user: Option<String>,
     pub filename: String,
     pub size_bytes: u64,
     pub decision_tx: tokio::sync::oneshot::Sender<bool>,
@@ -94,6 +98,8 @@ pub struct MediaProgress {
     pub finished: bool,
     /// Transfert interrompu (erreur réseau ou refus côté distant).
     pub failed: bool,
+    /// `true` pour un transfert émis localement, `false` pour une réception.
+    pub outgoing: bool,
 }
 
 /// Extension d'un nom de fichier en minuscules, sans le point.

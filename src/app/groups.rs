@@ -138,7 +138,7 @@ impl AppState {
         let conv = Self::group_conv_key(group_name);
         self.messages
             .retain(|m| m.to_user.as_deref() != Some(conv.as_str()));
-        self.read_counts.remove(&conv);
+        self.read_marks.remove(&conv);
         self.persist(super::StorageCmd::DeleteConversation {
             me: self.my_username.clone(),
             conv: Some(conv.clone()),
@@ -193,11 +193,11 @@ impl AppState {
                 m.to_user = Some(new_conv.clone());
             }
         }
-        if let Some(read) = self.read_counts.remove(&old_conv) {
-            self.read_counts.insert(new_conv.clone(), read);
-            self.persist(super::StorageCmd::SetReadCount {
+        if let Some(read) = self.read_marks.remove(&old_conv) {
+            self.read_marks.insert(new_conv.clone(), read);
+            self.persist(super::StorageCmd::SetReadMark {
                 username: new_conv.clone(),
-                count: read as u64,
+                message_hash: read,
             });
         }
         self.persist(super::StorageCmd::RenameConversation {
@@ -257,6 +257,13 @@ impl AppState {
     /// Adresses des membres du groupe actuellement en ligne (moi exclu) :
     /// destinataires des messages du salon et des événements de groupe.
     pub fn group_member_addrs(&self, group_name: &str) -> Vec<SocketAddr> {
+        self.group_member_recipients(group_name)
+            .into_iter()
+            .map(|(_, addr)| addr)
+            .collect()
+    }
+
+    pub(crate) fn group_member_recipients(&self, group_name: &str) -> Vec<(String, SocketAddr)> {
         let Some(g) = self.get_group(group_name) else {
             return Vec::new();
         };
@@ -267,7 +274,7 @@ impl AppState {
                 self.peers
                     .iter()
                     .find(|p| p.online && p.username == *m && !p.addr.ip().is_unspecified())
-                    .map(|p| p.addr)
+                    .map(|p| (p.username.clone(), p.addr))
             })
             .collect()
     }

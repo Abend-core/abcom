@@ -59,3 +59,38 @@ pub fn data_dir() -> PathBuf {
         n => base.join(format!("abcom-{n}")),
     }
 }
+
+/// Durée de vie des fichiers de travail avant purge automatique.
+pub const SCRATCH_TTL: std::time::Duration = std::time::Duration::from_secs(24 * 60 * 60);
+
+/// Fichiers de travail (collages longs en `.txt`), en 0700 — pas `/tmp`, lisible par les autres comptes.
+pub fn scratch_dir() -> std::io::Result<PathBuf> {
+    let dir = data_dir().join("scratch");
+    std::fs::create_dir_all(&dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    }
+    Ok(dir)
+}
+
+/// Purge par ancienneté : le transfert média lit le fichier bien après la mise en file.
+pub fn purge_scratch() {
+    let Ok(dir) = scratch_dir() else {
+        return;
+    };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .map(|modified| modified.elapsed().is_ok_and(|age| age > SCRATCH_TTL))
+            .unwrap_or(false);
+        if stale {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+}

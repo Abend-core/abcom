@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 #
-# Lance plusieurs instances locales d'Abcom pour tester la connexion P2P.
+# run-multi.sh — Lance plusieurs instances locales d'Abcom pour tester la
+# connexion P2P. Usage : scripts/run-multi.sh [nombre d'instances]
+#
 # Les processus sont détachés du terminal (setsid) → ils apparaissent comme
 # fenêtres indépendantes dans la barre des tâches du bureau.
 #

@@ -23,12 +23,13 @@ pub struct ReactionEvent {
 /// Demande d'envoi d'un événement de réaction à une adresse TCP.
 #[derive(Clone, Debug)]
 pub struct ReactionRequest {
+    pub to_peer: String,
     pub to_addr: SocketAddr,
     pub event: ReactionEvent,
 }
 
 /// Une entrée de réaction sur un message : un emoji et la liste des
-/// utilisateurs ayant réagi avec celui-ci. Persistée dans `reactions.json`,
+/// utilisateurs ayant réagi avec celui-ci. Persistée dans SQLite,
 /// indexée par `AppState::message_hash` du message ciblé.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
 pub struct ReactionEntry {

@@ -43,29 +43,30 @@ impl AppState {
         self.delivered_receipts
             .retain(|hash, _| live.contains(hash));
         self.pending_messages.retain(|hash, _| live.contains(hash));
+        self.failed_messages.retain(|hash, _| live.contains(hash));
     }
 
     /// Marque une conversation comme lue. `conv` est un nom de pair
     /// (conversation privée) ou une clé de salon `#nom` (groupe).
     pub fn mark_conversation_read(&mut self, conv: &str) {
-        let me = self.my_username.as_str();
-        let count = if conv.starts_with('#') {
-            self.messages
-                .iter()
-                .filter(|m| m.to_user.as_deref() == Some(conv) && m.from != me)
-                .count()
-        } else {
-            self.messages
-                .iter()
-                .filter(|m| m.from == conv && m.to_user.as_deref() == Some(me))
-                .count()
+        let Some(last) = self.last_incoming_hash(conv) else {
+            return;
         };
-        self.read_counts.insert(conv.to_string(), count);
-        self.persist(super::StorageCmd::SetReadCount {
+        self.read_marks.insert(conv.to_string(), last);
+        self.persist(super::StorageCmd::SetReadMark {
             username: conv.to_string(),
-            count: count as u64,
+            message_hash: last,
         });
         self.bump_content();
+    }
+
+    /// Hash du dernier message entrant d'une conversation.
+    fn last_incoming_hash(&self, conv: &str) -> Option<u64> {
+        self.messages
+            .iter()
+            .rev()
+            .find(|m| self.incoming_key(m).as_deref() == Some(conv))
+            .map(Self::message_hash)
     }
 
     /// Messages de la conversation sélectionnée
@@ -96,24 +97,54 @@ impl AppState {
 
     /// Nombre de messages non-lus d'une conversation : nom de pair (privé)
     /// ou clé de salon `#nom` (groupe).
+    /// Non-lus d'une conversation : messages entrants postérieurs au dernier
+    /// marqué lu.
+    ///
+    /// Repère par **hash de message** et non par compteur : après une purge du
+    /// ring-buffer ou un effacement d'historique, un compteur pouvait désigner
+    /// un tout autre ensemble de messages.
     pub fn unread_count(&self, conv: &str) -> usize {
         if self.selected_conversation.as_deref() == Some(conv) {
             return 0;
         }
-        let me = self.my_username.as_str();
-        let total = if conv.starts_with('#') {
-            self.messages
-                .iter()
-                .filter(|m| m.to_user.as_deref() == Some(conv) && m.from != me)
-                .count()
+        let mark = self.read_marks.get(conv).copied();
+        let mut unread = 0;
+        // On remonte le fil : tout ce qui suit le repère est non lu.
+        for msg in self.messages.iter().rev() {
+            if self.incoming_key(msg).as_deref() != Some(conv) {
+                continue;
+            }
+            if Some(Self::message_hash(msg)) == mark {
+                return unread;
+            }
+            unread += 1;
+        }
+        unread
+    }
+
+    /// Ce message est-il déjà dans la fenêtre mémoire ?
+    ///
+    /// Un ACK perdu fait réémettre l'expéditeur jusqu'à cinq fois : sans ce
+    /// contrôle, chaque réémission créait une copie de plus.
+    pub fn has_message(&self, message_hash: u64) -> bool {
+        self.messages
+            .iter()
+            .any(|m| Self::message_hash(m) == message_hash)
+    }
+
+    /// Clé d'un message entrant : le salon, ou l'expéditeur ; `None` pour les nôtres et « Tous ».
+    fn incoming_key(&self, msg: &ChatMessage) -> Option<String> {
+        let to = msg.to_user.as_deref()?;
+        if msg.from == self.my_username {
+            return None;
+        }
+        if to.starts_with('#') {
+            Some(to.to_string())
+        } else if to == self.my_username {
+            Some(msg.from.clone())
         } else {
-            self.messages
-                .iter()
-                .filter(|m| m.from == conv && m.to_user.as_deref() == Some(me))
-                .count()
-        };
-        let read = *self.read_counts.get(conv).unwrap_or(&0);
-        total.saturating_sub(read)
+            None
+        }
     }
 
     pub fn clear_conversation_history(&mut self) {

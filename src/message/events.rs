@@ -19,7 +19,10 @@ pub enum AppEvent {
         username: String,
     },
     UserTyping(String),
-    GroupEventReceived(GroupEvent),
+    GroupEventReceived {
+        peer: String,
+        event: GroupEvent,
+    },
     ReadReceiptReceived(ReadReceipt),
     MessageAckReceived(MessageAck),
     AvatarReceived(AvatarAnnounce),
@@ -28,7 +31,10 @@ pub enum AppEvent {
     /// Progression d'un transfert média (émission ou réception).
     MediaProgressed(MediaProgress),
     /// Le destinataire a refusé un média : on l'annote dans le fil (côté émetteur).
-    MediaDeclined(MediaStreamHeader),
+    MediaDeclined {
+        peer: String,
+        header: MediaStreamHeader,
+    },
     /// Un pair a ajouté ou retiré une réaction emoji sur un message.
     ReactionReceived(ReactionEvent),
     /// Page d'historique plus ancienne chargée depuis SQLite (pagination du
@@ -41,6 +47,21 @@ pub enum AppEvent {
     /// épinglée (TOFU) : la connexion a été refusée, l'utilisateur doit être
     /// prévenu d'une possible usurpation.
     KeyChanged {
+        username: String,
+        /// Clé effectivement présentée. Le ré-appairage épingle **celle-ci**,
+        /// et pas la première clé reçue après un désépinglage — sinon une
+        /// autre machine pourrait gagner la course.
+        offered_key: Vec<u8>,
+    },
+    /// Résultats d'une recherche plein texte dans l'historique.
+    SearchResults {
+        query: String,
+        messages: Vec<ChatMessage>,
+    },
+    /// Aucune connexion sécurisée n'a pu être établie vers ce pair : le
+    /// paquet est perdu. Remonté à l'UI (bannière) car sur un binaire release
+    /// sans console, l'utilisateur n'a aucun autre signal.
+    SendFailed {
         username: String,
     },
 }

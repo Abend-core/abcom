@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 
-use super::AppState;
+use super::{AppState, ConversationId};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TransferTarget {
@@ -10,19 +10,18 @@ pub struct TransferTarget {
 
 impl AppState {
     pub fn selected_transfer_targets(&self) -> Vec<TransferTarget> {
-        match &self.selected_conversation {
-            None => self
+        match self.selected_conversation_id() {
+            ConversationId::Broadcast => self
                 .peers
                 .iter()
-                .filter(|peer| peer.online)
+                .filter(|peer| peer.online && !peer.addr.ip().is_unspecified())
                 .map(|peer| TransferTarget {
                     username: peer.username.clone(),
                     addr: peer.addr,
                 })
                 .collect(),
-            Some(conversation) if conversation.starts_with('#') => {
-                let group_name = &conversation[1..];
-                let Some(group) = self.get_group(group_name) else {
+            ConversationId::Group(group_name) => {
+                let Some(group) = self.get_group(&group_name) else {
                     return Vec::new();
                 };
 
@@ -41,10 +40,12 @@ impl AppState {
                     })
                     .collect()
             }
-            Some(username) => self
+            ConversationId::Peer(username) => self
                 .peers
                 .iter()
-                .find(|peer| peer.online && peer.username == *username)
+                .find(|peer| {
+                    peer.online && !peer.addr.ip().is_unspecified() && peer.username == username
+                })
                 .map(|peer| {
                     vec![TransferTarget {
                         username: peer.username.clone(),

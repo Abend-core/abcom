@@ -42,11 +42,7 @@ impl Identity {
         bytes.extend_from_slice(&keypair.public);
         std::fs::create_dir_all(base)?;
         std::fs::write(&path, &bytes)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-        }
+        restrict_to_owner(&path);
         tracing::info!(
             "nouvelle identité générée ({})",
             fingerprint(&keypair.public)
@@ -81,11 +77,60 @@ impl Identity {
     pub fn public_hex(&self) -> String {
         hex(&self.public)
     }
+
+    /// Clé de signature des annonces, dérivée de la clé Noise par BLAKE2s.
+    ///
+    /// Dérivée plutôt que stockée à part : `identity.key` garde son format, et
+    /// la même identité produit toujours la même clé de signature. Le domaine
+    /// évite toute réutilisation du secret entre les deux usages.
+    pub fn signing_key(&self) -> ed25519_dalek::SigningKey {
+        use blake2::{Blake2s256, Digest};
+        let mut hasher = Blake2s256::new();
+        hasher.update(b"abcom-discovery-signature-v1");
+        hasher.update(&self.private);
+        ed25519_dalek::SigningKey::from_bytes(&hasher.finalize().into())
+    }
+
+    /// Clé publique de vérification des annonces, en hexadécimal.
+    pub fn verifying_hex(&self) -> String {
+        hex(self.signing_key().verifying_key().as_bytes())
+    }
 }
 
 /// Hexadécimal minuscule.
 pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Réserve la clé à son propriétaire : 0600 sur Unix, réécriture d'ACL sur Windows où il est sans effet.
+fn restrict_to_owner(path: &Path) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Err(error) = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)) {
+            tracing::warn!("permissions 0600 impossibles sur la clé : {error}");
+        }
+    }
+    #[cfg(windows)]
+    {
+        let Ok(user) = std::env::var("USERNAME") else {
+            tracing::warn!("ACL de la clé non restreinte : USERNAME absent");
+            return;
+        };
+        let output = std::process::Command::new("icacls")
+            .arg(path)
+            .args(["/inheritance:r", "/grant:r"])
+            .arg(format!("{user}:F"))
+            .output();
+        match output {
+            Ok(out) if out.status.success() => {}
+            Ok(out) => tracing::warn!(
+                "ACL de la clé non restreinte : {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ),
+            Err(error) => tracing::warn!("ACL de la clé non restreinte : {error}"),
+        }
+    }
 }
 
 /// Empreinte lisible d'une clé publique : 8 groupes de 4 hexa.

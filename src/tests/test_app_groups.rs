@@ -6,7 +6,7 @@ fn new_test_state(username: &str) -> AppState {
     s.groups.clear();
     s.messages.clear();
     s.peers.clear();
-    s.read_counts.clear();
+    s.read_marks.clear();
     s
 }
 

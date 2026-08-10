@@ -6,11 +6,11 @@
 //! Attribution obligatoire ToS Klipy : logo « Powered by KLIPY » en pied
 //! de fenêtre, adapté au thème clair/sombre.
 
+use super::i18n;
 use eframe::egui;
 
-use crate::app::AppState;
-use crate::klipy::{GifFeed, GifItem, GifStatus};
-use crate::message::{ChatMessage, MediaAttachment, MediaKind, SendRequest};
+use crate::message::{ChatMessage, MediaAttachment, MediaKind};
+use crate::services::klipy::{GifFeed, GifItem, GifStatus};
 use crate::util::MutexExt;
 
 use super::{AbcomApp, GifPickerTab};
@@ -18,14 +18,12 @@ use super::{AbcomApp, GifPickerTab};
 const ATTR_DARK: &[u8] = include_bytes!("../../assets/klipy/attribution_dark_bg.png");
 const ATTR_LIGHT: &[u8] = include_bytes!("../../assets/klipy/attribution_light_bg.png");
 
-fn send_gif(app: &mut AbcomApp, gif: &GifItem) {
-    let (my_name, selected_peer_name, selected_addr, all_peers) = {
+fn send_gif(app: &mut AbcomApp, gif: &GifItem) -> bool {
+    let (my_name, selected_peer_name) = {
         let s = app.state.lock_safe();
         (
             s.my_username.clone(),
-            s.selected_conversation.clone(),
-            s.selected_peer_addr(),
-            s.peers.clone(),
+            s.selected_conversation_id().message_target(),
         )
     };
     let media = MediaAttachment {
@@ -48,39 +46,7 @@ fn send_gif(app: &mut AbcomApp, gif: &GifItem) {
         reply_to: None,
         nonce: Some(ChatMessage::fresh_nonce()),
     };
-    {
-        let msg_hash = AppState::message_hash(&msg);
-        let mut s = app.state.lock_safe();
-        s.add_message(msg.clone());
-        if let Some(peer_name) = &selected_peer_name {
-            if !peer_name.starts_with('#') {
-                let peer_addr = s
-                    .peers
-                    .iter()
-                    .find(|p| p.username == *peer_name)
-                    .map(|p| p.addr);
-                if let Some(addr) = peer_addr {
-                    s.mark_message_sent(msg_hash, addr);
-                }
-            }
-        }
-    }
-    if let Some(addr) = selected_addr {
-        let _ = app.net.send_tx.try_send(SendRequest {
-            to_addr: addr,
-            message: msg,
-        });
-    } else {
-        for peer in all_peers
-            .iter()
-            .filter(|p| p.online && !p.addr.ip().is_unspecified())
-        {
-            let _ = app.net.send_tx.try_send(SendRequest {
-                to_addr: peer.addr,
-                message: msg.clone(),
-            });
-        }
-    }
+    app.enqueue_chat_message(msg)
 }
 
 /// Affiche la grille masonry pour un feed ; retourne (item choisi, besoin load_more).
@@ -110,7 +76,7 @@ fn show_feed_grid(
                         ui.label(loading_label);
                     }
                     GifStatus::Error(_) => {
-                        ui.colored_label(egui::Color32::from_rgb(220, 110, 110), error_label);
+                        ui.colored_label(crate::ui::theme::palette(ui).danger, error_label);
                     }
                     _ => {
                         ui.weak(empty_label);
@@ -204,18 +170,18 @@ impl AbcomApp {
         }
 
         let tab_gif_label = "GIF";
-        let tab_meme_label = self.tr("Mèmes", "Memes");
+        let tab_meme_label = self.t(i18n::MEMES);
         let tab_sticker_label = "Stickers";
-        let search_hint = self.tr("Search KLIPY", "Search KLIPY");
-        let loading_label = self.tr("Chargement…", "Loading…");
-        let empty_label = self.tr("Aucun résultat", "No results");
-        let error_label = self.tr("Erreur de chargement", "Loading error");
+        let search_hint = self.t(i18n::SEARCH_KLIPY);
+        let loading_label = self.t(i18n::CHARGEMENT);
+        let empty_label = self.t(i18n::AUCUN_RESULTAT);
+        let error_label = self.t(i18n::ERREUR_DE_CHARGEMENT);
 
         let mut picker_rect: Option<egui::Rect> = None;
         let mut chosen: Option<GifItem> = None;
         let mut want_load_more = false;
 
-        let window = egui::Window::new(self.tr("GIF & Stickers", "GIF & Stickers"))
+        let window = egui::Window::new(self.t(i18n::GIF_STICKERS))
             .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-8.0, -60.0))
             .resizable(false)
             .collapsible(false)
@@ -358,8 +324,9 @@ impl AbcomApp {
         }
 
         if let Some(gif) = chosen {
-            send_gif(self, &gif);
-            self.gif_picker.show = false;
+            if send_gif(self, &gif) {
+                self.gif_picker.show = false;
+            }
         }
 
         if !gif_button_clicked && ctx.input(|i| i.pointer.any_pressed()) {

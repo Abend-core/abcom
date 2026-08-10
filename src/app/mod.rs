@@ -5,6 +5,7 @@ use std::time::SystemTime;
 use crate::message::{ChatMessage, Group, PeerRecord, ReactionEntry};
 
 mod avatar;
+mod conversation;
 mod groups;
 pub mod media;
 mod messages;
@@ -15,9 +16,11 @@ pub mod storage;
 mod transfers;
 mod typing;
 
+pub use conversation::ConversationId;
 pub use peers::Peer;
 pub use receipts::{PendingMessage, ReceiptDetail};
 pub use storage::{LoadedState, Storage, StorageCmd};
+pub use transfers::TransferTarget;
 
 pub struct AppState {
     pub my_username: String,
@@ -26,12 +29,15 @@ pub struct AppState {
     pub groups: Vec<Group>,
     pub selected_conversation: Option<String>,
     pub typing_users: HashMap<String, SystemTime>,
-    pub read_counts: HashMap<String, usize>,
+    /// Dernier message entrant marqué lu, par conversation.
+    pub read_marks: HashMap<String, u64>,
     pub read_receipts: HashMap<u64, HashSet<String>>,
     /// Qui a envoyé un ACK de livraison, par message (détail « reçu par »
     /// des salons et de « Tous »).
     pub delivered_receipts: HashMap<u64, HashSet<String>>,
     pub pending_messages: HashMap<u64, PendingMessage>,
+    /// Messages privés dont toutes les tentatives de livraison ont échoué.
+    pub failed_messages: HashMap<u64, String>,
     pub peer_records: Vec<PeerRecord>,
     /// Avatar local (octets PNG normalisés), `None` si non défini.
     pub my_avatar: Option<Vec<u8>>,
@@ -53,6 +59,8 @@ pub struct AppState {
     /// Émetteur vers le thread de stockage SQLite (`None` en tests isolés :
     /// les mutations restent purement en mémoire).
     storage: Option<std::sync::mpsc::Sender<StorageCmd>>,
+    /// Messages en attente d'un destinataire hors ligne, par hash (persistés).
+    pub outbox: HashMap<u64, (String, ChatMessage)>,
     /// rowid du plus ancien message chargé en mémoire (pagination) ;
     /// `None` = tout l'historique est déjà en mémoire.
     pub oldest_loaded_rowid: Option<i64>,
@@ -67,6 +75,10 @@ impl AppState {
     /// Fenêtre mémoire maximale (au-delà, la pagination vers le haut
     /// s'arrête : l'historique plus ancien reste en base).
     pub const MAX_WINDOW: usize = 2000;
+
+    pub fn selected_conversation_id(&self) -> ConversationId {
+        ConversationId::from_key(self.selected_conversation.as_deref())
+    }
 
     pub fn new(
         username: String,
@@ -83,10 +95,13 @@ impl AppState {
             groups: loaded.groups,
             selected_conversation: None,
             typing_users: HashMap::new(),
-            read_counts: loaded.read_counts,
-            read_receipts: HashMap::new(),
-            delivered_receipts: HashMap::new(),
+            read_marks: loaded.read_marks,
+            // Relus depuis la base : coches et détail « … » survivent au redémarrage.
+            read_receipts: loaded.read_receipts,
+            delivered_receipts: loaded.delivered_receipts,
+            outbox: loaded.outbox,
             pending_messages: HashMap::new(),
+            failed_messages: HashMap::new(),
             peer_records: loaded.peer_records,
             my_avatar: None,
             peer_avatars: loaded.peer_avatars,
@@ -116,10 +131,12 @@ impl AppState {
             groups: Vec::new(),
             selected_conversation: None,
             typing_users: HashMap::new(),
-            read_counts: HashMap::new(),
+            read_marks: HashMap::new(),
             read_receipts: HashMap::new(),
             delivered_receipts: HashMap::new(),
+            outbox: HashMap::new(),
             pending_messages: HashMap::new(),
+            failed_messages: HashMap::new(),
             peer_records: Vec::new(),
             my_avatar: None,
             peer_avatars: HashMap::new(),
@@ -223,6 +240,25 @@ impl AppState {
 
     /// Flush synchrone du stockage (fermeture de l'application) : attend que
     /// toutes les commandes en file soient écrites.
+    /// Lance une recherche plein texte ; le résultat arrive par `AppEvent`.
+    pub fn search_history(&self, query: String) {
+        self.persist(StorageCmd::Search { query });
+    }
+
+    /// Compacte la base : l'espace des conversations effacées n'est pas rendu seul.
+    pub fn compact_storage(&self) {
+        self.persist(StorageCmd::Compact);
+    }
+
+    /// Exporte la conversation sélectionnée en texte vers `path`.
+    pub fn export_selected_conversation(&self, path: std::path::PathBuf) {
+        self.persist(StorageCmd::ExportConversation {
+            me: self.my_username.clone(),
+            conv: self.selected_conversation.clone(),
+            path,
+        });
+    }
+
     pub fn flush_storage(&self) {
         if let Some(tx) = &self.storage {
             let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(1);

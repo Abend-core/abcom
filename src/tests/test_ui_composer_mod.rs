@@ -105,7 +105,7 @@ fn run_composer_frames(
     let mut scroll = 0.0f32;
     let mut anchor = None;
     let emoji_map = HashMap::new();
-    let textures: Vec<(String, egui::TextureHandle)> = Vec::new();
+    let textures = crate::ui::EmojiTextures::default();
     let (alias_to_char, aliases) = emoji_index();
     let mut submitted = false;
 
@@ -114,8 +114,10 @@ fn run_composer_frames(
             events,
             ..Default::default()
         };
-        let _ = ctx.run(raw, |ctx| {
-            egui::CentralPanel::default().show(ctx, |ui| {
+        // epaint 0.36 panique si les deltas de textures d'une frame sont
+        // abandonnés : ici on ne peint rien, on les libère explicitement.
+        let mut output = ctx.run_ui(raw, |root| {
+            egui::CentralPanel::default().show(root, |ui| {
                 let (_, submit, _, _) = custom_composer_input(
                     ui,
                     input,
@@ -134,6 +136,7 @@ fn run_composer_frames(
                 submitted |= submit;
             });
         });
+        output.textures_delta.clear();
     }
     submitted
 }
@@ -403,4 +406,15 @@ fn cursor_from_point_empty_is_zero() {
         cursor_from_point(&[egui::pos2(0.0, 0.0)], egui::pos2(9.0, 9.0), 22.0),
         0
     );
+}
+
+#[test]
+fn caret_signature_distinguishes_every_input() {
+    let base = super::caret_signature("bonjour", 18.0, 300.0, 2.0);
+    assert_eq!(base, super::caret_signature("bonjour", 18.0, 300.0, 2.0));
+    // Chaque paramètre change le tracé, donc la signature.
+    assert_ne!(base, super::caret_signature("bonjou", 18.0, 300.0, 2.0));
+    assert_ne!(base, super::caret_signature("bonjour", 20.0, 300.0, 2.0));
+    assert_ne!(base, super::caret_signature("bonjour", 18.0, 301.0, 2.0));
+    assert_ne!(base, super::caret_signature("bonjour", 18.0, 300.0, 1.0));
 }

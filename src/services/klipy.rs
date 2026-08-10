@@ -312,5 +312,5 @@ impl GifFeed {
 }
 
 #[cfg(test)]
-#[path = "tests/test_klipy.rs"]
+#[path = "../tests/test_klipy.rs"]
 mod tests;

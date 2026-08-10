@@ -263,5 +263,21 @@ Tous les commits sur `dev`, non poussés. `cargo test` : 257/257 verts à l'éta
 (272 → 257 : suppression des tests dédiés au code mort purgé en P4).
 
 **Reste ouvert (hors périmètre de ce plan, voir `AUDIT.md`) :** découper les gros
-fichiers `chat_panel.rs`/`input_bar.rs` en sous-modules (P6 pose le préalable),
-versionnage Cargo, et toute la dette réseau/sécurité (§4-§5 de l'audit).
+fichiers `chat_panel.rs`/`input_bar.rs`/`ui/mod.rs` en sous-modules (P6 pose le
+préalable) — c'est le **seul chantier de maintenabilité pure encore ouvert**.
+
+---
+
+## Suites exécutées hors de ce plan (7-8 août 2026)
+
+Ce plan couvrait la maintenabilité ; la dette réseau/sécurité/CI qu'il renvoyait
+à `AUDIT.md` a été traitée dans deux passes distinctes, avec la même barrière
+verte à chaque étape :
+
+| Passe | Contenu | Où c'est décrit |
+|-------|---------|-----------------|
+| 07/08 (`0e5720e`) | Crate en lib, `protocol.rs`, `app/conversation.rs`, `ui/outbound.rs`, versionnage du protocole, retry réel, anti-usurpation, unification des expéditeurs, `UiRuntimeChannels`, test e2e P2P | `AUDIT.md` §3-§5, §8 |
+| 08/08 | Durcissement du pool (taille, éviction), remontée des échecs réseau à l'UI, métriques de session, ré-appairage TOFU, `.env`, hook de panique, purge des sauvegardes, transactions de lot SQLite, delta des accusés de lecture, `cargo audit`/`deny` sur `dev`, MSRV, release, documentation | `AUDIT.md` §1, §4-§7, §9, §11, §13 |
+
+**Versionnage Cargo** (point resté en suspens à la fin de ce plan) : réglé —
+`1.0.0-beta.1` publiée, plus `rust-version = "1.95"` vérifiée en CI.

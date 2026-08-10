@@ -1,3 +1,4 @@
+use super::i18n;
 use eframe::egui;
 
 use crate::message::{GroupAction, GroupEvent, SendGroupRequest};
@@ -37,19 +38,20 @@ fn kick_button(ui: &mut egui::Ui) -> egui::Response {
 fn presence_dot(ui: &mut egui::Ui, online: bool) {
     let (rect, _) = ui.allocate_exact_size(egui::vec2(10.0, 10.0), egui::Sense::hover());
     let color = if online {
-        egui::Color32::from_rgb(50, 200, 80)
+        crate::ui::theme::palette(ui).success
     } else {
-        egui::Color32::from_rgb(180, 40, 40)
+        crate::ui::theme::palette(ui).danger
     };
     ui.painter().circle_filled(rect.center(), 4.0, color);
 }
 
 impl AbcomApp {
-    /// Diffuse un événement de groupe aux adresses données.
-    fn send_group_event(&self, addrs: &[std::net::SocketAddr], action: GroupAction) {
+    /// Diffuse un événement de groupe aux pairs attendus.
+    fn send_group_event(&self, recipients: &[(String, std::net::SocketAddr)], action: GroupAction) {
         let event = GroupEvent { action };
-        for addr in addrs {
-            let _ = self.net.send_group_tx.try_send(SendGroupRequest {
+        for (username, addr) in recipients {
+            self.net.try_send(SendGroupRequest {
+                to_peer: username.clone(),
                 to_addr: *addr,
                 event: event.clone(),
             });
@@ -80,30 +82,18 @@ impl AbcomApp {
         let can_create = name_valid && !duplicate;
 
         // Libellés résolus avant la closure.
-        let title = self.tr("Créer un groupe", "Create a group");
-        let lbl_name = self.tr("Nom du groupe", "Group name");
-        let hint_name = self.tr("ex : equipe-projet", "e.g. project-team");
-        let err_invalid = self.tr(
-            "Lettres, chiffres, - et _ uniquement (50 max)",
-            "Letters, digits, - and _ only (50 max)",
-        );
-        let err_duplicate = self.tr(
-            "Ce nom de groupe existe déjà",
-            "This group name already exists",
-        );
-        let lbl_members = self.tr("Membres", "Members");
-        let note_self = self.tr(
-            "Vous êtes inclus automatiquement.",
-            "You are included automatically.",
-        );
-        let no_peer = self.tr(
-            "Aucun pair détecté sur le réseau",
-            "No peer detected on the network",
-        );
-        let sel_one = self.tr("membre sélectionné", "member selected");
-        let sel_many = self.tr("membres sélectionnés", "members selected");
-        let btn_create = self.tr("Créer le groupe", "Create group");
-        let btn_cancel = self.tr("Annuler", "Cancel");
+        let title = self.t(i18n::CREER_UN_GROUPE);
+        let lbl_name = self.t(i18n::NOM_DU_GROUPE);
+        let hint_name = self.t(i18n::EX_EQUIPE_PROJET);
+        let err_invalid = self.t(i18n::LETTRES_CHIFFRES_ET_UNIQUEMENT_50_MAX);
+        let err_duplicate = self.t(i18n::CE_NOM_DE_GROUPE_EXISTE_DEJA);
+        let lbl_members = self.t(i18n::MEMBRES);
+        let note_self = self.t(i18n::VOUS_ETES_INCLUS_AUTOMATIQUEMENT);
+        let no_peer = self.t(i18n::AUCUN_PAIR_DETECTE_SUR_LE_RESEAU);
+        let sel_one = self.t(i18n::MEMBRE_SELECTIONNE);
+        let sel_many = self.t(i18n::MEMBRES_SELECTIONNES);
+        let btn_create = self.t(i18n::CREER_LE_GROUPE);
+        let btn_cancel = self.t(i18n::ANNULER);
 
         let mut is_open = true;
         let mut do_create = false;
@@ -146,13 +136,13 @@ impl AbcomApp {
                         ui.label(
                             egui::RichText::new(err_invalid)
                                 .small()
-                                .color(egui::Color32::from_rgb(220, 80, 80)),
+                                .color(crate::ui::theme::palette(ui).danger),
                         );
                     } else if duplicate {
                         ui.label(
                             egui::RichText::new(err_duplicate)
                                 .small()
-                                .color(egui::Color32::from_rgb(220, 80, 80)),
+                                .color(crate::ui::theme::palette(ui).danger),
                         );
                     }
                 }
@@ -233,7 +223,7 @@ impl AbcomApp {
             let created = {
                 let mut s = self.state.lock_safe();
                 s.create_group(trimmed.clone(), members)
-                    .map(|g| (g.clone(), s.group_member_addrs(&g.name)))
+                    .map(|g| (g.clone(), s.group_member_recipients(&g.name)))
             };
             match created {
                 Some((group, addrs)) => {
@@ -246,13 +236,8 @@ impl AbcomApp {
                     self.switch_conversation(Some(conv));
                 }
                 None => {
-                    self.last_notification = Some(
-                        self.tr(
-                            "Création du groupe impossible",
-                            "Could not create the group",
-                        )
-                        .to_string(),
-                    );
+                    self.last_notification =
+                        Some(self.t(i18n::CREATION_DU_GROUPE_IMPOSSIBLE).to_string());
                     self.notification_time = std::time::Instant::now();
                 }
             }
@@ -302,25 +287,19 @@ impl AbcomApp {
             |name: &str| name == my_name || peers.iter().any(|p| p.username == name && p.online);
 
         // Libellés.
-        let lbl_owner = self.tr("propriétaire", "owner");
-        let lbl_created = self.tr("créé le", "created");
-        let lbl_members = self.tr("Membres", "Members");
-        let lbl_you = self.tr("(vous)", "(you)");
-        let lbl_kick = self.tr("Exclure ce membre", "Remove this member");
-        let lbl_add_section = self.tr("Ajouter un membre", "Add a member");
-        let lbl_add = self.tr("+ Ajouter", "+ Add");
-        let lbl_leave = self.tr("🚪 Quitter le groupe", "🚪 Leave group");
-        let lbl_delete = self.tr("🗑 Supprimer le groupe", "🗑 Delete group");
-        let lbl_confirm = self.tr("Confirmer", "Confirm");
-        let lbl_back = self.tr("Annuler", "Cancel");
-        let warn_leave = self.tr(
-            "Quitter ? L'historique local du salon sera effacé.",
-            "Leave? The local chat history will be erased.",
-        );
-        let warn_delete = self.tr(
-            "Supprimer le salon pour tous les membres ?",
-            "Delete this group for every member?",
-        );
+        let lbl_owner = self.t(i18n::PROPRIETAIRE);
+        let lbl_created = self.t(i18n::CREE_LE);
+        let lbl_members = self.t(i18n::MEMBRES);
+        let lbl_you = self.t(i18n::VOUS);
+        let lbl_kick = self.t(i18n::EXCLURE_CE_MEMBRE);
+        let lbl_add_section = self.t(i18n::AJOUTER_UN_MEMBRE);
+        let lbl_add = self.t(i18n::AJOUTER);
+        let lbl_leave = self.t(i18n::QUITTER_LE_GROUPE);
+        let lbl_delete = self.t(i18n::SUPPRIMER_LE_GROUPE);
+        let lbl_confirm = self.t(i18n::CONFIRMER);
+        let lbl_back = self.t(i18n::ANNULER);
+        let warn_leave = self.t(i18n::QUITTER_L_HISTORIQUE_LOCAL_DU_SALON);
+        let warn_delete = self.t(i18n::SUPPRIMER_LE_SALON_POUR_TOUS_LES);
 
         let confirm_state = self.modals.group_manage_confirm;
         let mut is_open = true;
@@ -430,7 +409,7 @@ impl AbcomApp {
                                 GroupConfirmAction::Leave => warn_leave,
                                 GroupConfirmAction::Delete => warn_delete,
                             })
-                            .color(egui::Color32::from_rgb(220, 80, 80)),
+                            .color(crate::ui::theme::palette(ui).danger),
                         );
                         ui.horizontal(|ui| {
                             if ui
@@ -470,14 +449,14 @@ impl AbcomApp {
                 // Adresses AVANT l'ajout : les membres existants reçoivent
                 // l'AddMember, le nouveau reçoit l'état complet du groupe
                 // (il ne connaît pas encore le salon).
-                let prev_addrs = s.group_member_addrs(&group_name);
+                let prev_addrs = s.group_member_recipients(&group_name);
                 if s.add_member_to_group(&group_name, user.clone()) {
                     let updated = s.get_group(&group_name).cloned();
                     let new_addr = s
                         .peers
                         .iter()
                         .find(|p| p.online && p.username == user)
-                        .map(|p| p.addr);
+                        .map(|p| (p.username.clone(), p.addr));
                     Some((prev_addrs, updated, new_addr))
                 } else {
                     None
@@ -491,8 +470,8 @@ impl AbcomApp {
                         username: user,
                     },
                 );
-                if let (Some(addr), Some(g)) = (new_addr, updated) {
-                    self.send_group_event(&[addr], GroupAction::Create { group: g });
+                if let (Some(recipient), Some(g)) = (new_addr, updated) {
+                    self.send_group_event(&[recipient], GroupAction::Create { group: g });
                 }
             }
         }
@@ -501,7 +480,7 @@ impl AbcomApp {
             let addrs = {
                 let mut s = self.state.lock_safe();
                 // Adresses AVANT le retrait : l'exclu est prévenu lui aussi.
-                let addrs = s.group_member_addrs(&group_name);
+                let addrs = s.group_member_recipients(&group_name);
                 s.remove_member_from_group(&group_name, &user)
                     .then_some(addrs)
             };
@@ -522,7 +501,7 @@ impl AbcomApp {
                 GroupConfirmAction::Leave => {
                     let outcome = {
                         let mut s = self.state.lock_safe();
-                        let addrs = s.group_member_addrs(&group_name);
+                        let addrs = s.group_member_recipients(&group_name);
                         let me = s.my_username.clone();
                         s.leave_group(&group_name).then_some((addrs, me))
                     };
@@ -540,7 +519,7 @@ impl AbcomApp {
                 GroupConfirmAction::Delete => {
                     let addrs = {
                         let mut s = self.state.lock_safe();
-                        let addrs = s.group_member_addrs(&group_name);
+                        let addrs = s.group_member_recipients(&group_name);
                         s.delete_group(&group_name).then_some(addrs)
                     };
                     if let Some(addrs) = addrs {

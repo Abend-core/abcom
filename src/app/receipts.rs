@@ -2,12 +2,14 @@ use std::net::SocketAddr;
 use std::time::SystemTime;
 
 use super::AppState;
-use crate::message::ChatMessage;
+use crate::message::{ChatMessage, SendRequest};
+
+const MAX_RETRY_COUNT: u32 = 5;
 
 /// Message en attente d'ACK
 #[derive(Clone, Debug)]
 pub struct PendingMessage {
-    pub to_addr: SocketAddr,
+    pub request: SendRequest,
     pub last_retry: SystemTime,
     pub retry_count: u32,
 }
@@ -52,20 +54,36 @@ impl AppState {
     }
 
     pub fn mark_message_read(&mut self, message_hash: u64, username: String) {
-        self.read_receipts
+        if self
+            .read_receipts
             .entry(message_hash)
             .or_default()
-            .insert(username);
+            .insert(username.clone())
+        {
+            self.persist(super::StorageCmd::AddReceipt {
+                hash: message_hash,
+                username,
+                kind: super::storage::ReceiptKind::Read,
+            });
+        }
         self.bump_content();
     }
 
     /// Enregistre un ACK de livraison nominatif reçu d'un pair (détail
     /// « reçu par » des salons et de « Tous »).
     pub fn mark_message_delivered_by(&mut self, message_hash: u64, username: String) {
-        self.delivered_receipts
+        if self
+            .delivered_receipts
             .entry(message_hash)
             .or_default()
-            .insert(username);
+            .insert(username.clone())
+        {
+            self.persist(super::StorageCmd::AddReceipt {
+                hash: message_hash,
+                username,
+                kind: super::storage::ReceiptKind::Delivered,
+            });
+        }
         self.bump_content();
     }
 
@@ -77,18 +95,18 @@ impl AppState {
     ///
     /// Diffuser à tout le salon permet à chaque membre d'accumuler le même
     /// état reçu/lu et donc d'afficher le détail (« … ») sur chaque message.
-    pub fn receipt_recipients(&self, msg: &ChatMessage) -> Vec<SocketAddr> {
+    pub fn receipt_recipients(&self, msg: &ChatMessage) -> Vec<(String, SocketAddr)> {
         match msg.to_user.as_deref() {
             Some(target) if !target.starts_with('#') => self
                 .peers
                 .iter()
                 .find(|p| p.username == msg.from && p.online && !p.addr.ip().is_unspecified())
-                .map(|p| p.addr)
+                .map(|p| (p.username.clone(), p.addr))
                 .into_iter()
                 .collect(),
             Some(group_key) => group_key
                 .strip_prefix('#')
-                .map(|g| self.group_member_addrs(g))
+                .map(|g| self.group_member_recipients(g))
                 .unwrap_or_default(),
             None => self
                 .peers
@@ -96,7 +114,7 @@ impl AppState {
                 .filter(|p| {
                     p.online && p.username != self.my_username && !p.addr.ip().is_unspecified()
                 })
-                .map(|p| p.addr)
+                .map(|p| (p.username.clone(), p.addr))
                 .collect(),
         }
     }
@@ -124,12 +142,49 @@ impl AppState {
             .unwrap_or(0)
     }
 
+    /// Met un message de côté jusqu'au retour en ligne du destinataire.
+    pub fn queue_offline(&mut self, message: ChatMessage, to_peer: String) {
+        let hash = Self::message_hash(&message);
+        self.persist(super::StorageCmd::EnqueueOutbox {
+            hash,
+            to_peer: to_peer.clone(),
+            message: message.clone(),
+        });
+        self.outbox.insert(hash, (to_peer, message));
+        self.bump_content();
+    }
+
+    /// Messages en attente pour un pair qui revient en ligne, **sans** les
+    /// retirer : ils ne sortent de la file qu'une fois réellement mis en file
+    /// d'envoi, via [`Self::drop_from_outbox`]. Les vider ici les perdrait si
+    /// l'émission échouait ou si l'application fermait entre-temps.
+    pub fn outbox_for(&self, peer: &str) -> Vec<(u64, ChatMessage)> {
+        self.outbox
+            .iter()
+            .filter(|(_, (to, _))| to == peer)
+            .map(|(hash, (_, message))| (*hash, message.clone()))
+            .collect()
+    }
+
+    /// Retire un message de la file d'attente, une fois son émission acquise.
+    pub fn drop_from_outbox(&mut self, message_hash: u64) {
+        if self.outbox.remove(&message_hash).is_some() {
+            self.persist(super::StorageCmd::DequeueOutbox { hash: message_hash });
+        }
+    }
+
+    /// Le message attend-il encore le retour en ligne de son destinataire ?
+    pub fn is_queued_offline(&self, message_hash: u64) -> bool {
+        self.outbox.contains_key(&message_hash)
+    }
+
     /// Marque un message comme envoyé (en attente d'ACK)
-    pub fn mark_message_sent(&mut self, message_hash: u64, to_addr: SocketAddr) {
+    pub fn mark_message_sent(&mut self, message_hash: u64, request: SendRequest) {
+        self.failed_messages.remove(&message_hash);
         self.pending_messages.insert(
             message_hash,
             PendingMessage {
-                to_addr,
+                request,
                 last_retry: SystemTime::now(),
                 retry_count: 0,
             },
@@ -137,35 +192,113 @@ impl AppState {
         self.bump_content();
     }
 
-    pub fn mark_message_acked(&mut self, message_hash: u64) {
-        if self.pending_messages.remove(&message_hash).is_some() {
+    pub fn mark_message_acked(&mut self, message_hash: u64, from_peer: &str) -> bool {
+        let pending_matches = self
+            .pending_messages
+            .get(&message_hash)
+            .is_some_and(|pending| pending.request.to_peer == from_peer);
+        let failed_matches = self
+            .failed_messages
+            .get(&message_hash)
+            .is_some_and(|peer| peer == from_peer);
+        if pending_matches {
+            self.pending_messages.remove(&message_hash);
+        }
+        if failed_matches {
+            self.failed_messages.remove(&message_hash);
+        }
+        if pending_matches || failed_matches {
             self.bump_content();
+            true
+        } else {
+            false
         }
     }
 
-    /// Retourne les messages qui doivent être retransmis (backoff exponentiel)
-    pub fn get_retry_messages(&mut self) -> Vec<(u64, SocketAddr)> {
+    /// Vérifie qu'un ACK provient bien d'un destinataire du message local.
+    pub fn is_expected_ack_sender(&self, message_hash: u64, from_peer: &str) -> bool {
+        let Some(message) = self
+            .messages
+            .iter()
+            .find(|message| Self::message_hash(message) == message_hash)
+        else {
+            return false;
+        };
+        if message.from != self.my_username {
+            return false;
+        }
+        match message.to_user.as_deref() {
+            None => self.peers.iter().any(|peer| peer.username == from_peer),
+            Some(group) if group.starts_with('#') => group
+                .strip_prefix('#')
+                .and_then(|name| self.get_group(name))
+                .is_some_and(|group| group.members.iter().any(|member| member == from_peer)),
+            Some(peer) => peer == from_peer,
+        }
+    }
+
+    /// Les lectures privées ne concernent que l'auteur local. En salon et
+    /// diffusion, chaque membre relaie le détail nominatif aux autres.
+    pub fn is_expected_receipt_sender(&self, message_hash: u64, from_peer: &str) -> bool {
+        let Some(message) = self
+            .messages
+            .iter()
+            .find(|message| Self::message_hash(message) == message_hash)
+        else {
+            return false;
+        };
+        match message.to_user.as_deref() {
+            None => self.peers.iter().any(|peer| peer.username == from_peer),
+            Some(group) if group.starts_with('#') => group
+                .strip_prefix('#')
+                .and_then(|name| self.get_group(name))
+                .is_some_and(|group| group.members.iter().any(|member| member == from_peer)),
+            Some(peer) => message.from == self.my_username && peer == from_peer,
+        }
+    }
+
+    /// Retourne les messages dus et bascule en échec ceux ayant épuisé leurs
+    /// tentatives. Une tentative n'est comptée qu'après remise en file réussie.
+    pub fn get_retry_messages(&mut self) -> (Vec<(u64, SendRequest)>, Vec<u64>) {
         let now = SystemTime::now();
         let mut to_retry = Vec::new();
+        let mut failed = Vec::new();
         for (hash, pending) in &self.pending_messages {
             let delay = 2u64.saturating_pow(pending.retry_count.min(5));
             if let Ok(elapsed) = now.duration_since(pending.last_retry) {
                 if elapsed.as_secs() >= delay {
-                    to_retry.push((*hash, pending.to_addr));
+                    if pending.retry_count >= MAX_RETRY_COUNT {
+                        failed.push(*hash);
+                    } else {
+                        to_retry.push((*hash, pending.request.clone()));
+                    }
                 }
             }
         }
-        for (hash, _) in &to_retry {
-            if let Some(p) = self.pending_messages.get_mut(hash) {
-                p.retry_count += 1;
-                p.last_retry = now;
+        for hash in &failed {
+            if let Some(pending) = self.pending_messages.remove(hash) {
+                self.failed_messages.insert(*hash, pending.request.to_peer);
             }
         }
-        to_retry
+        if !failed.is_empty() {
+            self.bump_content();
+        }
+        (to_retry, failed)
+    }
+
+    pub fn mark_retry_enqueued(&mut self, message_hash: u64) {
+        if let Some(pending) = self.pending_messages.get_mut(&message_hash) {
+            pending.retry_count += 1;
+            pending.last_retry = SystemTime::now();
+        }
     }
 
     pub fn is_message_pending(&self, message_hash: u64) -> bool {
         self.pending_messages.contains_key(&message_hash)
+    }
+
+    pub fn is_message_failed(&self, message_hash: u64) -> bool {
+        self.failed_messages.contains_key(&message_hash)
     }
 }
 

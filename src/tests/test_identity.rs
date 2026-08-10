@@ -1,12 +1,14 @@
 use super::*;
 
 fn tmp_dir() -> std::path::PathBuf {
+    // L'horodatage seul peut collisionner entre deux tests parallèles.
     let dir = std::env::temp_dir().join(format!(
-        "abcom-identity-{}",
+        "abcom-identity-{}-{:?}",
         std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
-            .as_nanos()
+            .as_nanos(),
+        std::thread::current().id()
     ));
     std::fs::create_dir_all(&dir).unwrap();
     dir
