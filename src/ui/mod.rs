@@ -25,6 +25,7 @@ mod input_bar;
 mod markdown;
 mod media;
 mod outbound;
+mod picker;
 mod reactions;
 mod search;
 mod settings;
@@ -365,6 +366,10 @@ pub(crate) struct AbcomApp {
     /// Accusés déjà émis par destinataire : sans ce mémo, chaque ouverture rediffusait toute la fenêtre.
     pub(crate) read_receipts_sent:
         std::collections::HashMap<String, std::collections::HashSet<u64>>,
+    /// Verdicts des sélecteurs de fichiers natifs, qui vivent hors du thread
+    /// de rendu (cf. `picker`).
+    pub(crate) picker_tx: std::sync::mpsc::Sender<picker::PickerOutcome>,
+    picker_rx: std::sync::mpsc::Receiver<picker::PickerOutcome>,
 }
 
 impl AbcomApp {
@@ -385,6 +390,7 @@ impl AbcomApp {
             .map(|(i, ch)| (ch.clone(), i))
             .collect();
         let (alias_to_char, aliases) = emoji_picker::build_emoji_shortcode_index(&characters);
+        let (picker_tx, picker_rx) = std::sync::mpsc::channel();
         // Préférences persistées (table kv).
         let (notif_preview, autostart_enabled) = {
             let s = state.lock_safe();
@@ -504,6 +510,8 @@ impl AbcomApp {
             search: SearchState::default(),
             trust: channels.trust,
             read_receipts_sent: std::collections::HashMap::new(),
+            picker_tx,
+            picker_rx,
         }
     }
 
@@ -740,6 +748,51 @@ impl AbcomApp {
         ctx.request_repaint();
     }
 
+    /// Applique ce que les sélecteurs natifs ont rendu depuis la dernière
+    /// frame. Le décodage d'un avatar a lieu ici, sur le thread de l'UI :
+    /// l'image est petite et l'état qu'elle met à jour n'est pas partagé.
+    fn apply_picker_outcomes(&mut self) {
+        while let Ok(outcome) = self.picker_rx.try_recv() {
+            match outcome {
+                picker::PickerOutcome::Attachments(paths) => {
+                    let label = if paths.len() == 1 && paths[0].is_dir() {
+                        self.t(i18n::DOSSIER_AJOUTE)
+                    } else {
+                        self.t(i18n::FICHIERS_AJOUTES)
+                    };
+                    for path in paths {
+                        if !self.composer.pending_attachments.contains(&path) {
+                            self.composer.pending_attachments.push(path);
+                        }
+                    }
+                    self.last_notification = Some(label.to_string());
+                    self.notification_time = std::time::Instant::now();
+                }
+                picker::PickerOutcome::Export(path) => {
+                    // Pas de notification ici : l'écriture est asynchrone et son
+                    // verdict revient par `AppEvent::ConversationExported`.
+                    self.state.lock_safe().export_selected_conversation(path);
+                }
+                picker::PickerOutcome::Avatar(path) => {
+                    match avatar::load_normalized_avatar(&path) {
+                        Ok(png) => {
+                            let my_name = self.state.lock_safe().my_username.clone();
+                            self.state.lock_safe().set_my_avatar(png);
+                            self.avatar_textures.remove(&my_name);
+                            self.broadcast_my_avatar();
+                        }
+                        Err(e) => {
+                            tracing::warn!("avatar non chargé : {}", e);
+                            self.last_notification =
+                                Some(self.t(i18n::IMAGE_DE_PROFIL_INVALIDE).to_string());
+                            self.notification_time = std::time::Instant::now();
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Notification système native (fenêtre cachée/minimisée). Envoyée d'un
     /// thread détaché : l'appel peut bloquer selon l'OS.
     pub(crate) fn notify_native(summary: String, body: String) {
@@ -887,39 +940,41 @@ impl eframe::App for AbcomApp {
             ));
         }
 
-        // Handle deferred native file/folder picker (must run before egui rendering to
-        // avoid conflicting with the AppKit run-loop on macOS).
+        // Verdicts des sélecteurs natifs ouverts aux frames précédentes.
+        self.apply_picker_outcomes();
+
+        // Ouverture d'un sélecteur de fichiers ou de dossier. La fenêtre native
+        // est présentée ici, sur le thread de l'UI ; l'attente, elle, part
+        // ailleurs (cf. `picker`) — la bloquer ici tuait l'application.
         if self.pending_picker != 0 {
             let kind = self.pending_picker;
             self.pending_picker = 0;
-            let (files_title, folder_title, files_added, folder_added) = (
+            let (files_title, folder_title) = (
                 self.t(i18n::AJOUTER_DES_FICHIERS),
                 self.t(i18n::AJOUTER_UN_DOSSIER),
-                self.t(i18n::FICHIERS_AJOUTES),
-                self.t(i18n::DOSSIER_AJOUTE),
             );
             match kind {
                 1 => {
-                    if let Some(paths) = rfd::FileDialog::new().set_title(files_title).pick_files()
-                    {
-                        for p in paths {
-                            if !self.composer.pending_attachments.contains(&p) {
-                                self.composer.pending_attachments.push(p);
-                            }
-                        }
-                        self.last_notification = Some(files_added.to_string());
-                        self.notification_time = std::time::Instant::now();
-                    }
+                    let dialog = rfd::AsyncFileDialog::new()
+                        .set_title(files_title)
+                        .pick_files();
+                    picker::spawn(self.picker_tx.clone(), ctx.clone(), async move {
+                        let files = dialog.await?;
+                        Some(picker::PickerOutcome::Attachments(
+                            files.iter().map(|f| f.path().to_path_buf()).collect(),
+                        ))
+                    });
                 }
                 2 => {
-                    if let Some(path) = rfd::FileDialog::new().set_title(folder_title).pick_folder()
-                    {
-                        if !self.composer.pending_attachments.contains(&path) {
-                            self.composer.pending_attachments.push(path);
-                        }
-                        self.last_notification = Some(folder_added.to_string());
-                        self.notification_time = std::time::Instant::now();
-                    }
+                    let dialog = rfd::AsyncFileDialog::new()
+                        .set_title(folder_title)
+                        .pick_folder();
+                    picker::spawn(self.picker_tx.clone(), ctx.clone(), async move {
+                        let folder = dialog.await?;
+                        Some(picker::PickerOutcome::Attachments(vec![folder
+                            .path()
+                            .to_path_buf()]))
+                    });
                 }
                 _ => {}
             }
@@ -945,11 +1000,10 @@ impl eframe::App for AbcomApp {
             self.notification_time = std::time::Instant::now();
         }
 
-        // Export de conversation : même report que les autres sélecteurs natifs.
+        // Export de conversation : même sélecteur asynchrone que les autres.
         if self.pending_export {
             self.pending_export = false;
             let title = self.t(i18n::EXPORTER_LA_CONVERSATION);
-            let done = self.t(i18n::CONVERSATION_EXPORTEE);
             let name = {
                 let state = self.state.lock_safe();
                 match &state.selected_conversation {
@@ -957,45 +1011,29 @@ impl eframe::App for AbcomApp {
                     None => "tous".to_string(),
                 }
             };
-            if let Some(path) = rfd::FileDialog::new()
+            let dialog = rfd::AsyncFileDialog::new()
                 .set_title(title)
                 .set_file_name(format!("abcom-{name}.txt"))
-                .save_file()
-            {
-                // Pas de notification ici : l'écriture est asynchrone et son
-                // verdict revient par `AppEvent::ConversationExported`.
-                let _ = done;
-                self.state.lock_safe().export_selected_conversation(path);
-            }
+                .save_file();
+            picker::spawn(self.picker_tx.clone(), ctx.clone(), async move {
+                Some(picker::PickerOutcome::Export(
+                    dialog.await?.path().to_path_buf(),
+                ))
+            });
         }
 
-        // Sélection de l'image de profil (différée comme les autres sélecteurs
-        // natifs pour éviter un conflit avec la run-loop AppKit sur macOS).
+        // Sélection de l'image de profil.
         if self.pending_avatar_pick {
             self.pending_avatar_pick = false;
-            let (pick_title, error_msg) = (
-                self.t(i18n::CHOISIR_UNE_IMAGE_DE_PROFIL),
-                self.t(i18n::IMAGE_DE_PROFIL_INVALIDE),
-            );
-            if let Some(path) = rfd::FileDialog::new()
-                .set_title(pick_title)
+            let dialog = rfd::AsyncFileDialog::new()
+                .set_title(self.t(i18n::CHOISIR_UNE_IMAGE_DE_PROFIL))
                 .add_filter("Images", &["png", "jpg", "jpeg", "svg"])
-                .pick_file()
-            {
-                match avatar::load_normalized_avatar(&path) {
-                    Ok(png) => {
-                        let my_name = self.state.lock_safe().my_username.clone();
-                        self.state.lock_safe().set_my_avatar(png);
-                        self.avatar_textures.remove(&my_name);
-                        self.broadcast_my_avatar();
-                    }
-                    Err(e) => {
-                        tracing::warn!("avatar non chargé : {}", e);
-                        self.last_notification = Some(error_msg.to_string());
-                        self.notification_time = std::time::Instant::now();
-                    }
-                }
-            }
+                .pick_file();
+            picker::spawn(self.picker_tx.clone(), ctx.clone(), async move {
+                Some(picker::PickerOutcome::Avatar(
+                    dialog.await?.path().to_path_buf(),
+                ))
+            });
         }
 
         // Avant les panneaux : une combinaison consommée ici ne sera pas
