@@ -1087,39 +1087,81 @@ impl eframe::App for AbcomApp {
 /// egui ne synthétise pas le gras : on charge une vraie police pour les noms.
 pub(crate) const BOLD_FAMILY: &str = "bold";
 
-/// Définitions de polices : on conserve les polices par défaut et on ajoute
-/// Inter Bold (OFL) sous la famille [`BOLD_FAMILY`] pour les noms d'auteur.
+/// Chaîne de polices, dans l'ordre de consultation :
+/// `Noto Sans`, `Noto Sans Symbols 2`, `Inter`, `Unifont`, puis les polices par
+/// défaut d'egui — dont ses deux polices d'emoji — en dernier recours.
 ///
-/// Deux polices servent aussi de **repli** aux familles standard : les polices
-/// par défaut d'egui ignorent des caractères courants dès qu'on colle du texte
-/// venu d'ailleurs — coche `✓`, flèches, cases à cocher — qui s'affichaient
-/// alors en carré vide. Inter d'abord (elle couvre `✓`, les flèches et le
-/// retour `⏎` dans le style de l'interface), Noto Sans Symbols 2 ensuite pour
-/// le reste des symboles. Placées en dernier, elles ne sont consultées que
-/// pour ce que les autres ne savent pas dessiner : le texte ordinaire garde
-/// sa graisse.
+/// Inter y figure parce qu'elle est déjà embarquée pour les noms d'auteur et
+/// qu'elle dessine les flèches `→ ← ↑ ↓`, qu'aucune des deux Noto ne porte :
+/// sans elle, elles retombaient sur le rendu tramé d'Unifont.
+///
+/// Noto Color Emoji en a été retirée après essai : ses glyphes sont des images
+/// CBDT, qu'egui ne sait pas rasteriser. Placée dans la chaîne, elle capte tous
+/// les codets emoji et n'en dessine aucun — `☑`, `✔`, `😀`, `❤️` disparaissaient
+/// purement et simplement, alors que les polices d'emoji d'egui les rendaient
+/// très bien en monochrome. Les emoji des messages, eux, passent de toute façon
+/// par le registre PNG (cf. `EmojiTextures`), en couleur.
+///
+/// Chaque police n'est interrogée que pour ce que les précédentes ne savent
+/// pas dessiner. Sans cette chaîne, tout caractère hors du latin s'affichait en
+/// carré vide : une phrase collée en chinois, en japonais ou en coréen était
+/// illisible d'un bout à l'autre. Unifont ferme la marche — son rendu tramé ne
+/// sert donc que là où le choix est entre « moche » et « rien ».
+const FONT_CHAIN: [&str; 4] = ["noto-sans", "noto-symbols2", "inter-bold", "unifont"];
+
+/// Définitions de polices : la chaîne ci-dessus en tête des familles standard,
+/// et Inter Bold (OFL) sous la famille [`BOLD_FAMILY`] pour les noms d'auteur —
+/// egui ne synthétise pas le gras.
 fn build_fonts() -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
-    fonts.font_data.insert(
-        "inter-bold".to_owned(),
-        Arc::new(egui::FontData::from_static(include_bytes!(
-            "../../assets/fonts/Inter-Bold.ttf"
-        ))),
+    let mut embed = |name: &str, bytes: &'static [u8]| {
+        fonts.font_data.insert(
+            name.to_owned(),
+            Arc::new(egui::FontData::from_static(bytes)),
+        );
+    };
+    embed(
+        "inter-bold",
+        include_bytes!("../../assets/fonts/Inter-Bold.ttf"),
     );
-    fonts.font_data.insert(
-        "noto-symbols2".to_owned(),
-        Arc::new(egui::FontData::from_static(include_bytes!(
-            "../../assets/fonts/NotoSansSymbols2-Regular.ttf"
-        ))),
+    embed(
+        "noto-sans",
+        include_bytes!("../../assets/fonts/NotoSans-Regular.ttf"),
     );
+    embed(
+        "noto-symbols2",
+        include_bytes!("../../assets/fonts/NotoSansSymbols2-Regular.ttf"),
+    );
+    embed("unifont", include_bytes!("../../assets/fonts/Unifont.otf"));
+
+    // Les noms d'auteur méritent le même repli que le reste : un pseudo en
+    // cyrillique ou en japonais ne doit pas se réduire à des carrés.
     fonts.families.insert(
         egui::FontFamily::Name(BOLD_FAMILY.into()),
-        vec!["inter-bold".to_owned()],
+        std::iter::once("inter-bold".to_owned())
+            .chain(
+                FONT_CHAIN
+                    .iter()
+                    .filter(|name| **name != "inter-bold")
+                    .map(|name| (*name).to_owned()),
+            )
+            .collect(),
     );
-    for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
-        let fallbacks = fonts.families.entry(family).or_default();
-        fallbacks.push("inter-bold".to_owned());
-        fallbacks.push("noto-symbols2".to_owned());
+    // Proportionnel : Noto Sans devient la police de texte. Monospace : Hack
+    // reste en tête, la chaîne ne sert qu'en repli.
+    for (family, prepend) in [
+        (egui::FontFamily::Proportional, true),
+        (egui::FontFamily::Monospace, false),
+    ] {
+        let existing = fonts.families.entry(family).or_default();
+        let chain = FONT_CHAIN.iter().map(|name| (*name).to_owned());
+        if prepend {
+            let defaults = std::mem::take(existing);
+            existing.extend(chain);
+            existing.extend(defaults);
+        } else {
+            existing.extend(chain);
+        }
     }
     fonts
 }
