@@ -484,16 +484,11 @@ impl AbcomApp {
                             });
 
                             if self.show_attachment_menu {
-                                let popup_action = attachment_menu_popup(
+                                let (popup_action, popup_rect) = attachment_menu_popup(
                                     ctx,
                                     plus_btn_rect,
                                     add_files_label,
                                     add_folder_label,
-                                );
-                                // Estimate popup rect above the + button for outside-click detection.
-                                let popup_rect = egui::Rect::from_min_size(
-                                    plus_btn_rect.left_top() - egui::vec2(0.0, 92.0),
-                                    egui::vec2(216.0, 92.0),
                                 );
 
                                 if let Some(action) = popup_action {
@@ -501,15 +496,19 @@ impl AbcomApp {
                                     self.show_attachment_menu = false;
                                 }
 
-                                let clicked_outside = ctx.input(|i| i.pointer.any_pressed())
-                                    && !plus_btn_rect.contains(ctx.input(|i| {
-                                        i.pointer.interact_pos().unwrap_or_default()
-                                    }))
-                                    && !popup_rect.contains(ctx.input(|i| {
-                                        i.pointer.interact_pos().unwrap_or_default()
-                                    }));
-                                if clicked_outside {
-                                    self.show_attachment_menu = false;
+                                // Position inconnue (tactile, appui hors
+                                // fenêtre) : on garde le menu ouvert plutôt que
+                                // de le refermer sur un point (0, 0) supposé.
+                                let pressed_at = ctx.input(|i| {
+                                    i.pointer
+                                        .any_pressed()
+                                        .then(|| i.pointer.interact_pos())
+                                        .flatten()
+                                });
+                                if let Some(pos) = pressed_at {
+                                    if !plus_btn_rect.contains(pos) && !popup_rect.contains(pos) {
+                                        self.show_attachment_menu = false;
+                                    }
                                 }
                             }
 

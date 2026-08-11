@@ -889,7 +889,7 @@ impl eframe::App for AbcomApp {
     }
 
     /// Rendu : jamais appelé fenêtre repliée, la logique vit dans [`Self::logic`].
-    fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, root: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = root.ctx().clone();
         let ctx = &ctx;
 
@@ -953,9 +953,13 @@ impl eframe::App for AbcomApp {
                 self.t(i18n::AJOUTER_DES_FICHIERS),
                 self.t(i18n::AJOUTER_UN_DOSSIER),
             );
+            // Un sélecteur déjà ouvert : la demande est abandonnée plutôt
+            // qu'empilée (cf. `picker::is_open`).
+            let kind = if picker::is_open() { 0 } else { kind };
             match kind {
                 1 => {
                     let dialog = rfd::AsyncFileDialog::new()
+                        .set_parent(frame)
                         .set_title(files_title)
                         .pick_files();
                     picker::spawn(self.picker_tx.clone(), ctx.clone(), async move {
@@ -967,6 +971,7 @@ impl eframe::App for AbcomApp {
                 }
                 2 => {
                     let dialog = rfd::AsyncFileDialog::new()
+                        .set_parent(frame)
                         .set_title(folder_title)
                         .pick_folder();
                     picker::spawn(self.picker_tx.clone(), ctx.clone(), async move {
@@ -1001,8 +1006,7 @@ impl eframe::App for AbcomApp {
         }
 
         // Export de conversation : même sélecteur asynchrone que les autres.
-        if self.pending_export {
-            self.pending_export = false;
+        if std::mem::take(&mut self.pending_export) && !picker::is_open() {
             let title = self.t(i18n::EXPORTER_LA_CONVERSATION);
             let name = {
                 let state = self.state.lock_safe();
@@ -1012,6 +1016,7 @@ impl eframe::App for AbcomApp {
                 }
             };
             let dialog = rfd::AsyncFileDialog::new()
+                .set_parent(frame)
                 .set_title(title)
                 .set_file_name(format!("abcom-{name}.txt"))
                 .save_file();
@@ -1023,9 +1028,9 @@ impl eframe::App for AbcomApp {
         }
 
         // Sélection de l'image de profil.
-        if self.pending_avatar_pick {
-            self.pending_avatar_pick = false;
+        if std::mem::take(&mut self.pending_avatar_pick) && !picker::is_open() {
             let dialog = rfd::AsyncFileDialog::new()
+                .set_parent(frame)
                 .set_title(self.t(i18n::CHOISIR_UNE_IMAGE_DE_PROFIL))
                 .add_filter("Images", &["png", "jpg", "jpeg", "svg"])
                 .pick_file();
