@@ -1099,6 +1099,38 @@ impl eframe::App for AbcomApp {
             duree_ms = started.elapsed().as_millis(),
             "arrêt : flush fait"
         );
+        arm_shutdown_watchdog();
+    }
+}
+
+/// Délai au-delà duquel l'arrêt est forcé. Large pour laisser le chemin propre
+/// se dérouler (flush borné à 3 s, purge des tâches réseau à 2 s) : seul un
+/// démontage qui traîne vraiment déclenche le garde-fou.
+const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(6);
+
+/// Borne la durée d'un arrêt, armée une fois l'historique écrit sur disque.
+///
+/// Quitter depuis le tray pouvait prendre plus de 45 secondes, au point qu'il
+/// fallait tuer le processus — le journal montre pourtant que l'action est
+/// dépilée immédiatement, donc le temps part dans le démontage de la fenêtre
+/// et du GPU, hors de notre code. Rien d'utile ne s'y joue une fois le flush
+/// terminé : passé le délai, on rend la main à l'utilisateur.
+fn arm_shutdown_watchdog() {
+    let spawned = std::thread::Builder::new()
+        .name("abcom-shutdown".into())
+        .spawn(|| {
+            std::thread::sleep(SHUTDOWN_DEADLINE);
+            tracing::warn!(
+                delai_s = SHUTDOWN_DEADLINE.as_secs(),
+                "arrêt : démontage trop long, sortie forcée"
+            );
+            // Le journal fichier passe par un writer non bloquant : sans ce
+            // souffle, la ligne ci-dessus part avec le processus.
+            std::thread::sleep(Duration::from_millis(150));
+            std::process::exit(0);
+        });
+    if spawned.is_err() {
+        tracing::error!("arrêt : garde-fou indisponible, thread refusé");
     }
 }
 

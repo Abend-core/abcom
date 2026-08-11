@@ -152,6 +152,8 @@ catalog! {
     PROCESSUS => ("processus", "process"),
     PIC => ("pic", "peak"),
     CACHES_IMAGES => ("caches images", "image caches"),
+    ATLAS_POLICE => ("atlas police", "font atlas"),
+    LIBERER_LA_MEMOIRE => ("Libérer la mémoire", "Release memory"),
     ENVOYES => ("envoyés", "sent"),
     RECUS => ("reçus", "received"),
     JETES => ("jetés", "dropped"),
