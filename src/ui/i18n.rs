@@ -67,6 +67,7 @@ catalog! {
     MEMBRES_SELECTIONNES => ("membres sélectionnés", "members selected"),
     CREER_LE_GROUPE => ("Créer le groupe", "Create group"),
     ANNULER => ("Annuler", "Cancel"),
+    FERMER => ("Fermer", "Close"),
     CREATION_DU_GROUPE_IMPOSSIBLE => ("Création du groupe impossible", "Could not create the group"),
     PROPRIETAIRE => ("propriétaire", "owner"),
     CREE_LE => ("créé le", "created"),
