@@ -39,6 +39,49 @@ pub fn record_peer_seen() {
     PEERS_SEEN.fetch_add(1, Ordering::Relaxed);
 }
 
+/// Répartition de la mémoire du processus (Paramètres → Diagnostic).
+///
+/// L'écart entre `heap` et `rss` est ce qui ne passe pas par notre allocateur :
+/// pilote graphique, images GPU, DLL, piles de threads. Le mesurer évite de
+/// chercher une fuite dans le code Rust quand le gros du poids est ailleurs.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Memory {
+    /// Octets réellement engagés par mimalloc — le tas Rust.
+    pub heap: u64,
+    /// Pic du tas depuis le lancement.
+    pub heap_peak: u64,
+    /// Pages touchées par le processus entier (working set).
+    pub rss: u64,
+    /// Pic du working set.
+    pub rss_peak: u64,
+}
+
+/// Relève les compteurs de l'allocateur. Sur Windows, `rss` et `commit` sont
+/// exacts ; ailleurs, `rss` est estimé à partir du commit.
+pub fn memory() -> Memory {
+    let (mut rss, mut rss_peak, mut heap, mut heap_peak) = (0usize, 0usize, 0usize, 0usize);
+    // Sûr : huit pointeurs de sortie optionnels, ceux qui ne nous intéressent
+    // pas sont nuls.
+    unsafe {
+        libmimalloc_sys::mi_process_info(
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            &mut rss,
+            &mut rss_peak,
+            &mut heap,
+            &mut heap_peak,
+            std::ptr::null_mut(),
+        );
+    }
+    Memory {
+        heap: heap as u64,
+        heap_peak: heap_peak as u64,
+        rss: rss as u64,
+        rss_peak: rss_peak as u64,
+    }
+}
+
 pub fn snapshot() -> Snapshot {
     Snapshot {
         packets_sent: PACKETS_SENT.load(Ordering::Relaxed),

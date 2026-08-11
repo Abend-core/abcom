@@ -191,6 +191,42 @@ fn compute_caret_positions(
     points
 }
 
+/// Hauteur maximale du composeur, en lignes : au-delà, il défile au lieu de
+/// grandir.
+const MAX_VISIBLE_LINES: usize = 10;
+
+/// Insère un retour à la ligne au curseur, en remplaçant la sélection.
+fn insert_newline(
+    input: &mut String,
+    cursor_char: &mut usize,
+    selection_anchor: &mut Option<usize>,
+) {
+    replace_selection(input, cursor_char, selection_anchor, "");
+    if input.chars().count() < MAX_INPUT_CHARS {
+        insert_text_at_cursor(input, cursor_char, "\n");
+    }
+}
+
+/// Défilement à appliquer pour garder la ligne du curseur visible.
+///
+/// `total_lines` doit être le nombre de lignes **après** l'édition en cours :
+/// le rectangle du composeur, lui, a été alloué avec le compte d'avant. Se
+/// baser sur l'ancien ferait défiler d'une ligne à chaque retour à la ligne
+/// créé — alors que la frame suivante se contente d'agrandir le composeur —,
+/// et le texte remonterait d'un cran à chaque fois.
+fn follow_caret_scroll(scroll_lines: f32, caret_line: f32, total_lines: usize) -> f32 {
+    let visible = total_lines.clamp(1, MAX_VISIBLE_LINES) as f32;
+    let max_scroll = (total_lines as f32 - visible).max(0.0);
+    let scrolled = if caret_line < scroll_lines {
+        caret_line
+    } else if caret_line > scroll_lines + visible - 1.0 {
+        caret_line - visible + 1.0
+    } else {
+        scroll_lines
+    };
+    scrolled.clamp(0.0, max_scroll)
+}
+
 fn visual_line_count(caret_points: &[egui::Pos2], line_height: f32) -> usize {
     caret_points
         .last()
@@ -378,7 +414,7 @@ pub fn custom_composer_input(
     let initial_caret_points =
         composer_caret_positions(ui, input, emoji_map, 18.0, base_content_width);
     let mut line_count = visual_line_count(&initial_caret_points, line_height);
-    let needs_scrollbar = line_count > 10;
+    let needs_scrollbar = line_count > MAX_VISIBLE_LINES;
     // La largeur de contenu de chaque branche coïncide avec celle du
     // `content_rect` correspondant : les points calculés ici sont réutilisés
     // tels quels pour le rendu (une seule passe de mesure par frame).
@@ -390,7 +426,7 @@ pub fn custom_composer_input(
     } else {
         initial_caret_points
     };
-    let visual_lines = line_count.clamp(1, 10) as f32;
+    let visual_lines = line_count.clamp(1, MAX_VISIBLE_LINES) as f32;
     let desired_size = egui::vec2(width.max(120.0), 10.0 + visual_lines * line_height);
     let (rect, response) = ui.allocate_exact_size(desired_size, egui::Sense::click_and_drag());
     let content_rect = if needs_scrollbar {
@@ -580,20 +616,25 @@ pub fn custom_composer_input(
                     }
                     egui::Key::Enter => match enter_key_action(shortcode_menu_open, modifiers) {
                         EnterKeyAction::InsertNewline => {
-                            replace_selection(input, cursor_char, selection_anchor, "");
-                            if input.chars().count() < MAX_INPUT_CHARS {
-                                insert_text_at_cursor(input, cursor_char, "\n");
-                            }
+                            insert_newline(input, cursor_char, selection_anchor);
                             changed = true;
                         }
                         EnterKeyAction::AcceptShortcode => {
-                            changed |= accept_selected_shortcode(
+                            // Le menu est considéré ouvert dès qu'un `:xyz`
+                            // précède le curseur, même sans correspondance : sans
+                            // ce repli, Entrée n'insérait alors plus rien du tout.
+                            if accept_selected_shortcode(
                                 input,
                                 cursor_char,
                                 emoji_alias_to_char,
                                 emoji_aliases,
                                 shortcode_selected,
-                            );
+                            ) {
+                                changed = true;
+                            } else {
+                                insert_newline(input, cursor_char, selection_anchor);
+                                changed = true;
+                            }
                         }
                         EnterKeyAction::Submit => {
                             submit = true;
@@ -786,19 +827,20 @@ pub fn custom_composer_input(
     // ligne du curseur dans la fenêtre visible (flèches haut/bas, saisie qui
     // pousse le texte hors champ). N'agit que si le curseur a bougé, pour ne pas
     // annuler un défilement molette/ascenseur.
+    let lines_after = visual_line_count(&caret_points, line_height);
     if *cursor_char != cursor_before {
-        let recomputed_max_scroll =
-            (visual_line_count(&caret_points, line_height) as f32 - visual_lines).max(0.0);
         let caret_line = caret_points
             .get(*cursor_char)
             .map(|p| (p.y / line_height).round())
             .unwrap_or(0.0);
-        if caret_line < *scroll_lines {
-            *scroll_lines = caret_line;
-        } else if caret_line > *scroll_lines + visual_lines - 1.0 {
-            *scroll_lines = caret_line - visual_lines + 1.0;
-        }
-        *scroll_lines = scroll_lines.clamp(0.0, recomputed_max_scroll);
+        *scroll_lines = follow_caret_scroll(*scroll_lines, caret_line, lines_after);
+    }
+    // Le rectangle de cette frame a été dimensionné avant l'édition : quand une
+    // ligne vient d'apparaître, la hauteur n'est bonne qu'à la frame suivante.
+    // Sans cette demande, la dernière frame peinte — texte trop haut d'une ligne
+    // pour son cadre — resterait affichée jusqu'au prochain événement.
+    if lines_after != line_count {
+        ui.ctx().request_repaint();
     }
 
     let frame_fill = egui::Color32::TRANSPARENT;

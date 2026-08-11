@@ -51,25 +51,15 @@ impl AbcomApp {
             return;
         };
 
-        let popup_id = egui::Id::new("reaction_emoji_picker");
-        let popup_pos = anchor.left_bottom() + egui::vec2(0.0, 6.0);
-
         let mut picked: Option<String> = None;
-        let area = egui::Area::new(popup_id)
-            .order(egui::Order::Foreground)
-            .fixed_pos(popup_pos);
-        let resp = area.show(ctx, |ui| {
-            egui::Frame::popup(ui.style()).show(ui, |ui| {
-                ui.set_min_size(egui::vec2(310.0, 340.0));
-                super::emoji_picker::show_emoji_grid(
-                    ui,
-                    &mut self.emoji.category,
-                    &self.emoji.textures,
-                    |ch| picked = Some(ch.to_string()),
-                );
-            });
-        });
-        let picker_rect = resp.response.rect;
+        let picker_rect = super::emoji_picker::show_emoji_popup(
+            ctx,
+            egui::Id::new("reaction_emoji_picker"),
+            anchor,
+            &mut self.emoji.category,
+            &self.emoji.textures,
+            |ch| picked = Some(ch.to_string()),
+        );
 
         if let Some(emoji) = picked {
             self.send_reaction(target_hash, &emoji);

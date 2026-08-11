@@ -7,8 +7,15 @@ BINARY_NAME := abcom
 INSTALL_DIR := $(HOME)/.local/bin
 SERVICE_DIR := $(HOME)/.config/systemd/user
 SERVICE_NAME := abcom.service
+# Évalué à chaque invocation de make, quelle que soit la cible : sous Windows,
+# make passe par cmd.exe, qui ne connaît ni `command` ni `true` et affiche deux
+# erreurs avant chaque `make run`. Les cibles qui s'en servent (install,
+# uninstall) sont de toute façon spécifiques à systemd.
+ifeq ($(OS),Windows_NT)
+SYSTEMCTL :=
+else
 SYSTEMCTL := $(shell command -v systemctl 2>/dev/null || true)
-LOGINCTL := $(shell command -v loginctl 2>/dev/null || true)
+endif
 
 all: build
 

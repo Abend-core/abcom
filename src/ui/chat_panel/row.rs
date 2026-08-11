@@ -6,6 +6,7 @@ use eframe::egui;
 use crate::message::{ChatMessage, ReactionEntry};
 
 use super::show_receipt;
+use crate::ui::i18n;
 use crate::ui::UiLanguage;
 
 /// Diamètre de l'avatar affiché en tête de chaque groupe de messages.
@@ -232,9 +233,33 @@ pub(super) fn render_message_header(
     });
 }
 
-/// Bouton « … » des salons et de « Tous » : ouvre un popup listant qui a
-/// reçu et qui a lu le message (glyphe ASCII, les coches n'ayant pas de sens
-/// quand chaque membre peut avoir reçu ou lu indépendamment).
+/// Œil peint : un « ... » ne disait pas de quoi il était le détail, et le
+/// glyphe 👁 n'est pas rendu de façon fiable par les polices embarquées.
+fn paint_eye_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color32) {
+    const STEPS: usize = 10;
+    let stroke = egui::Stroke::new(1.2, color);
+    let center = rect.center();
+    let lid = |sign: f32| {
+        (0..=STEPS)
+            .map(|i| {
+                let t = i as f32 / STEPS as f32;
+                egui::pos2(
+                    rect.left() + t * rect.width(),
+                    center.y + sign * rect.height() * 0.5 * (std::f32::consts::PI * t).sin(),
+                )
+            })
+            .collect::<Vec<_>>()
+    };
+    painter.add(egui::Shape::line(lid(-1.0), stroke));
+    painter.add(egui::Shape::line(lid(1.0), stroke));
+    painter.circle_filled(center, rect.height() * 0.28, color);
+}
+
+/// Accusés des salons et de « Tous » : un œil, bleu une fois que tout le monde
+/// a lu. Le survol donne le compte, le clic le détail nominatif.
+///
+/// Les coches du 1-à-1 n'ont pas de sens à plusieurs — chaque membre peut avoir
+/// reçu ou lu indépendamment —, d'où un indicateur distinct.
 pub(super) fn show_receipt_detail_button(
     ui: &mut egui::Ui,
     detail: &crate::app::ReceiptDetail,
@@ -242,10 +267,32 @@ pub(super) fn show_receipt_detail_button(
     language: UiLanguage,
 ) {
     let popup_id = ui.make_persistent_id(("receipt_popup", row_hash));
-    let btn = ui.small_button("...");
-    btn.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Détail des accusés")
-    });
+    let read = detail.read_by.len();
+    // Tout le monde a lu : même bleu que la double coche du 1-à-1.
+    let color = if read > 0 && read >= detail.audience {
+        crate::ui::theme::palette(ui).receipt_read
+    } else {
+        crate::ui::theme::palette(ui).text_muted
+    };
+
+    // Zone cliquable plus haute que l'œil : de quoi viser sans effort, sans
+    // écarter la ligne d'en-tête pour autant.
+    const EYE: egui::Vec2 = egui::vec2(14.0, 9.0);
+    let (rect, btn) = ui.allocate_exact_size(egui::vec2(EYE.x, 14.0), egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        paint_eye_icon(
+            ui.painter(),
+            egui::Rect::from_center_size(rect.center(), EYE),
+            color,
+        );
+    }
+    // Sans libellé, l'œil n'existe pas pour un lecteur d'écran — et le compte,
+    // retiré de l'affichage, reste accessible au survol.
+    let label = format!("{} {read}/{}", i18n::LU_PAR.get(language), detail.audience);
+    btn.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
+    let btn = btn
+        .on_hover_text(label)
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
     egui::Popup::from_toggle_button_response(&btn)
         .id(popup_id)
         .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)

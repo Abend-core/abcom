@@ -16,6 +16,7 @@ use crate::util::MutexExt;
 mod avatar;
 mod chat_panel;
 pub mod composer;
+mod dialog;
 mod emoji_picker;
 mod events;
 mod gif_picker;
@@ -294,6 +295,9 @@ pub(crate) struct AbcomApp {
     pub(crate) composer: ComposerState,
     pub(crate) show_attachment_menu: bool,
     pub(crate) show_emoji_picker: bool,
+    /// Bouton emoji de la barre de saisie : ancre de la popup, qui s'affiche
+    /// juste au-dessus de lui comme celle des réactions au-dessus de leur « + ».
+    pub(crate) emoji_btn_rect: egui::Rect,
     pub(crate) gif_picker: GifPickerState,
     pub(crate) enable_sound_notifications: bool,
     pub(crate) last_notification: Option<String>,
@@ -431,6 +435,7 @@ impl AbcomApp {
             },
             show_attachment_menu: false,
             show_emoji_picker: false,
+            emoji_btn_rect: egui::Rect::NOTHING,
             gif_picker: GifPickerState {
                 show: false,
                 tab: GifPickerTab::Gif,
@@ -845,6 +850,10 @@ impl eframe::App for AbcomApp {
                 match action {
                     tray::TrayAction::Open => self.show_from_tray(ctx),
                     tray::TrayAction::Quit => {
+                        tracing::info!(
+                            fenetre_repliee = self.window_hidden,
+                            "arrêt : demandé depuis le tray"
+                        );
                         self.really_quit = true;
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
@@ -889,7 +898,7 @@ impl eframe::App for AbcomApp {
     }
 
     /// Rendu : jamais appelé fenêtre repliée, la logique vit dans [`Self::logic`].
-    fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, root: &mut egui::Ui, frame: &mut eframe::Frame) {
         let ctx = root.ctx().clone();
         let ctx = &ctx;
 
@@ -953,9 +962,13 @@ impl eframe::App for AbcomApp {
                 self.t(i18n::AJOUTER_DES_FICHIERS),
                 self.t(i18n::AJOUTER_UN_DOSSIER),
             );
+            // Un sélecteur déjà ouvert : la demande est abandonnée plutôt
+            // qu'empilée (cf. `picker::is_open`).
+            let kind = if picker::is_open() { 0 } else { kind };
             match kind {
                 1 => {
                     let dialog = rfd::AsyncFileDialog::new()
+                        .set_parent(frame)
                         .set_title(files_title)
                         .pick_files();
                     picker::spawn(self.picker_tx.clone(), ctx.clone(), async move {
@@ -967,6 +980,7 @@ impl eframe::App for AbcomApp {
                 }
                 2 => {
                     let dialog = rfd::AsyncFileDialog::new()
+                        .set_parent(frame)
                         .set_title(folder_title)
                         .pick_folder();
                     picker::spawn(self.picker_tx.clone(), ctx.clone(), async move {
@@ -1001,8 +1015,7 @@ impl eframe::App for AbcomApp {
         }
 
         // Export de conversation : même sélecteur asynchrone que les autres.
-        if self.pending_export {
-            self.pending_export = false;
+        if std::mem::take(&mut self.pending_export) && !picker::is_open() {
             let title = self.t(i18n::EXPORTER_LA_CONVERSATION);
             let name = {
                 let state = self.state.lock_safe();
@@ -1012,6 +1025,7 @@ impl eframe::App for AbcomApp {
                 }
             };
             let dialog = rfd::AsyncFileDialog::new()
+                .set_parent(frame)
                 .set_title(title)
                 .set_file_name(format!("abcom-{name}.txt"))
                 .save_file();
@@ -1023,9 +1037,9 @@ impl eframe::App for AbcomApp {
         }
 
         // Sélection de l'image de profil.
-        if self.pending_avatar_pick {
-            self.pending_avatar_pick = false;
+        if std::mem::take(&mut self.pending_avatar_pick) && !picker::is_open() {
             let dialog = rfd::AsyncFileDialog::new()
+                .set_parent(frame)
                 .set_title(self.t(i18n::CHOISIR_UNE_IMAGE_DE_PROFIL))
                 .add_filter("Images", &["png", "jpg", "jpeg", "svg"])
                 .pick_file();
@@ -1074,12 +1088,49 @@ impl eframe::App for AbcomApp {
     /// Flush final du stockage : attend que toutes les écritures en file
     /// soient appliquées avant la fermeture.
     fn on_exit(&mut self) {
+        let started = std::time::Instant::now();
         if let Err(error) = self.state.lock_safe().flush_storage() {
             // Dernier instant utile : la fenêtre se ferme, il n'y a plus d'UI
             // pour prévenir. Le journal garde la trace de ce qui n'a pas été
             // écrit, au lieu de laisser croire à une sauvegarde réussie.
             tracing::error!("historique non sauvegardé : {error}");
         }
+        tracing::info!(
+            duree_ms = started.elapsed().as_millis(),
+            "arrêt : flush fait"
+        );
+        arm_shutdown_watchdog();
+    }
+}
+
+/// Délai au-delà duquel l'arrêt est forcé. Large pour laisser le chemin propre
+/// se dérouler (flush borné à 3 s, purge des tâches réseau à 2 s) : seul un
+/// démontage qui traîne vraiment déclenche le garde-fou.
+const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(6);
+
+/// Borne la durée d'un arrêt, armée une fois l'historique écrit sur disque.
+///
+/// Quitter depuis le tray pouvait prendre plus de 45 secondes, au point qu'il
+/// fallait tuer le processus — le journal montre pourtant que l'action est
+/// dépilée immédiatement, donc le temps part dans le démontage de la fenêtre
+/// et du GPU, hors de notre code. Rien d'utile ne s'y joue une fois le flush
+/// terminé : passé le délai, on rend la main à l'utilisateur.
+fn arm_shutdown_watchdog() {
+    let spawned = std::thread::Builder::new()
+        .name("abcom-shutdown".into())
+        .spawn(|| {
+            std::thread::sleep(SHUTDOWN_DEADLINE);
+            tracing::warn!(
+                delai_s = SHUTDOWN_DEADLINE.as_secs(),
+                "arrêt : démontage trop long, sortie forcée"
+            );
+            // Le journal fichier passe par un writer non bloquant : sans ce
+            // souffle, la ligne ci-dessus part avec le processus.
+            std::thread::sleep(Duration::from_millis(150));
+            std::process::exit(0);
+        });
+    if spawned.is_err() {
+        tracing::error!("arrêt : garde-fou indisponible, thread refusé");
     }
 }
 
@@ -1290,6 +1341,25 @@ fn low_power_wgpu() -> eframe::egui_wgpu::WgpuConfiguration {
     let mut options = eframe::egui_wgpu::WgpuConfiguration::default();
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_setup {
         setup.power_preference = eframe::wgpu::PowerPreference::LowPower;
+
+        // Windows : Direct3D 12 imposé, Vulkan écarté.
+        //
+        // Le pilote Vulkan Intel plante l'application, au lancement comme à la
+        // fermeture, par accès mémoire invalide. Le journal d'événements le
+        // désigne sans ambiguïté — quatre occurrences, module `igvk64.dll`
+        // version 31.0.101.2135, exception 0xc0000005, toujours au même offset
+        // 0x64ea72. Le plantage est dans le pilote, pas dans notre code : rien
+        // à corriger ici, seulement un chemin à éviter.
+        //
+        // D3D12 est l'autre backend natif de Windows, disponible sur toute
+        // machine capable de faire tourner l'application. `WGPU_BACKEND` reste
+        // prioritaire pour revenir à Vulkan une fois le pilote à jour, ou pour
+        // vérifier que le plantage a bien disparu.
+        #[cfg(windows)]
+        {
+            setup.instance_descriptor.backends =
+                eframe::wgpu::Backends::from_env().unwrap_or(eframe::wgpu::Backends::DX12);
+        }
     }
     options
 }
