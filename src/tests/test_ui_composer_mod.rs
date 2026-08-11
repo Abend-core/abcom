@@ -100,6 +100,16 @@ fn run_composer_frames(
     cursor: &mut usize,
     frames: Vec<Vec<egui::Event>>,
 ) -> bool {
+    run_composer_session(input, cursor, frames, false).0
+}
+
+/// Variante exposant le menu de shortcodes et le défilement final.
+fn run_composer_session(
+    input: &mut String,
+    cursor: &mut usize,
+    frames: Vec<Vec<egui::Event>>,
+    shortcode_menu_open: bool,
+) -> (bool, f32) {
     let ctx = egui::Context::default();
     let mut has_focus = true;
     let mut scroll = 0.0f32;
@@ -128,7 +138,7 @@ fn run_composer_frames(
                     &textures,
                     &alias_to_char,
                     &aliases,
-                    false,
+                    shortcode_menu_open,
                     0,
                     300.0,
                     &mut anchor,
@@ -138,7 +148,7 @@ fn run_composer_frames(
         });
         output.textures_delta.clear();
     }
-    submitted
+    (submitted, scroll)
 }
 
 fn key_event(key: egui::Key, modifiers: egui::Modifiers) -> egui::Event {
@@ -417,4 +427,84 @@ fn caret_signature_distinguishes_every_input() {
     assert_ne!(base, super::caret_signature("bonjour", 20.0, 300.0, 2.0));
     assert_ne!(base, super::caret_signature("bonjour", 18.0, 301.0, 2.0));
     assert_ne!(base, super::caret_signature("bonjour", 18.0, 300.0, 1.0));
+}
+
+/// Régression : `menu_open_now` est vrai dès qu'un `:xyz` précède le curseur,
+/// sans vérifier qu'une suggestion existe. Entrée partait donc sur
+/// `AcceptShortcode`, qui échouait sans rien insérer : la touche ne faisait plus
+/// rien du tout, alors qu'aucune popup n'était affichée.
+#[test]
+fn enter_without_matching_shortcode_falls_back_to_newline() {
+    let mut input = "hello :zzz".to_string();
+    let mut cursor = input.chars().count();
+
+    let (submitted, _) = run_composer_session(
+        &mut input,
+        &mut cursor,
+        vec![
+            vec![key_event(egui::Key::Enter, egui::Modifiers::NONE)],
+            vec![],
+        ],
+        true,
+    );
+
+    assert!(!submitted);
+    assert_eq!(input, "hello :zzz\n");
+    assert_eq!(cursor, input.chars().count());
+}
+
+#[test]
+fn enter_with_matching_shortcode_still_accepts_it() {
+    let mut input = "hello :jo".to_string();
+    let mut cursor = input.chars().count();
+
+    let (submitted, _) = run_composer_session(
+        &mut input,
+        &mut cursor,
+        vec![
+            vec![key_event(egui::Key::Enter, egui::Modifiers::NONE)],
+            vec![],
+        ],
+        true,
+    );
+
+    assert!(!submitted);
+    assert_eq!(input, "hello 😂");
+}
+
+/// Régression : le composeur est dimensionné avec le nombre de lignes d'AVANT
+/// la frappe. Le défilement suiveur se basait sur cette hauteur périmée et
+/// poussait le texte d'une ligne vers le haut dès qu'un retour à la ligne
+/// apparaissait — alors que la frame suivante se contente d'agrandir le cadre.
+#[test]
+fn creating_a_line_does_not_scroll_the_composer() {
+    let mut input = "hello".to_string();
+    let mut cursor = input.chars().count();
+
+    let (_, scroll) = run_composer_session(
+        &mut input,
+        &mut cursor,
+        vec![vec![key_event(egui::Key::Enter, SHIFT)]],
+        false,
+    );
+
+    assert_eq!(input, "hello\n");
+    assert_eq!(scroll, 0.0);
+}
+
+#[test]
+fn follow_caret_scroll_keeps_text_at_top_while_it_fits() {
+    assert_eq!(follow_caret_scroll(0.0, 1.0, 2), 0.0);
+    // Dernière ligne encore visible : toujours rien à faire défiler.
+    assert_eq!(follow_caret_scroll(0.0, 9.0, MAX_VISIBLE_LINES), 0.0);
+}
+
+#[test]
+fn follow_caret_scroll_follows_caret_beyond_the_visible_height() {
+    // 12 lignes pour 10 visibles : le curseur en dernière ligne en défile 2.
+    assert_eq!(follow_caret_scroll(0.0, 11.0, 12), 2.0);
+    // Curseur au-dessus de la fenêtre : on recale sur sa ligne.
+    assert_eq!(follow_caret_scroll(5.0, 1.0, 12), 1.0);
+    // Curseur déjà visible : le défilement molette est conservé.
+    assert_eq!(follow_caret_scroll(2.0, 5.0, 12), 2.0);
 }
