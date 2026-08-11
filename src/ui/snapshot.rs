@@ -325,7 +325,8 @@ impl ChatCache {
             let last_hash = rows[end - 1].hash;
             if rows[start].starts_group {
                 if self.multi_person {
-                    rows[start].receipt_detail = Some(s.receipt_detail(last_hash));
+                    rows[start].receipt_detail =
+                        Some(s.receipt_detail(last_hash, &rows[end - 1].msg));
                 } else if rows[start].msg.from == self.my_name {
                     rows[start].receipt = Some((
                         !s.is_message_pending(last_hash),
