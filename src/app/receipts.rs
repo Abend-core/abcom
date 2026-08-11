@@ -20,6 +20,8 @@ pub struct PendingMessage {
 pub struct ReceiptDetail {
     pub delivered_by: Vec<String>,
     pub read_by: Vec<String>,
+    /// Destinataires attendus, dénominateur du compteur « lu par n / N ».
+    pub audience: usize,
 }
 
 impl AppState {
@@ -105,9 +107,29 @@ impl AppState {
         }
     }
 
+    /// Destinataires attendus d'un message à plusieurs, moi exclu : membres du
+    /// salon, ou pairs connus pour « Tous ».
+    ///
+    /// Compté sur les membres et non sur les pairs en ligne (contrairement à
+    /// [`Self::receipt_recipients`], qui sert à l'envoi) : un dénominateur qui
+    /// bouge à chaque déconnexion rendrait le compteur illisible.
+    pub fn receipt_audience(&self, msg: &ChatMessage) -> usize {
+        match msg.to_user.as_deref().and_then(|t| t.strip_prefix('#')) {
+            Some(group_id) => self
+                .get_group(group_id)
+                .map(|g| g.members.iter().filter(|m| **m != self.my_username).count())
+                .unwrap_or(0),
+            None => self
+                .peers
+                .iter()
+                .filter(|p| p.username != self.my_username)
+                .count(),
+        }
+    }
+
     /// Liste nominative reçu/lu d'un message (noms d'affichage, triés),
-    /// pour le popup « … » des salons et de « Tous ».
-    pub fn receipt_detail(&self, message_hash: u64) -> ReceiptDetail {
+    /// pour le détail des accusés des salons et de « Tous ».
+    pub fn receipt_detail(&self, message_hash: u64, msg: &ChatMessage) -> ReceiptDetail {
         let resolve = |users: Option<&std::collections::HashSet<String>>| {
             let mut names: Vec<String> = users
                 .map(|set| set.iter().map(|u| self.peer_display_name(u)).collect())
@@ -118,6 +140,7 @@ impl AppState {
         ReceiptDetail {
             delivered_by: resolve(self.delivered_receipts.get(&message_hash)),
             read_by: resolve(self.read_receipts.get(&message_hash)),
+            audience: self.receipt_audience(msg),
         }
     }
 
