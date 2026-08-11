@@ -32,8 +32,11 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # Renderer wgpu (Metal natif sur macOS, Vulkan/DX12 ailleurs) au lieu de Glow :
 # OpenGL est déprécié sur macOS et y est émulé au-dessus de Metal, au prix d'un
-# contexte GPU d'une quarantaine de Mo pour une UI 2D. `glow` est explicitement
-# retiré des features par défaut pour qu'il ne reste aucun backend OpenGL lié.
+# contexte GPU d'une quarantaine de Mo pour une UI 2D. La feature `glow` est
+# retirée des features par défaut : le renderer OpenGL d'egui (`egui_glow`)
+# n'est plus lié. La crate `glow` reste compilée sur Windows et Linux — c'est
+# le backend GLES interne de wgpu, via `wgpu-hal` ; il ne sert que de repli et
+# n'existe pas sur macOS.
 eframe = { version = "0.36", default-features = false, features = [
     "accesskit",
     "default_fonts",
