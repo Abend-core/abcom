@@ -195,12 +195,16 @@ pub(super) fn paint_send_icon(painter: &egui::Painter, rect: egui::Rect, color: 
     painter.line_segment([egui::pos2(right - 6.5, bottom), tip], stroke);
 }
 
+/// Menu « + ». Renvoie l'action choisie et le rectangle **réellement** occupé
+/// par la popup : c'est lui qui décide si un clic tombe dedans ou dehors, une
+/// estimation ratant la cible refermait le menu sur l'appui, avant que le
+/// bouton visé n'ait vu le relâchement — le clic était perdu.
 pub(super) fn attachment_menu_popup(
     ctx: &egui::Context,
     anchor_rect: egui::Rect,
     add_files_label: &str,
     add_folder_label: &str,
-) -> Option<AttachmentMenuAction> {
+) -> (Option<AttachmentMenuAction>, egui::Rect) {
     // Use the size remembered from the previous frame (or a safe default) so that
     // the popup's bottom-left is anchored just above the + button.
     let popup_id = egui::Id::new("attachment_menu_popup");
@@ -214,7 +218,7 @@ pub(super) fn attachment_menu_popup(
         .order(egui::Order::Foreground)
         .fixed_pos(popup_pos);
 
-    area.show(ctx, |ui| {
+    let shown = area.show(ctx, |ui| {
         egui::Frame::popup(ui.style())
             .fill(crate::ui::theme::palette(ui).surface)
             .stroke(egui::Stroke::new(
@@ -235,6 +239,14 @@ pub(super) fn attachment_menu_popup(
                 action
             })
             .inner
-    })
-    .inner
+    });
+
+    // Hauteur mesurée différente de celle supposée : la popup est posée un cran
+    // trop haut pour cette frame. Sans repeinture, egui n'en programme aucune et
+    // elle y resterait jusqu'au prochain événement.
+    if (shown.response.rect.height() - popup_h).abs() > 0.5 {
+        ctx.request_repaint();
+    }
+
+    (shown.inner, shown.response.rect)
 }
