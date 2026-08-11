@@ -1341,6 +1341,25 @@ fn low_power_wgpu() -> eframe::egui_wgpu::WgpuConfiguration {
     let mut options = eframe::egui_wgpu::WgpuConfiguration::default();
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_setup {
         setup.power_preference = eframe::wgpu::PowerPreference::LowPower;
+
+        // Windows : Direct3D 12 imposé, Vulkan écarté.
+        //
+        // Le pilote Vulkan Intel plante l'application, au lancement comme à la
+        // fermeture, par accès mémoire invalide. Le journal d'événements le
+        // désigne sans ambiguïté — quatre occurrences, module `igvk64.dll`
+        // version 31.0.101.2135, exception 0xc0000005, toujours au même offset
+        // 0x64ea72. Le plantage est dans le pilote, pas dans notre code : rien
+        // à corriger ici, seulement un chemin à éviter.
+        //
+        // D3D12 est l'autre backend natif de Windows, disponible sur toute
+        // machine capable de faire tourner l'application. `WGPU_BACKEND` reste
+        // prioritaire pour revenir à Vulkan une fois le pilote à jour, ou pour
+        // vérifier que le plantage a bien disparu.
+        #[cfg(windows)]
+        {
+            setup.instance_descriptor.backends =
+                eframe::wgpu::Backends::from_env().unwrap_or(eframe::wgpu::Backends::DX12);
+        }
     }
     options
 }
