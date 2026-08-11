@@ -67,19 +67,9 @@ impl AbcomApp {
         const SETTINGS_SIZE: egui::Vec2 = egui::vec2(640.0, 480.0);
 
         let mut open = self.modals.settings_open;
-        egui::Window::new(title)
-            .open(&mut open)
-            .resizable(false)
-            .collapsible(false)
-            .fixed_size(SETTINGS_SIZE)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-            .show(ctx, |ui| {
-                // `fixed_size` borne la zone disponible mais, la fenêtre n'étant
-                // pas redimensionnable, egui la rétracterait à la hauteur du
-                // contenu. On force donc le contenu à remplir toute la zone pour
-                // que la fenêtre garde la même taille sur tous les onglets.
-                ui.set_min_size(ui.available_size());
-
+        super::dialog::Modal::new("settings_modal", title, self.t(i18n::FERMER), SETTINGS_SIZE.x)
+            .height(SETTINGS_SIZE.y)
+            .show(ctx, &mut open, |ui| {
                 // Bandeau d'onglets
                 ui.horizontal(|ui| {
                     for (tab, label) in [

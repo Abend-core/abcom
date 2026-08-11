@@ -99,13 +99,10 @@ impl AbcomApp {
         let mut do_create = false;
         let mut do_cancel = false;
 
-        egui::Window::new(title)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-            .resizable(false)
-            .collapsible(false)
-            .default_width(360.0)
-            .open(&mut is_open)
-            .show(ctx, |ui| {
+        super::dialog::Modal::new("group_create_modal", title, self.t(i18n::FERMER), 360.0).show(
+            ctx,
+            &mut is_open,
+            |ui| {
                 ui.spacing_mut().item_spacing.y = 6.0;
 
                 ui.label(egui::RichText::new(lbl_name).strong());
@@ -212,7 +209,8 @@ impl AbcomApp {
                         do_cancel = true;
                     }
                 });
-            });
+            },
+        );
 
         if do_create {
             let members: Vec<String> = self.modals.group_members_selected.iter().cloned().collect();
@@ -309,132 +307,130 @@ impl AbcomApp {
         let mut clear_confirm = false;
         let mut confirmed: Option<GroupConfirmAction> = None;
 
-        egui::Window::new(format!("🔗 {}", group.name))
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-            .resizable(false)
-            .collapsible(false)
-            .default_width(340.0)
-            .open(&mut is_open)
-            .show(ctx, |ui| {
-                ui.spacing_mut().item_spacing.y = 6.0;
-                ui.label(
-                    egui::RichText::new(format!(
-                        "{} {} · {} : {}",
-                        lbl_created,
-                        group.created_at,
-                        lbl_owner,
-                        display_of(&group.owner)
-                    ))
-                    .small()
-                    .weak(),
-                );
-                ui.separator();
+        super::dialog::Modal::new(
+            "group_manage_modal",
+            &format!("🔗 {}", group.name),
+            self.t(i18n::FERMER),
+            340.0,
+        )
+        .show(ctx, &mut is_open, |ui| {
+            ui.spacing_mut().item_spacing.y = 6.0;
+            ui.label(
+                egui::RichText::new(format!(
+                    "{} {} · {} : {}",
+                    lbl_created,
+                    group.created_at,
+                    lbl_owner,
+                    display_of(&group.owner)
+                ))
+                .small()
+                .weak(),
+            );
+            ui.separator();
 
-                ui.label(
-                    egui::RichText::new(format!("{} ({})", lbl_members, group.members.len()))
-                        .strong(),
-                );
-                egui::Frame::group(ui.style()).show(ui, |ui| {
-                    ui.set_min_width(300.0);
+            ui.label(
+                egui::RichText::new(format!("{} ({})", lbl_members, group.members.len())).strong(),
+            );
+            egui::Frame::group(ui.style()).show(ui, |ui| {
+                ui.set_min_width(300.0);
+                egui::ScrollArea::vertical()
+                    .max_height(160.0)
+                    .id_salt("group_members")
+                    .show(ui, |ui| {
+                        for member in &group.members {
+                            ui.horizontal(|ui| {
+                                presence_dot(ui, online_of(member));
+                                let mut label = display_of(member);
+                                if *member == group.owner {
+                                    label.push_str(" 👑");
+                                }
+                                if *member == my_name {
+                                    label.push(' ');
+                                    label.push_str(lbl_you);
+                                }
+                                ui.label(label);
+                                // Exclusion : propriétaire uniquement,
+                                // jamais sur lui-même.
+                                if am_owner && *member != my_name {
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if kick_button(ui).on_hover_text(lbl_kick).clicked() {
+                                                kick = Some(member.clone());
+                                            }
+                                        },
+                                    );
+                                }
+                            });
+                        }
+                    });
+            });
+
+            // Ajout de membres : pairs connus non encore membres.
+            if am_owner {
+                let addable: Vec<_> = peers
+                    .iter()
+                    .filter(|p| !group.members.contains(&p.username))
+                    .collect();
+                if !addable.is_empty() {
+                    ui.separator();
+                    ui.label(egui::RichText::new(lbl_add_section).strong());
                     egui::ScrollArea::vertical()
-                        .max_height(160.0)
-                        .id_salt("group_members")
+                        .max_height(120.0)
+                        .id_salt("group_addable")
                         .show(ui, |ui| {
-                            for member in &group.members {
+                            for peer in addable {
                                 ui.horizontal(|ui| {
-                                    presence_dot(ui, online_of(member));
-                                    let mut label = display_of(member);
-                                    if *member == group.owner {
-                                        label.push_str(" 👑");
-                                    }
-                                    if *member == my_name {
-                                        label.push(' ');
-                                        label.push_str(lbl_you);
-                                    }
-                                    ui.label(label);
-                                    // Exclusion : propriétaire uniquement,
-                                    // jamais sur lui-même.
-                                    if am_owner && *member != my_name {
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                if kick_button(ui).on_hover_text(lbl_kick).clicked()
-                                                {
-                                                    kick = Some(member.clone());
-                                                }
-                                            },
-                                        );
-                                    }
+                                    presence_dot(ui, peer.online);
+                                    ui.label(display_of(&peer.username));
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if ui.small_button(lbl_add).clicked() {
+                                                add = Some(peer.username.clone());
+                                            }
+                                        },
+                                    );
                                 });
                             }
                         });
-                });
-
-                // Ajout de membres : pairs connus non encore membres.
-                if am_owner {
-                    let addable: Vec<_> = peers
-                        .iter()
-                        .filter(|p| !group.members.contains(&p.username))
-                        .collect();
-                    if !addable.is_empty() {
-                        ui.separator();
-                        ui.label(egui::RichText::new(lbl_add_section).strong());
-                        egui::ScrollArea::vertical()
-                            .max_height(120.0)
-                            .id_salt("group_addable")
-                            .show(ui, |ui| {
-                                for peer in addable {
-                                    ui.horizontal(|ui| {
-                                        presence_dot(ui, peer.online);
-                                        ui.label(display_of(&peer.username));
-                                        ui.with_layout(
-                                            egui::Layout::right_to_left(egui::Align::Center),
-                                            |ui| {
-                                                if ui.small_button(lbl_add).clicked() {
-                                                    add = Some(peer.username.clone());
-                                                }
-                                            },
-                                        );
-                                    });
-                                }
-                            });
-                    }
                 }
+            }
 
-                ui.separator();
-                match confirm_state {
-                    Some(action) => {
-                        ui.label(
-                            egui::RichText::new(match action {
-                                GroupConfirmAction::Leave => warn_leave,
-                                GroupConfirmAction::Delete => warn_delete,
-                            })
-                            .color(crate::ui::theme::palette(ui).danger),
-                        );
-                        ui.horizontal(|ui| {
-                            if ui
-                                .button(egui::RichText::new(lbl_confirm).strong())
-                                .clicked()
-                            {
-                                confirmed = Some(action);
-                            }
-                            if ui.button(lbl_back).clicked() {
-                                clear_confirm = true;
-                            }
-                        });
-                    }
-                    None => {
-                        ui.horizontal(|ui| {
-                            if ui.button(lbl_leave).clicked() {
-                                set_confirm = Some(GroupConfirmAction::Leave);
-                            }
-                            if am_owner && ui.button(lbl_delete).clicked() {
-                                set_confirm = Some(GroupConfirmAction::Delete);
-                            }
-                        });
-                    }
+            ui.separator();
+            match confirm_state {
+                Some(action) => {
+                    ui.label(
+                        egui::RichText::new(match action {
+                            GroupConfirmAction::Leave => warn_leave,
+                            GroupConfirmAction::Delete => warn_delete,
+                        })
+                        .color(crate::ui::theme::palette(ui).danger),
+                    );
+                    ui.horizontal(|ui| {
+                        if ui
+                            .button(egui::RichText::new(lbl_confirm).strong())
+                            .clicked()
+                        {
+                            confirmed = Some(action);
+                        }
+                        if ui.button(lbl_back).clicked() {
+                            clear_confirm = true;
+                        }
+                    });
                 }
-            });
+                None => {
+                    ui.horizontal(|ui| {
+                        if ui.button(lbl_leave).clicked() {
+                            set_confirm = Some(GroupConfirmAction::Leave);
+                        }
+                        if am_owner && ui.button(lbl_delete).clicked() {
+                            set_confirm = Some(GroupConfirmAction::Delete);
+                        }
+                    });
+                }
+            }
+        });
 
         if let Some(action) = set_confirm {
             self.modals.group_manage_confirm = Some(action);

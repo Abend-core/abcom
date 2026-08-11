@@ -16,6 +16,7 @@ use crate::util::MutexExt;
 mod avatar;
 mod chat_panel;
 pub mod composer;
+mod dialog;
 mod emoji_picker;
 mod events;
 mod gif_picker;
