@@ -1303,42 +1303,12 @@ pub mod shortcuts {
     pub const CLOSE_OVERLAY: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::Escape);
 }
 
-/// Configuration wgpu privilégiant le GPU intégré et la sobriété mémoire.
-///
-/// Trois écarts au défaut d'egui-wgpu :
-///
-/// - `LowPower` : le défaut est `HighPerformance`, ce qui réveille la carte
-///   dédiée pour une interface 2D.
-/// - Backends restreints. Le défaut est `PRIMARY | GL`, et wgpu initialise
-///   **tous** les backends demandés pour énumérer leurs adaptateurs : sous
-///   Windows, cela charge le pilote Vulkan et ses ICD, DXGI/D3D12 et le pilote
-///   OpenGL, chacun avec sa mémoire engagée, pour n'en retenir qu'un. On garde
-///   Vulkan en repli des machines sans D3D12, et on laisse tomber OpenGL, qui
-///   n'a jamais servi que de dernier recours.
-/// - `MemoryUsage` : le sous-allocateur GPU part sur des blocs plus petits,
-///   là où le défaut `Performance` réserve large d'avance.
-///
-/// `WGPU_BACKEND` reste prioritaire : `wgpu::Backends::from_env` est consulté
-/// d'abord, de quoi diagnostiquer un pilote fautif sans recompiler.
+/// Configuration wgpu privilégiant le GPU intégré : le défaut d'egui-wgpu est
+/// `HighPerformance`, ce qui réveille la carte dédiée pour une interface 2D.
 fn low_power_wgpu() -> eframe::egui_wgpu::WgpuConfiguration {
-    use eframe::wgpu;
-
     let mut options = eframe::egui_wgpu::WgpuConfiguration::default();
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_setup {
-        setup.power_preference = wgpu::PowerPreference::LowPower;
-        setup.instance_descriptor.backends = wgpu::Backends::from_env().unwrap_or_else(|| {
-            if cfg!(target_os = "macos") {
-                wgpu::Backends::METAL
-            } else {
-                wgpu::Backends::DX12 | wgpu::Backends::VULKAN
-            }
-        });
-
-        let base = setup.device_descriptor.clone();
-        setup.device_descriptor = std::sync::Arc::new(move |adapter| wgpu::DeviceDescriptor {
-            memory_hints: wgpu::MemoryHints::MemoryUsage,
-            ..base(adapter)
-        });
+        setup.power_preference = eframe::wgpu::PowerPreference::LowPower;
     }
     options
 }
