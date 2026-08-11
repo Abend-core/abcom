@@ -17,6 +17,7 @@ dependencies = [
  "egui_extras",
  "egui_kittest",
  "ehttp",
+ "gtk",
  "image",
  "libmimalloc-sys",
  "mimalloc",

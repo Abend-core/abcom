@@ -95,13 +95,19 @@ default = ["tray", "sound"]
 # Icône résidente. Tire GTK3 + libappindicator sur Linux : la désactiver permet
 # de compiler sur un système qui n'a pas ces en-têtes (conteneur, Alpine/musl,
 # poste sans bureau). Sans elle, fermer la fenêtre quitte l'application.
-tray = ["dep:tray-icon"]
+tray = ["dep:tray-icon", "dep:gtk"]
 # Son de notification. Tire ALSA (`libasound2-dev`) sur Linux, pour deux
 # tonalités synthétisées : la désactiver retire le bip, rien d'autre.
 sound = ["dep:rodio"]
 # Import d'un avatar SVG (rasterisation via resvg — dépendance lourde,
 # désactivée par défaut : binaire et compilation nettement plus légers).
 avatar-svg = ["dep:resvg"]
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# `tray-icon` exige une boucle GTK sur le thread qui crée l'icône (cf. son
+# README) : winit n'en fournit aucune, on la monte donc nous-mêmes sur un
+# thread dédié. Version alignée sur celle que tray-icon tire déjà.
+gtk = { version = "0.18", optional = true }
 
 [target.'cfg(windows)'.dependencies]
 # Replier la fenêtre dans le tray sans la détruire : on la sort de l'écran et
