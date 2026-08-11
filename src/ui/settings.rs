@@ -245,6 +245,36 @@ impl AbcomApp {
                                     ui.label(egui::RichText::new(line).small().weak());
                                 }
                                 ui.end_row();
+
+                                // Mémoire : le tas Rust d'un côté, le reste du
+                                // processus de l'autre (pilote graphique et
+                                // textures GPU, hors de notre allocateur), plus
+                                // ce que pèsent les textures egui elles-mêmes.
+                                ui.label(egui::RichText::new(self.t(i18n::MEMOIRE)).strong());
+                                {
+                                    let m = crate::metrics::memory();
+                                    let (textures, texture_count) = egui_texture_bytes(ctx);
+                                    let caches = egui_loader_bytes(ctx);
+                                    let mo = |bytes: u64| format!("{:.0} Mo", bytes as f64 / 1e6);
+                                    let line = format!(
+                                        "{} {} ({} {}) · {} {} ({}) · {} {} · {} {} ({} {})",
+                                        self.t(i18n::TAS),
+                                        mo(m.heap),
+                                        self.t(i18n::PIC),
+                                        mo(m.heap_peak),
+                                        self.t(i18n::TEXTURES),
+                                        mo(textures),
+                                        texture_count,
+                                        self.t(i18n::CACHES_IMAGES),
+                                        mo(caches),
+                                        self.t(i18n::PROCESSUS),
+                                        mo(m.rss),
+                                        self.t(i18n::PIC),
+                                        mo(m.rss_peak),
+                                    );
+                                    ui.label(egui::RichText::new(line).small().weak());
+                                }
+                                ui.end_row();
                             });
                     }
                     SettingsTab::Credits => {
@@ -509,4 +539,45 @@ impl AbcomApp {
             self.broadcast_my_avatar();
         }
     }
+}
+
+/// Poids des textures vivantes d'egui (atlas de police, emojis, avatars,
+/// aperçus d'images et de GIF) et leur nombre.
+///
+/// Compté sur la taille logique en pixels : c'est ce qui est téléversé au GPU,
+/// et l'ordre de grandeur suffit à savoir si le poids du processus vient de là.
+fn egui_texture_bytes(ctx: &egui::Context) -> (u64, usize) {
+    let manager = ctx.tex_manager();
+    let manager = manager.read();
+    let total = manager
+        .allocated()
+        .map(|(_, meta)| (meta.size[0] * meta.size[1] * meta.bytes_per_pixel) as u64)
+        .sum();
+    (total, manager.num_allocated())
+}
+
+/// Poids des caches de chargement d'egui : octets bruts téléchargés, images
+/// décodées et trames de GIF. Ils vivent en RAM en plus des textures GPU, et
+/// rien ne les borne — d'où leur place dans le diagnostic.
+fn egui_loader_bytes(ctx: &egui::Context) -> u64 {
+    let loaders = ctx.loaders();
+    let bytes: usize = loaders
+        .bytes
+        .lock()
+        .iter()
+        .map(|loader| loader.byte_size())
+        .sum();
+    let images: usize = loaders
+        .image
+        .lock()
+        .iter()
+        .map(|loader| loader.byte_size())
+        .sum();
+    let textures: usize = loaders
+        .texture
+        .lock()
+        .iter()
+        .map(|loader| loader.byte_size())
+        .sum();
+    (bytes + images + textures) as u64
 }
