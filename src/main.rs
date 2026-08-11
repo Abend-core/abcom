@@ -265,7 +265,12 @@ fn main() -> anyhow::Result<()> {
 
     // Le flush SQLite est fait ; on laisse les tâches réseau finir leurs trames en cours.
     tracing::info!("arrêt : purge des tâches réseau en cours");
+    let shutdown_started = std::time::Instant::now();
     rt.shutdown_timeout(SHUTDOWN_GRACE);
+    tracing::info!(
+        duree_ms = shutdown_started.elapsed().as_millis(),
+        "arrêt : tâches réseau purgées, sortie"
+    );
 
     Ok(())
 }

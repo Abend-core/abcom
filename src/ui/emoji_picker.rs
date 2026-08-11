@@ -1,8 +1,88 @@
-use super::i18n;
 use eframe::egui;
 
 use super::composer;
 use super::AbcomApp;
+
+/// Encombrement de la grille d'emojis, hors cadre de la popup.
+pub(crate) const PICKER_SIZE: egui::Vec2 = egui::vec2(310.0, 340.0);
+
+/// Marge conservée entre la popup et le bord de la fenêtre.
+const SCREEN_MARGIN: f32 = 8.0;
+/// Écart entre la popup et le bouton qui l'ouvre.
+const ANCHOR_GAP: f32 = 6.0;
+
+/// Coin haut-gauche d'une popup de taille `size` ouverte depuis `anchor`.
+///
+/// Sous le bouton par défaut, au-dessus s'il n'y a pas la place — un picker de
+/// 340 px ouvert depuis un message du bas de la conversation sortait de la
+/// fenêtre et se retrouvait tronqué. Le résultat est toujours ramené dans
+/// l'écran, y compris quand la fenêtre est plus petite que la popup.
+pub(crate) fn popup_pos(screen: egui::Rect, anchor: egui::Rect, size: egui::Vec2) -> egui::Pos2 {
+    let below = anchor.bottom() + ANCHOR_GAP;
+    let above = anchor.top() - ANCHOR_GAP - size.y;
+    let fits_below = below + size.y <= screen.bottom() - SCREEN_MARGIN;
+    let fits_above = above >= screen.top() + SCREEN_MARGIN;
+    let y = if fits_below || !fits_above {
+        below
+    } else {
+        above
+    };
+
+    // `min` avant `max` : sur une fenêtre plus petite que la popup, c'est le
+    // bord haut-gauche qui gagne, plutôt qu'un coin hors écran.
+    let clamp = |v: f32, low: f32, high: f32| v.min(high).max(low);
+    egui::pos2(
+        clamp(
+            anchor.left(),
+            screen.left() + SCREEN_MARGIN,
+            screen.right() - SCREEN_MARGIN - size.x,
+        ),
+        clamp(
+            y,
+            screen.top() + SCREEN_MARGIN,
+            screen.bottom() - SCREEN_MARGIN - size.y,
+        ),
+    )
+}
+
+/// Popup d'emojis ancrée sur le bouton qui l'ouvre. Renvoie le rectangle
+/// réellement occupé, pour distinguer un clic dedans d'un clic dehors.
+///
+/// Partagée par le bouton de la barre de saisie et celui de chaque message :
+/// même cadre, même taille, même placement.
+pub(crate) fn show_emoji_popup(
+    ctx: &egui::Context,
+    id: egui::Id,
+    anchor: egui::Rect,
+    category: &mut usize,
+    textures: &super::EmojiTextures,
+    on_pick: impl FnMut(&str),
+) -> egui::Rect {
+    // Taille mesurée à la frame précédente ; au premier affichage, la grille
+    // plus la marge du cadre.
+    let size = ctx
+        .memory(|m| m.area_rect(id))
+        .map(|r| r.size())
+        .unwrap_or(PICKER_SIZE + egui::vec2(16.0, 16.0));
+
+    let response = egui::Area::new(id)
+        .order(egui::Order::Foreground)
+        .fixed_pos(popup_pos(ctx.viewport_rect(), anchor, size))
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_min_size(PICKER_SIZE);
+                show_emoji_grid(ui, category, textures, on_pick);
+            });
+        })
+        .response;
+
+    // La taille supposée n'était pas la bonne : la popup est placée de travers
+    // pour cette frame, et egui ne repeindrait pas de lui-même.
+    if (response.rect.size() - size).length() > 0.5 {
+        ctx.request_repaint();
+    }
+    response.rect
+}
 
 /// Dessine la grille de catégories + emojis, appelle `on_pick` au clic sur un
 /// emoji. Partagé entre le picker du composeur et celui des réactions.
@@ -88,21 +168,15 @@ impl AbcomApp {
             return;
         }
 
-        let mut picker_rect: Option<egui::Rect> = None;
-        let picker_window = egui::Window::new(self.t(i18n::EMOJIS))
-            .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-8.0, -60.0))
-            .resizable(false)
-            .collapsible(false)
-            .fixed_size([310.0, 340.0]);
-
         let mut picked: Option<String> = None;
-        if let Some(resp) = picker_window.show(ctx, |ui| {
-            show_emoji_grid(ui, &mut self.emoji.category, &self.emoji.textures, |ch| {
-                picked = Some(ch.to_string());
-            });
-        }) {
-            picker_rect = Some(resp.response.rect);
-        }
+        let picker_rect = show_emoji_popup(
+            ctx,
+            egui::Id::new("composer_emoji_picker"),
+            self.emoji_btn_rect,
+            &mut self.emoji.category,
+            &self.emoji.textures,
+            |ch| picked = Some(ch.to_string()),
+        );
 
         if let Some(ch) = picked {
             composer::insert_emoji_at_cursor(
@@ -117,10 +191,8 @@ impl AbcomApp {
 
         if !emoji_button_clicked && ctx.input(|i| i.pointer.any_pressed()) {
             if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
-                if let Some(rect) = picker_rect {
-                    if !rect.contains(pos) {
-                        self.show_emoji_picker = false;
-                    }
+                if !picker_rect.contains(pos) && !self.emoji_btn_rect.contains(pos) {
+                    self.show_emoji_picker = false;
                 }
             }
         }

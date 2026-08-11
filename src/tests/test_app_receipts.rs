@@ -191,9 +191,10 @@ fn recipients_group_only_online_members() {
 #[test]
 fn test_mark_delivered_by_feeds_detail() {
     let mut s = state();
-    let hash = AppState::message_hash(&make_msg("alice", "test"));
+    let msg = make_msg("alice", "test");
+    let hash = AppState::message_hash(&msg);
     s.mark_message_delivered_by(hash, "bob".to_string());
-    let detail = s.receipt_detail(hash);
+    let detail = s.receipt_detail(hash, &msg);
     assert_eq!(detail.delivered_by, vec!["bob"]);
     assert!(detail.read_by.is_empty());
 }
@@ -201,11 +202,12 @@ fn test_mark_delivered_by_feeds_detail() {
 #[test]
 fn test_receipt_detail_sorted() {
     let mut s = state();
-    let hash = AppState::message_hash(&make_msg("alice", "y"));
+    let msg = make_msg("alice", "y");
+    let hash = AppState::message_hash(&msg);
     s.mark_message_delivered_by(hash, "zara".to_string());
     s.mark_message_delivered_by(hash, "bob".to_string());
     s.mark_message_read(hash, "carol".to_string());
-    let detail = s.receipt_detail(hash);
+    let detail = s.receipt_detail(hash, &msg);
     assert_eq!(detail.delivered_by, vec!["bob", "zara"]);
     assert_eq!(detail.read_by, vec!["carol"]);
 }
@@ -387,4 +389,53 @@ fn outbox_survives_until_the_ack_confirms_delivery() {
     // ACK : seulement maintenant il disparaît.
     assert!(s.mark_message_acked(hash, "bob"));
     assert!(!s.outbox.contains_key(&hash));
+}
+
+// ── dénominateur du compteur de lecture ────────────────────────────────────
+
+/// Membres du salon moi exclu — et non les membres en ligne : un dénominateur
+/// qui change à chaque déconnexion rendrait le compteur illisible.
+#[test]
+fn test_receipt_audience_counts_group_members_without_me() {
+    let mut s = state();
+    s.groups = vec![Group {
+        id: "team".to_string(),
+        name: "team".to_string(),
+        owner: "alice".to_string(),
+        members: vec![
+            "alice".to_string(),
+            "bob".to_string(),
+            "carol".to_string(),
+            "dave".to_string(),
+        ],
+        created_at: "2026-01-01 00:00:00".to_string(),
+    }];
+    // Un seul membre en ligne : le dénominateur ne bouge pas pour autant.
+    s.peers = vec![peer("bob", 9001, true)];
+    let mut msg = make_msg("alice", "coucou");
+    msg.to_user = Some("#team".to_string());
+
+    assert_eq!(s.receipt_audience(&msg), 3);
+}
+
+#[test]
+fn test_receipt_audience_of_broadcast_counts_known_peers() {
+    let mut s = state();
+    s.peers = vec![
+        peer("bob", 9001, true),
+        peer("carol", 9002, false),
+        peer("alice", 9003, true),
+    ];
+    // « Tous » : `to_user` absent. Moi (« alice ») exclu, carol hors ligne
+    // comptée — elle reste une destinataire attendue.
+    assert_eq!(s.receipt_audience(&make_msg("alice", "à tous")), 2);
+}
+
+#[test]
+fn test_receipt_audience_of_unknown_group_is_zero() {
+    let s = state();
+    let mut msg = make_msg("alice", "salon disparu");
+    msg.to_user = Some("#fantome".to_string());
+
+    assert_eq!(s.receipt_audience(&msg), 0);
 }

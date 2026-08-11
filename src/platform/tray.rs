@@ -37,8 +37,10 @@ enum RawEvent {
     Click,
 }
 
+/// Événements en attente, avec l'instant où le système nous les a remis :
+/// l'écart jusqu'au `poll()` mesure le délai de réveil de l'interface.
 #[cfg(feature = "tray")]
-static PENDING: Mutex<Vec<RawEvent>> = Mutex::new(Vec::new());
+static PENDING: Mutex<Vec<(RawEvent, std::time::Instant)>> = Mutex::new(Vec::new());
 
 /// Installe les handlers globaux tray/menu : chaque événement est mis en
 /// file puis réveille l'UI. À appeler une seule fois, avant la création.
@@ -46,10 +48,16 @@ static PENDING: Mutex<Vec<RawEvent>> = Mutex::new(Vec::new());
 pub(crate) fn install_event_handlers(ui_ctx: crate::platform::notify::UiContext) {
     let wake = ui_ctx.clone();
     MenuEvent::set_event_handler(Some(move |event: MenuEvent| {
-        PENDING.lock_safe().push(RawEvent::Menu(event.id));
-        if let Some(ctx) = wake.get() {
-            ctx.request_repaint();
+        PENDING
+            .lock_safe()
+            .push((RawEvent::Menu(event.id), std::time::Instant::now()));
+        match wake.get() {
+            Some(ctx) => ctx.request_repaint(),
+            // Menu utilisable avant que l'interface n'existe : l'événement
+            // attendra la première frame.
+            None => tracing::warn!("menu tray : interface pas encore prête, réveil impossible"),
         }
+        wake_native_event_loop();
     }));
     TrayIconEvent::set_event_handler(Some(move |event: TrayIconEvent| {
         if let TrayIconEvent::Click {
@@ -58,12 +66,24 @@ pub(crate) fn install_event_handlers(ui_ctx: crate::platform::notify::UiContext)
             ..
         } = event
         {
-            PENDING.lock_safe().push(RawEvent::Click);
+            PENDING
+                .lock_safe()
+                .push((RawEvent::Click, std::time::Instant::now()));
         }
         if let Some(ctx) = ui_ctx.get() {
             ctx.request_repaint();
         }
+        wake_native_event_loop();
     }));
+}
+
+/// Second réveil, au niveau du système : `request_repaint` seul ne suffit pas
+/// dans tous les états de la fenêtre (voir `win::wake_event_loop`). Sans effet
+/// hors Windows, où le problème n'a pas été observé.
+#[cfg(feature = "tray")]
+fn wake_native_event_loop() {
+    #[cfg(windows)]
+    win::wake_event_loop();
 }
 
 #[cfg(feature = "tray")]
@@ -124,11 +144,24 @@ impl Tray {
             .lock()
             .unwrap()
             .drain(..)
-            .filter_map(|raw| match raw {
-                RawEvent::Menu(id) if id == self.open_id => Some(TrayAction::Open),
-                RawEvent::Menu(id) if id == self.quit_id => Some(TrayAction::Quit),
-                RawEvent::Menu(_) => None,
-                RawEvent::Click => Some(TrayAction::Open),
+            .filter_map(|(raw, queued_at)| {
+                let action = match raw {
+                    RawEvent::Menu(id) if id == self.open_id => Some(TrayAction::Open),
+                    RawEvent::Menu(id) if id == self.quit_id => Some(TrayAction::Quit),
+                    RawEvent::Menu(_) => None,
+                    RawEvent::Click => Some(TrayAction::Open),
+                };
+                // Doit être de l'ordre de la milliseconde : au-delà, c'est que
+                // le réveil de l'interface n'a pas eu lieu et que l'action a
+                // attendu un autre événement pour être vue.
+                if let Some(action) = action {
+                    tracing::info!(
+                        ?action,
+                        attente_ms = queued_at.elapsed().as_millis(),
+                        "action tray dépilée"
+                    );
+                }
+                action
             })
             .collect()
     }
@@ -203,10 +236,11 @@ pub(crate) mod win {
     use std::sync::atomic::{AtomicI32, AtomicIsize, Ordering};
 
     use windows_sys::Win32::Foundation::{HWND, RECT};
+    use windows_sys::Win32::Graphics::Gdi::{RedrawWindow, RDW_INTERNALPAINT};
     use windows_sys::Win32::UI::WindowsAndMessaging::{
-        GetWindowLongPtrW, GetWindowRect, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos,
-        ShowWindow, GWL_EXSTYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
-        SW_HIDE, SW_SHOW, SW_SHOWNA, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
+        GetWindowLongPtrW, GetWindowRect, PostMessageW, SetForegroundWindow, SetWindowLongPtrW,
+        SetWindowPos, ShowWindow, GWL_EXSTYLE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOSIZE,
+        SWP_NOZORDER, SW_HIDE, SW_SHOW, SW_SHOWNA, WM_NULL, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
     };
 
     /// Position hors du bureau visible où l'on parque la fenêtre repliée.
@@ -227,6 +261,42 @@ pub(crate) mod win {
     fn handle() -> Option<HWND> {
         let raw = HANDLE.load(Ordering::Relaxed);
         (raw != 0).then_some(raw as HWND)
+    }
+
+    /// Réveille la boucle de messages de la fenêtre, sans rien redessiner.
+    ///
+    /// `Context::request_repaint` ne suffit pas dans tous les états : egui
+    /// n'appelle le rappel de réveil que si le délai demandé est **plus court**
+    /// que celui déjà en attente, et remet ce délai à l'infini à la fin de
+    /// chaque passe. Or, fenêtre minimisée ou masquée, eframe ne fait plus
+    /// aucune passe complète : le délai n'est jamais remis à zéro, toute
+    /// demande suivante est donc jugée redondante et ignorée. L'application
+    /// dort alors jusqu'au prochain événement système — 3 min 25 mesurées
+    /// entre un clic sur « Quitter » et sa prise en compte.
+    ///
+    /// Poster un message à la fenêtre contourne entièrement cette
+    /// comptabilité : winit sort de son attente et eframe refait une passe,
+    /// qui dépile la file du tray.
+    pub(crate) fn wake_event_loop() {
+        let Some(hwnd) = handle() else {
+            return;
+        };
+        // SAFETY : `hwnd` est la fenêtre vivante de l'application.
+        //
+        // `RDW_INTERNALPAINT` met un `WM_PAINT` en file sans invalider la
+        // moindre région : winit le traduit en `RedrawRequested`, dont eframe
+        // fait toujours une passe — c'est ce qui dépile le tray. Le `WM_NULL`
+        // qui suit ne sert qu'à sortir la boucle de son attente dans les états
+        // où Windows ne délivre pas de `WM_PAINT` (fenêtre minimisée).
+        unsafe {
+            RedrawWindow(
+                hwnd,
+                std::ptr::null(),
+                std::ptr::null_mut(),
+                RDW_INTERNALPAINT,
+            );
+            PostMessageW(hwnd, WM_NULL, 0, 0);
+        }
     }
 
     /// Replie la fenêtre : mémorise sa position, la passe en style « outil »

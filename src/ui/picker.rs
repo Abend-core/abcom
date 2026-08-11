@@ -12,7 +12,21 @@
 
 use std::future::Future;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
+
+/// Un sélecteur natif est présenté et attend une réponse.
+///
+/// La fenêtre native n'est pas modale au sens de winit : rien n'empêchait un
+/// second clic d'en ouvrir une deuxième par-dessus (ou, sous Windows, derrière
+/// l'application). Les appelants abandonnent leur demande tant que ce drapeau
+/// est levé.
+static OPEN: AtomicBool = AtomicBool::new(false);
+
+/// Vrai tant qu'un sélecteur attend une réponse de l'utilisateur.
+pub(crate) fn is_open() -> bool {
+    OPEN.load(Ordering::Acquire)
+}
 
 /// Ce qu'un sélecteur natif a rendu, appliqué à la frame suivante.
 pub(crate) enum PickerOutcome {
@@ -32,16 +46,23 @@ pub(crate) fn spawn<F>(tx: Sender<PickerOutcome>, ctx: egui::Context, dialog: F)
 where
     F: Future<Output = Option<PickerOutcome>> + Send + 'static,
 {
+    OPEN.store(true, Ordering::Release);
     let spawned = std::thread::Builder::new()
         .name("abcom-picker".into())
         .spawn(move || {
-            if let Some(outcome) = block_on(dialog) {
+            let outcome = block_on(dialog);
+            // Levé avant l'envoi : la frame réveillée par `request_repaint`
+            // doit déjà pouvoir rouvrir un sélecteur. Un abandon (aucun
+            // fichier choisi) le lève tout autant.
+            OPEN.store(false, Ordering::Release);
+            if let Some(outcome) = outcome {
                 if tx.send(outcome).is_ok() {
                     ctx.request_repaint();
                 }
             }
         });
     if spawned.is_err() {
+        OPEN.store(false, Ordering::Release);
         tracing::error!("sélecteur de fichiers : thread indisponible");
     }
 }

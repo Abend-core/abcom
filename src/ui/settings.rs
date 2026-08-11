@@ -67,19 +67,9 @@ impl AbcomApp {
         const SETTINGS_SIZE: egui::Vec2 = egui::vec2(640.0, 480.0);
 
         let mut open = self.modals.settings_open;
-        egui::Window::new(title)
-            .open(&mut open)
-            .resizable(false)
-            .collapsible(false)
-            .fixed_size(SETTINGS_SIZE)
-            .anchor(egui::Align2::CENTER_CENTER, egui::vec2(0.0, 0.0))
-            .show(ctx, |ui| {
-                // `fixed_size` borne la zone disponible mais, la fenêtre n'étant
-                // pas redimensionnable, egui la rétracterait à la hauteur du
-                // contenu. On force donc le contenu à remplir toute la zone pour
-                // que la fenêtre garde la même taille sur tous les onglets.
-                ui.set_min_size(ui.available_size());
-
+        super::dialog::Modal::new("settings_modal", title, self.t(i18n::FERMER), SETTINGS_SIZE.x)
+            .height(SETTINGS_SIZE.y)
+            .show(ctx, &mut open, |ui| {
                 // Bandeau d'onglets
                 ui.horizontal(|ui| {
                     for (tab, label) in [
@@ -253,6 +243,54 @@ impl AbcomApp {
                                         m.peers_seen,
                                     );
                                     ui.label(egui::RichText::new(line).small().weak());
+                                }
+                                ui.end_row();
+
+                                // Mémoire : le tas Rust d'un côté, le reste du
+                                // processus de l'autre (pilote graphique et
+                                // textures GPU, hors de notre allocateur), plus
+                                // ce que pèsent les textures egui elles-mêmes.
+                                ui.label(egui::RichText::new(self.t(i18n::MEMOIRE)).strong());
+                                {
+                                    let m = crate::metrics::memory();
+                                    let (textures, texture_count) = egui_texture_bytes(ctx);
+                                    let caches = egui_loader_bytes(ctx);
+                                    let mo = |bytes: u64| format!("{:.0} Mo", bytes as f64 / 1e6);
+                                    let atlas = ctx.fonts(|f| f.font_image_size());
+                                    let line = format!(
+                                        "{} {} ({} {}) · {} {} ({}) · {} {} · {} {}×{} · {} {} ({} {})",
+                                        self.t(i18n::TAS),
+                                        mo(m.heap),
+                                        self.t(i18n::PIC),
+                                        mo(m.heap_peak),
+                                        self.t(i18n::TEXTURES),
+                                        mo(textures),
+                                        texture_count,
+                                        self.t(i18n::CACHES_IMAGES),
+                                        mo(caches),
+                                        self.t(i18n::ATLAS_POLICE),
+                                        atlas[0],
+                                        atlas[1],
+                                        self.t(i18n::PROCESSUS),
+                                        mo(m.rss),
+                                        self.t(i18n::PIC),
+                                        mo(m.rss_peak),
+                                    );
+                                    ui.vertical(|ui| {
+                                        ui.label(egui::RichText::new(line).small().weak());
+                                        // Distingue la mémoire vivante de celle
+                                        // que l'allocateur retient : si le tas
+                                        // chute après ce bouton, il n'y avait
+                                        // rien à corriger dans notre code.
+                                        if ui
+                                            .small_button(self.t(i18n::LIBERER_LA_MEMOIRE))
+                                            .clicked()
+                                        {
+                                            self.emoji.textures.clear();
+                                            ctx.forget_all_images();
+                                            crate::ui::release_memory_to_os();
+                                        }
+                                    });
                                 }
                                 ui.end_row();
                             });
@@ -519,4 +557,45 @@ impl AbcomApp {
             self.broadcast_my_avatar();
         }
     }
+}
+
+/// Poids des textures vivantes d'egui (atlas de police, emojis, avatars,
+/// aperçus d'images et de GIF) et leur nombre.
+///
+/// Compté sur la taille logique en pixels : c'est ce qui est téléversé au GPU,
+/// et l'ordre de grandeur suffit à savoir si le poids du processus vient de là.
+fn egui_texture_bytes(ctx: &egui::Context) -> (u64, usize) {
+    let manager = ctx.tex_manager();
+    let manager = manager.read();
+    let total = manager
+        .allocated()
+        .map(|(_, meta)| (meta.size[0] * meta.size[1] * meta.bytes_per_pixel) as u64)
+        .sum();
+    (total, manager.num_allocated())
+}
+
+/// Poids des caches de chargement d'egui : octets bruts téléchargés, images
+/// décodées et trames de GIF. Ils vivent en RAM en plus des textures GPU, et
+/// rien ne les borne — d'où leur place dans le diagnostic.
+fn egui_loader_bytes(ctx: &egui::Context) -> u64 {
+    let loaders = ctx.loaders();
+    let bytes: usize = loaders
+        .bytes
+        .lock()
+        .iter()
+        .map(|loader| loader.byte_size())
+        .sum();
+    let images: usize = loaders
+        .image
+        .lock()
+        .iter()
+        .map(|loader| loader.byte_size())
+        .sum();
+    let textures: usize = loaders
+        .texture
+        .lock()
+        .iter()
+        .map(|loader| loader.byte_size())
+        .sum();
+    (bytes + images + textures) as u64
 }
