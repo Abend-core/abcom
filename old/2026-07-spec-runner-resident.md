@@ -1,4 +1,4 @@
-> [🏠 Accueil](../README.md) > [🛰 Runner résident](09-runner-resident.md)
+> [🏠 Accueil](../README.md) > [🛰 Runner résident](2026-07-spec-runner-resident.md)
 
 > 📅 **Généré le** : 2026-07-04 — spécification validée avec l'utilisateur avant réalisation
 > 🔖 **Décisions actées** : un seul processus (fenêtre cachée) · notifications réglables avec aperçu par défaut · autostart activé par défaut en release · GIFs en pause hors focus (approche fiable uniquement)

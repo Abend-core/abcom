@@ -119,7 +119,7 @@ fn only_typing_indicators_may_be_dropped() {
         }),
         NetworkPacket::Group(GroupEvent {
             action: GroupAction::Delete {
-                group_name: "projet".into(),
+                group_id: "projet".into(),
             },
         }),
     ];

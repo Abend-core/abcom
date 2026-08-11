@@ -1,4 +1,4 @@
-> [🏠 Accueil](../README.md) > [⚡ Audit performance & mémoire](06-audit-performance.md)
+> [🏠 Accueil](../README.md) > [⚡ Audit performance & mémoire](2026-07-audit-performance.md)
 
 > 📅 **Généré le** : 2026-07-04 (passe 2 : vérification complète + décisions actées)
 > 🔖 **Stack analysée** : Rust 2021, tokio 1, eframe/egui 0.31, egui_extras (image/http/gif/webp), image 0.25, resvg 0.47, rodio 0.19
@@ -28,7 +28,7 @@ disque, tout en restant parfaitement utilisable au premier plan.
 | Threads | **15** | idem |
 | Disque | valeur à reporter | — |
 
-➡️ Plan d'exécution détaillé : [07-plan-optimisation.md](07-plan-optimisation.md).
+➡️ Plan d'exécution détaillé : [07-plan-optimisation.md](2026-07-plan-optimisation.md).
 
 **Objectifs validés** (décision n°1) :
 - CPU ~0 % au repos (aucun repaint sans événement) ;

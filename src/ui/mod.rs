@@ -25,6 +25,7 @@ mod input_bar;
 mod markdown;
 mod media;
 mod outbound;
+mod picker;
 mod reactions;
 mod search;
 mod settings;
@@ -79,6 +80,9 @@ pub(crate) enum GifPickerTab {
 /// typée, le streaming média reste séparé.
 pub(crate) struct NetworkChannels {
     pub(crate) event_rx: mpsc::Receiver<AppEvent>,
+    /// Émetteur d'événements pour le travail lourd déporté hors du thread UI
+    /// (copie d'un média vers Téléchargements), qui doit rendre son verdict.
+    pub(crate) event_tx: mpsc::Sender<AppEvent>,
     pub(crate) send_tx: mpsc::Sender<NetworkSendRequest>,
     pub(crate) send_media_tx: mpsc::Sender<MediaSendJob>,
 }
@@ -119,6 +123,7 @@ impl NetworkChannels {
 /// Canaux créés par le runtime et transférés en bloc à l'interface.
 pub struct UiRuntimeChannels {
     pub event_rx: mpsc::Receiver<AppEvent>,
+    pub event_tx: mpsc::Sender<AppEvent>,
     pub send_tx: mpsc::Sender<NetworkSendRequest>,
     pub send_media_tx: mpsc::Sender<MediaSendJob>,
     pub media_offer_rx: mpsc::Receiver<MediaStreamOffer>,
@@ -246,7 +251,7 @@ pub(crate) struct MediaState {
     pub(crate) textures: std::collections::HashMap<String, Option<egui::TextureHandle>>,
     /// Identifiant du média affiché en grand dans la visionneuse (None = fermée).
     pub(crate) viewer: Option<String>,
-    /// Réception des offres de médias volumineux (> 1 Go) à accepter/refuser.
+    /// Réception des offres de médias volumineux (au-delà du seuil d'accord) à accepter/refuser.
     pub(crate) offer_rx: mpsc::Receiver<MediaStreamOffer>,
     /// Offres de médias volumineux en attente de décision (bandeau).
     pub(crate) pending_offers: Vec<MediaStreamOffer>,
@@ -298,7 +303,12 @@ pub(crate) struct AbcomApp {
     pub(crate) emoji: EmojiPickerState,
     pub(crate) modals: ModalsState,
     pub(crate) last_typing_broadcast: std::time::Instant,
+    /// Accusés prêts mais retenus jusqu'au commit du message correspondant
+    /// (cf. `AppEvent::MessagesPersisted`), par hash.
+    pub(crate) pending_acks: std::collections::HashMap<u64, Vec<NetworkSendRequest>>,
     pub(crate) last_retry_time: std::time::Instant,
+    /// Dernier passage du GC du cache média (cf. `MEDIA_GC_INTERVAL`).
+    pub(crate) last_media_gc: std::time::Instant,
     pub(crate) muted_conversations: std::collections::HashSet<Option<String>>,
     /// 0 = none, 1 = pick files, 2 = pick folder (deferred to next frame to avoid AppKit conflict)
     pub(crate) pending_picker: u8,
@@ -356,6 +366,10 @@ pub(crate) struct AbcomApp {
     /// Accusés déjà émis par destinataire : sans ce mémo, chaque ouverture rediffusait toute la fenêtre.
     pub(crate) read_receipts_sent:
         std::collections::HashMap<String, std::collections::HashSet<u64>>,
+    /// Verdicts des sélecteurs de fichiers natifs, qui vivent hors du thread
+    /// de rendu (cf. `picker`).
+    pub(crate) picker_tx: std::sync::mpsc::Sender<picker::PickerOutcome>,
+    picker_rx: std::sync::mpsc::Receiver<picker::PickerOutcome>,
 }
 
 impl AbcomApp {
@@ -376,6 +390,7 @@ impl AbcomApp {
             .map(|(i, ch)| (ch.clone(), i))
             .collect();
         let (alias_to_char, aliases) = emoji_picker::build_emoji_shortcode_index(&characters);
+        let (picker_tx, picker_rx) = std::sync::mpsc::channel();
         // Préférences persistées (table kv).
         let (notif_preview, autostart_enabled) = {
             let s = state.lock_safe();
@@ -391,6 +406,7 @@ impl AbcomApp {
             psk_active,
             net: NetworkChannels {
                 event_rx: channels.event_rx,
+                event_tx: channels.event_tx,
                 send_tx: channels.send_tx,
                 send_media_tx: channels.send_media_tx,
             },
@@ -458,7 +474,9 @@ impl AbcomApp {
                 key_mismatch: None,
             },
             last_typing_broadcast: std::time::Instant::now(),
+            pending_acks: std::collections::HashMap::new(),
             last_retry_time: std::time::Instant::now(),
+            last_media_gc: std::time::Instant::now(),
             muted_conversations: std::collections::HashSet::new(),
             pending_picker: 0,
             ui_language: UiLanguage::French,
@@ -492,6 +510,8 @@ impl AbcomApp {
             search: SearchState::default(),
             trust: channels.trust,
             read_receipts_sent: std::collections::HashMap::new(),
+            picker_tx,
+            picker_rx,
         }
     }
 
@@ -635,11 +655,10 @@ impl AbcomApp {
             let hash = crate::app::AppState::message_hash(m);
             for (recipient, addr) in s.receipt_recipients(m) {
                 // Delta : ce destinataire a-t-il déjà reçu cet accusé ?
-                if !self
+                if self
                     .read_receipts_sent
-                    .entry(recipient.clone())
-                    .or_default()
-                    .insert(hash)
+                    .get(&recipient)
+                    .is_some_and(|sent| sent.contains(&hash))
                 {
                     continue;
                 }
@@ -658,7 +677,17 @@ impl AbcomApp {
         drop(s);
 
         for req in receipts {
-            self.net.try_send(req);
+            let recipient = req.to_peer.clone();
+            let hash = req.receipt.message_hash;
+            // Marqué envoyé seulement si l'émission aboutit : l'inscrire avant
+            // condamnait l'accusé à ne jamais partir dès que la file d'envoi
+            // était pleine, puisqu'il était alors considéré comme déjà remis.
+            if self.net.try_send(req) {
+                self.read_receipts_sent
+                    .entry(recipient)
+                    .or_default()
+                    .insert(hash);
+            }
         }
     }
 }
@@ -717,6 +746,51 @@ impl AbcomApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         self.chat_cache.invalidate();
         ctx.request_repaint();
+    }
+
+    /// Applique ce que les sélecteurs natifs ont rendu depuis la dernière
+    /// frame. Le décodage d'un avatar a lieu ici, sur le thread de l'UI :
+    /// l'image est petite et l'état qu'elle met à jour n'est pas partagé.
+    fn apply_picker_outcomes(&mut self) {
+        while let Ok(outcome) = self.picker_rx.try_recv() {
+            match outcome {
+                picker::PickerOutcome::Attachments(paths) => {
+                    let label = if paths.len() == 1 && paths[0].is_dir() {
+                        self.t(i18n::DOSSIER_AJOUTE)
+                    } else {
+                        self.t(i18n::FICHIERS_AJOUTES)
+                    };
+                    for path in paths {
+                        if !self.composer.pending_attachments.contains(&path) {
+                            self.composer.pending_attachments.push(path);
+                        }
+                    }
+                    self.last_notification = Some(label.to_string());
+                    self.notification_time = std::time::Instant::now();
+                }
+                picker::PickerOutcome::Export(path) => {
+                    // Pas de notification ici : l'écriture est asynchrone et son
+                    // verdict revient par `AppEvent::ConversationExported`.
+                    self.state.lock_safe().export_selected_conversation(path);
+                }
+                picker::PickerOutcome::Avatar(path) => {
+                    match avatar::load_normalized_avatar(&path) {
+                        Ok(png) => {
+                            let my_name = self.state.lock_safe().my_username.clone();
+                            self.state.lock_safe().set_my_avatar(png);
+                            self.avatar_textures.remove(&my_name);
+                            self.broadcast_my_avatar();
+                        }
+                        Err(e) => {
+                            tracing::warn!("avatar non chargé : {}", e);
+                            self.last_notification =
+                                Some(self.t(i18n::IMAGE_DE_PROFIL_INVALIDE).to_string());
+                            self.notification_time = std::time::Instant::now();
+                        }
+                    }
+                }
+            }
+        }
     }
 
     /// Notification système native (fenêtre cachée/minimisée). Envoyée d'un
@@ -789,7 +863,20 @@ impl eframe::App for AbcomApp {
             self.hide_to_tray(ctx);
         }
 
+        let was_focused = self.window_focused;
         self.window_focused = !self.window_hidden && ctx.input(|i| i.focused);
+        // Retour du focus : les messages arrivés pendant que la fenêtre était
+        // en arrière-plan viennent d'être lus. Sans ce rattrapage, un message
+        // reçu juste avant le clic ne recevait son accusé de lecture qu'après
+        // avoir quitté la conversation et y être revenu — `switch_conversation`
+        // était le seul déclencheur.
+        if self.window_focused && !was_focused {
+            let conv = self.state.lock_safe().selected_conversation.clone();
+            self.send_read_receipts_for_conversation(conv.clone());
+            if let Some(conv) = conv {
+                self.state.lock_safe().mark_conversation_read(&conv);
+            }
+        }
         self.process_events();
         self.process_media_offers();
         self.periodic_tasks();
@@ -853,39 +940,41 @@ impl eframe::App for AbcomApp {
             ));
         }
 
-        // Handle deferred native file/folder picker (must run before egui rendering to
-        // avoid conflicting with the AppKit run-loop on macOS).
+        // Verdicts des sélecteurs natifs ouverts aux frames précédentes.
+        self.apply_picker_outcomes();
+
+        // Ouverture d'un sélecteur de fichiers ou de dossier. La fenêtre native
+        // est présentée ici, sur le thread de l'UI ; l'attente, elle, part
+        // ailleurs (cf. `picker`) — la bloquer ici tuait l'application.
         if self.pending_picker != 0 {
             let kind = self.pending_picker;
             self.pending_picker = 0;
-            let (files_title, folder_title, files_added, folder_added) = (
+            let (files_title, folder_title) = (
                 self.t(i18n::AJOUTER_DES_FICHIERS),
                 self.t(i18n::AJOUTER_UN_DOSSIER),
-                self.t(i18n::FICHIERS_AJOUTES),
-                self.t(i18n::DOSSIER_AJOUTE),
             );
             match kind {
                 1 => {
-                    if let Some(paths) = rfd::FileDialog::new().set_title(files_title).pick_files()
-                    {
-                        for p in paths {
-                            if !self.composer.pending_attachments.contains(&p) {
-                                self.composer.pending_attachments.push(p);
-                            }
-                        }
-                        self.last_notification = Some(files_added.to_string());
-                        self.notification_time = std::time::Instant::now();
-                    }
+                    let dialog = rfd::AsyncFileDialog::new()
+                        .set_title(files_title)
+                        .pick_files();
+                    picker::spawn(self.picker_tx.clone(), ctx.clone(), async move {
+                        let files = dialog.await?;
+                        Some(picker::PickerOutcome::Attachments(
+                            files.iter().map(|f| f.path().to_path_buf()).collect(),
+                        ))
+                    });
                 }
                 2 => {
-                    if let Some(path) = rfd::FileDialog::new().set_title(folder_title).pick_folder()
-                    {
-                        if !self.composer.pending_attachments.contains(&path) {
-                            self.composer.pending_attachments.push(path);
-                        }
-                        self.last_notification = Some(folder_added.to_string());
-                        self.notification_time = std::time::Instant::now();
-                    }
+                    let dialog = rfd::AsyncFileDialog::new()
+                        .set_title(folder_title)
+                        .pick_folder();
+                    picker::spawn(self.picker_tx.clone(), ctx.clone(), async move {
+                        let folder = dialog.await?;
+                        Some(picker::PickerOutcome::Attachments(vec![folder
+                            .path()
+                            .to_path_buf()]))
+                    });
                 }
                 _ => {}
             }
@@ -911,11 +1000,10 @@ impl eframe::App for AbcomApp {
             self.notification_time = std::time::Instant::now();
         }
 
-        // Export de conversation : même report que les autres sélecteurs natifs.
+        // Export de conversation : même sélecteur asynchrone que les autres.
         if self.pending_export {
             self.pending_export = false;
             let title = self.t(i18n::EXPORTER_LA_CONVERSATION);
-            let done = self.t(i18n::CONVERSATION_EXPORTEE);
             let name = {
                 let state = self.state.lock_safe();
                 match &state.selected_conversation {
@@ -923,44 +1011,29 @@ impl eframe::App for AbcomApp {
                     None => "tous".to_string(),
                 }
             };
-            if let Some(path) = rfd::FileDialog::new()
+            let dialog = rfd::AsyncFileDialog::new()
                 .set_title(title)
                 .set_file_name(format!("abcom-{name}.txt"))
-                .save_file()
-            {
-                self.state.lock_safe().export_selected_conversation(path);
-                self.last_notification = Some(done.to_string());
-                self.notification_time = std::time::Instant::now();
-            }
+                .save_file();
+            picker::spawn(self.picker_tx.clone(), ctx.clone(), async move {
+                Some(picker::PickerOutcome::Export(
+                    dialog.await?.path().to_path_buf(),
+                ))
+            });
         }
 
-        // Sélection de l'image de profil (différée comme les autres sélecteurs
-        // natifs pour éviter un conflit avec la run-loop AppKit sur macOS).
+        // Sélection de l'image de profil.
         if self.pending_avatar_pick {
             self.pending_avatar_pick = false;
-            let (pick_title, error_msg) = (
-                self.t(i18n::CHOISIR_UNE_IMAGE_DE_PROFIL),
-                self.t(i18n::IMAGE_DE_PROFIL_INVALIDE),
-            );
-            if let Some(path) = rfd::FileDialog::new()
-                .set_title(pick_title)
+            let dialog = rfd::AsyncFileDialog::new()
+                .set_title(self.t(i18n::CHOISIR_UNE_IMAGE_DE_PROFIL))
                 .add_filter("Images", &["png", "jpg", "jpeg", "svg"])
-                .pick_file()
-            {
-                match avatar::load_normalized_avatar(&path) {
-                    Ok(png) => {
-                        let my_name = self.state.lock_safe().my_username.clone();
-                        self.state.lock_safe().set_my_avatar(png);
-                        self.avatar_textures.remove(&my_name);
-                        self.broadcast_my_avatar();
-                    }
-                    Err(e) => {
-                        tracing::warn!("avatar non chargé : {}", e);
-                        self.last_notification = Some(error_msg.to_string());
-                        self.notification_time = std::time::Instant::now();
-                    }
-                }
-            }
+                .pick_file();
+            picker::spawn(self.picker_tx.clone(), ctx.clone(), async move {
+                Some(picker::PickerOutcome::Avatar(
+                    dialog.await?.path().to_path_buf(),
+                ))
+            });
         }
 
         // Avant les panneaux : une combinaison consommée ici ne sera pas
@@ -1001,7 +1074,12 @@ impl eframe::App for AbcomApp {
     /// Flush final du stockage : attend que toutes les écritures en file
     /// soient appliquées avant la fermeture.
     fn on_exit(&mut self) {
-        self.state.lock_safe().flush_storage();
+        if let Err(error) = self.state.lock_safe().flush_storage() {
+            // Dernier instant utile : la fenêtre se ferme, il n'y a plus d'UI
+            // pour prévenir. Le journal garde la trace de ce qui n'a pas été
+            // écrit, au lieu de laisser croire à une sauvegarde réussie.
+            tracing::error!("historique non sauvegardé : {error}");
+        }
     }
 }
 
@@ -1009,20 +1087,82 @@ impl eframe::App for AbcomApp {
 /// egui ne synthétise pas le gras : on charge une vraie police pour les noms.
 pub(crate) const BOLD_FAMILY: &str = "bold";
 
-/// Définitions de polices : on conserve les polices par défaut et on ajoute
-/// Inter Bold (OFL) sous la famille [`BOLD_FAMILY`] pour les noms d'auteur.
+/// Chaîne de polices, dans l'ordre de consultation :
+/// `Noto Sans`, `Noto Sans Symbols 2`, `Inter`, `Unifont`, puis les polices par
+/// défaut d'egui — dont ses deux polices d'emoji — en dernier recours.
+///
+/// Inter y figure parce qu'elle est déjà embarquée pour les noms d'auteur et
+/// qu'elle dessine les flèches `→ ← ↑ ↓`, qu'aucune des deux Noto ne porte :
+/// sans elle, elles retombaient sur le rendu tramé d'Unifont.
+///
+/// Noto Color Emoji en a été retirée après essai : ses glyphes sont des images
+/// CBDT, qu'egui ne sait pas rasteriser. Placée dans la chaîne, elle capte tous
+/// les codets emoji et n'en dessine aucun — `☑`, `✔`, `😀`, `❤️` disparaissaient
+/// purement et simplement, alors que les polices d'emoji d'egui les rendaient
+/// très bien en monochrome. Les emoji des messages, eux, passent de toute façon
+/// par le registre PNG (cf. `EmojiTextures`), en couleur.
+///
+/// Chaque police n'est interrogée que pour ce que les précédentes ne savent
+/// pas dessiner. Sans cette chaîne, tout caractère hors du latin s'affichait en
+/// carré vide : une phrase collée en chinois, en japonais ou en coréen était
+/// illisible d'un bout à l'autre. Unifont ferme la marche — son rendu tramé ne
+/// sert donc que là où le choix est entre « moche » et « rien ».
+const FONT_CHAIN: [&str; 4] = ["noto-sans", "noto-symbols2", "inter-bold", "unifont"];
+
+/// Définitions de polices : la chaîne ci-dessus en tête des familles standard,
+/// et Inter Bold (OFL) sous la famille [`BOLD_FAMILY`] pour les noms d'auteur —
+/// egui ne synthétise pas le gras.
 fn build_fonts() -> egui::FontDefinitions {
     let mut fonts = egui::FontDefinitions::default();
-    fonts.font_data.insert(
-        "inter-bold".to_owned(),
-        Arc::new(egui::FontData::from_static(include_bytes!(
-            "../../assets/fonts/Inter-Bold.ttf"
-        ))),
+    let mut embed = |name: &str, bytes: &'static [u8]| {
+        fonts.font_data.insert(
+            name.to_owned(),
+            Arc::new(egui::FontData::from_static(bytes)),
+        );
+    };
+    embed(
+        "inter-bold",
+        include_bytes!("../../assets/fonts/Inter-Bold.ttf"),
     );
+    embed(
+        "noto-sans",
+        include_bytes!("../../assets/fonts/NotoSans-Regular.ttf"),
+    );
+    embed(
+        "noto-symbols2",
+        include_bytes!("../../assets/fonts/NotoSansSymbols2-Regular.ttf"),
+    );
+    embed("unifont", include_bytes!("../../assets/fonts/Unifont.otf"));
+
+    // Les noms d'auteur méritent le même repli que le reste : un pseudo en
+    // cyrillique ou en japonais ne doit pas se réduire à des carrés.
     fonts.families.insert(
         egui::FontFamily::Name(BOLD_FAMILY.into()),
-        vec!["inter-bold".to_owned()],
+        std::iter::once("inter-bold".to_owned())
+            .chain(
+                FONT_CHAIN
+                    .iter()
+                    .filter(|name| **name != "inter-bold")
+                    .map(|name| (*name).to_owned()),
+            )
+            .collect(),
     );
+    // Proportionnel : Noto Sans devient la police de texte. Monospace : Hack
+    // reste en tête, la chaîne ne sert qu'en repli.
+    for (family, prepend) in [
+        (egui::FontFamily::Proportional, true),
+        (egui::FontFamily::Monospace, false),
+    ] {
+        let existing = fonts.families.entry(family).or_default();
+        let chain = FONT_CHAIN.iter().map(|name| (*name).to_owned());
+        if prepend {
+            let defaults = std::mem::take(existing);
+            existing.extend(chain);
+            existing.extend(defaults);
+        } else {
+            existing.extend(chain);
+        }
+    }
     fonts
 }
 
@@ -1203,3 +1343,7 @@ fn set_dock_visible(_visible: bool) {}
 #[cfg(test)]
 #[path = "../tests/test_ui_app.rs"]
 mod app_tests;
+
+#[cfg(test)]
+#[path = "../tests/test_ui_fonts.rs"]
+mod font_tests;

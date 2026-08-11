@@ -1,6 +1,6 @@
-> [🏠 Accueil](../README.md) > [🔁🔐 Seconde passe & sécurisation](08-seconde-passe-et-securisation.md)
+> [🏠 Accueil](../README.md) > [🔁🔐 Seconde passe & sécurisation](2026-07-seconde-passe-et-securisation.md)
 
-> 📅 **Généré le** : 2026-07-04 — après l'implémentation des phases A/B/C du [plan d'optimisation](07-plan-optimisation.md)
+> 📅 **Généré le** : 2026-07-04 — après l'implémentation des phases A/B/C du [plan d'optimisation](2026-07-plan-optimisation.md)
 > 🔖 **Base auditée** : code post-optimisation (réveil par événement, caches dérivés, fenêtrage, éviction textures, GC média, persistance débouncée)
 > 🔄 **À régénérer si** : migration SQLite réalisée, passage aux connexions persistantes, implémentation du chiffrement
 
@@ -60,7 +60,7 @@ version) est rejeté proprement au handshake.
 
 Ce document fait trois choses :
 1. **§2 — le reste à faire** : tout ce qui a été détecté dans les audits
-   précédents ([06](06-audit-performance.md), [07](07-plan-optimisation.md))
+   précédents ([06](2026-07-audit-performance.md), [07](2026-07-plan-optimisation.md))
    et qui n'est **pas encore implémenté** ;
 2. **§3 — les nouvelles détections** de cette seconde passe (dont des effets
    secondaires des optimisations de la passe 1) ;
@@ -86,7 +86,7 @@ Ce document fait trois choses :
 ## 2. Déjà détecté, pas encore fait
 
 Par ordre d'impact décroissant. Les références renvoient aux constats de
-[06-audit-performance.md](06-audit-performance.md).
+[06-audit-performance.md](2026-07-audit-performance.md).
 
 | # | Sujet | Référence | Impact | Effort |
 |---|---|---|---|---|

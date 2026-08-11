@@ -110,6 +110,7 @@ fn read_marks_groups_and_peers_round_trip() {
     storage.set_read_mark("bob", 9).unwrap(); // upsert
 
     let group = Group {
+        id: "equipe".to_string(),
         name: "equipe".to_string(),
         owner: "alice".to_string(),
         members: vec!["alice".to_string(), "bob".to_string()],
@@ -288,6 +289,7 @@ fn reaction_and_group_replacements_are_atomic() {
     assert!(storage.replace_reactions(42, &[rejected_reaction]).is_err());
 
     let original_group = Group {
+        id: "original".to_string(),
         name: "original".to_string(),
         owner: "alice".to_string(),
         members: vec!["alice".to_string()],
@@ -305,6 +307,7 @@ fn reaction_and_group_replacements_are_atomic() {
         )
         .unwrap();
     let rejected_group = Group {
+        id: "rejected".to_string(),
         name: "rejected".to_string(),
         ..original_group
     };
@@ -402,6 +405,7 @@ fn failed_legacy_import_rolls_back_and_keeps_sources() {
     )
     .unwrap();
     let duplicate = Group {
+        id: "duplicate".to_string(),
         name: "duplicate".to_string(),
         owner: "alice".to_string(),
         members: vec!["alice".to_string()],
@@ -429,6 +433,7 @@ fn failed_legacy_import_rolls_back_and_keeps_sources() {
     std::fs::write(
         dir.join("groups.json"),
         serde_json::to_string(&vec![Group {
+            id: "fixed".to_string(),
             name: "fixed".to_string(),
             owner: "alice".to_string(),
             members: vec!["alice".to_string()],
@@ -699,4 +704,114 @@ fn search_index_is_backfilled_for_existing_history() {
 
     let storage = Storage::open(&dir).unwrap();
     assert_eq!(storage.search("historique", 50).unwrap().len(), 1);
+}
+
+#[test]
+fn migration_moves_group_conversations_to_ids() {
+    let dir = tmp_dir("group-ids");
+    let group = Group {
+        // Salon hérité : enregistré sans identifiant.
+        id: String::new(),
+        name: "equipe".to_string(),
+        owner: "alice".to_string(),
+        members: vec!["alice".to_string(), "bob".to_string()],
+        created_at: "2026-07-04 10:00:00".to_string(),
+    };
+    let expected_id = Group::derived_id(&group.owner, &group.created_at, &group.name);
+    let old_key = format!("#{}", group.name);
+    let new_key = format!("#{expected_id}");
+
+    let message = msg("bob", Some(&old_key), "salut l'equipe", 42);
+    let old_hash = AppState::message_hash(&message) as i64;
+
+    // Base au format v1 : clé de conversation bâtie sur le nom.
+    {
+        let mut storage = Storage::open(&dir).unwrap();
+        storage
+            .replace_groups(std::slice::from_ref(&group))
+            .unwrap();
+        storage.insert_message(&message).unwrap();
+        storage
+            .replace_reactions(
+                old_hash as u64,
+                &[ReactionEntry {
+                    emoji: "👍".to_string(),
+                    users: vec!["bob".to_string()],
+                }],
+            )
+            .unwrap();
+        storage
+            .add_receipt(old_hash as u64, "bob", super::ReceiptKind::Read)
+            .unwrap();
+        storage.set_read_mark(&old_key, old_hash as u64).unwrap();
+        storage.set_user_version(1).unwrap();
+    }
+
+    // Réouverture : la migration v2 s'applique.
+    let storage = Storage::open(&dir).unwrap();
+    let loaded = storage.load_all(INITIAL_WINDOW).unwrap();
+
+    // Le salon porte désormais son identifiant, sans changer de nom.
+    assert_eq!(loaded.groups[0].id, expected_id);
+    assert_eq!(loaded.groups[0].name, "equipe");
+
+    // L'historique a suivi, et son hash a été recalculé sur la nouvelle clé.
+    let migrated = &loaded.messages[0];
+    assert_eq!(migrated.to_user.as_deref(), Some(new_key.as_str()));
+    let new_hash = AppState::message_hash(migrated);
+    assert_ne!(
+        new_hash as i64, old_hash,
+        "la clé change, donc le hash aussi"
+    );
+
+    // Réaction, accusé et repère de lecture pointent vers le nouveau hash :
+    // c'est exactement ce qu'un renommage cassait auparavant.
+    assert_eq!(
+        loaded.reactions.get(&new_hash).map(|r| r.len()),
+        Some(1),
+        "la réaction doit avoir suivi le nouveau hash"
+    );
+    assert!(
+        loaded.read_receipts.contains_key(&new_hash),
+        "l'accusé de lecture doit avoir suivi le nouveau hash"
+    );
+    assert_eq!(loaded.read_marks.get(&new_key), Some(&new_hash));
+}
+
+#[test]
+fn deleting_a_conversation_takes_its_reactions_and_receipts_with_it() {
+    let dir = tmp_dir("delete-cascade");
+    let mut storage = Storage::open(&dir).unwrap();
+
+    let doomed = msg("bob", Some("me"), "à effacer", 1);
+    let kept = msg("carol", Some("me"), "à garder", 2);
+    let doomed_hash = AppState::message_hash(&doomed);
+    let kept_hash = AppState::message_hash(&kept);
+    storage.insert_message(&doomed).unwrap();
+    storage.insert_message(&kept).unwrap();
+
+    for hash in [doomed_hash, kept_hash] {
+        storage
+            .replace_reactions(
+                hash,
+                &[ReactionEntry {
+                    emoji: "👍".to_string(),
+                    users: vec!["me".to_string()],
+                }],
+            )
+            .unwrap();
+        storage
+            .add_receipt(hash, "me", super::ReceiptKind::Read)
+            .unwrap();
+    }
+
+    storage.delete_conversation("me", Some("bob")).unwrap();
+
+    let loaded = storage.load_all(INITIAL_WINDOW).unwrap();
+    // La conversation effacée n'a rien laissé derrière elle…
+    assert!(!loaded.reactions.contains_key(&doomed_hash));
+    assert!(!loaded.read_receipts.contains_key(&doomed_hash));
+    // …et celle qui reste est intacte.
+    assert!(loaded.reactions.contains_key(&kept_hash));
+    assert!(loaded.read_receipts.contains_key(&kept_hash));
 }

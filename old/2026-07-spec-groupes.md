@@ -1,4 +1,4 @@
-> [🏠 Accueil](../README.md) > [🔗 Groupes](10_groupe.md)
+> [🏠 Accueil](../README.md) > [🔗 Groupes](2026-07-spec-groupes.md)
 
 > 📅 **Généré le** : 2026-07-05 — Phase 10 du projet
 > 🔖 **Décisions actées** : messages de salon adressés aux seuls membres · clé de conversation `#<nom>` · succession du propriétaire au départ · départ = effacement de l'historique local, conservation attribuée chez les autres
@@ -136,7 +136,7 @@ propriétaire fait foi.
 
 ## 4. Messagerie de salon
 
-### 4.1 Envoi ([src/ui/input_bar.rs](../src/ui/input_bar.rs))
+### 4.1 Envoi ([src/ui/input_bar.rs](../src/ui/input_bar/mod.rs))
 
 Conversation `#nom` sélectionnée → le message part vers
 `group_member_addrs(nom)` : **les membres en ligne du groupe, et personne
@@ -280,7 +280,7 @@ Rejouer : `cargo test app::groups` (ou `cargo test` complet — 226 verts).
 - **Pas d'authentification du rôle dans le protocole** : un pair modifié
   pourrait forger un événement de groupe (le transport, lui, est authentifié
   par Noise + PSK de salon éventuel). Cohérent avec le modèle de menace
-  actuel (réseau local de confiance, cf. [04-securite-globale.md](04-securite-globale.md)).
+  actuel (réseau local de confiance, cf. [04-securite-globale.md](2026-04-securite-globale.md)).
 - **Pas de réémission** : un membre hors ligne manque les messages émis
   pendant son absence (les mutations de membres, elles, sont rattrapées par
   le propriétaire, §3.3). Piste : journal par salon avec offset par membre.

@@ -36,21 +36,7 @@ impl AppState {
     /// même seconde restent distincts. Le nonce n'est ajouté que s'il est
     /// présent, pour ne pas changer le hash des messages déjà persistés.
     pub fn message_hash(msg: &ChatMessage) -> u64 {
-        let key = format!(
-            "{}:{}:{}:{}:{}{}",
-            msg.from,
-            msg.to_user.as_deref().unwrap_or("broadcast"),
-            msg.timestamp_epoch.unwrap_or(0),
-            msg.content,
-            msg.media.as_ref().map(|m| m.id.as_str()).unwrap_or(""),
-            msg.nonce.map(|n| format!(":{n}")).unwrap_or_default()
-        );
-        let mut hash: u64 = 14_695_981_039_346_656_037;
-        for byte in key.bytes() {
-            hash ^= byte as u64;
-            hash = hash.wrapping_mul(1_099_511_628_211);
-        }
-        hash
+        msg.stable_hash()
     }
 
     pub fn mark_message_read(&mut self, message_hash: u64, username: String) {
@@ -155,18 +141,25 @@ impl AppState {
     }
 
     /// Messages en attente pour un pair qui revient en ligne, **sans** les
-    /// retirer : ils ne sortent de la file qu'une fois réellement mis en file
-    /// d'envoi, via [`Self::drop_from_outbox`]. Les vider ici les perdrait si
+    /// retirer : ils ne sortent de la file qu'une fois la livraison confirmée,
+    /// via [`Self::drop_from_outbox`]. Les vider plus tôt les perdrait si
     /// l'émission échouait ou si l'application fermait entre-temps.
+    ///
+    /// Ceux déjà confiés au réseau et en attente d'ACK sont écartés : leur
+    /// réémission est du ressort du mécanisme de retry, pas de cette file.
     pub fn outbox_for(&self, peer: &str) -> Vec<(u64, ChatMessage)> {
         self.outbox
             .iter()
-            .filter(|(_, (to, _))| to == peer)
+            .filter(|(hash, (to, _))| to == peer && !self.pending_messages.contains_key(hash))
             .map(|(hash, (_, message))| (*hash, message.clone()))
             .collect()
     }
 
-    /// Retire un message de la file d'attente, une fois son émission acquise.
+    /// Retire un message de la file durable, une fois sa livraison **acquittée**.
+    ///
+    /// Jamais avant : l'admission dans le canal réseau ne garantit ni l'écriture
+    /// sur la socket ni la réception. Un arrêt entre les deux laisserait le
+    /// message uniquement en mémoire, donc sans réémission au redémarrage.
     pub fn drop_from_outbox(&mut self, message_hash: u64) {
         if self.outbox.remove(&message_hash).is_some() {
             self.persist(super::StorageCmd::DequeueOutbox { hash: message_hash });
@@ -174,8 +167,12 @@ impl AppState {
     }
 
     /// Le message attend-il encore le retour en ligne de son destinataire ?
+    ///
+    /// Un message confié au réseau et en attente d'ACK reste dans la file
+    /// durable, mais n'est plus « en attente de reconnexion » pour l'affichage.
     pub fn is_queued_offline(&self, message_hash: u64) -> bool {
         self.outbox.contains_key(&message_hash)
+            && !self.pending_messages.contains_key(&message_hash)
     }
 
     /// Marque un message comme envoyé (en attente d'ACK)
@@ -208,6 +205,9 @@ impl AppState {
             self.failed_messages.remove(&message_hash);
         }
         if pending_matches || failed_matches {
+            // Livraison confirmée : c'est seulement ici que le message quitte
+            // la file durable.
+            self.drop_from_outbox(message_hash);
             self.bump_content();
             true
         } else {

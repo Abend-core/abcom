@@ -18,7 +18,7 @@ Dans les fils multi-participants (« Tous » et salons), chaque auteur a une cou
 
 ## Rédaction et affichage des messages
 
-- **Markdown** : gras, italique, code inline et bloc, liens.
+- **Markdown** : gras, italique, barré, code inline et bloc, citations, listes, tableaux GFM, liens. Seuls les liens `http` et `https` sont rendus cliquables : le contenu d'un message vient du réseau et finit dans le gestionnaire de liens du système.
 - **Emojis** : picker par catégories, recherche, saisie par `:shortcode:` avec menu de suggestions ; un message composé uniquement d'emojis est affiché en grand. Jeu de 323 emojis embarqué dans le binaire.
 - **Réactions** : barre au survol d'un message ; les réactions des autres s'agrègent sous le message et se togglent au clic.
 - **Réponses** : répondre cite le message d'origine (auteur + extrait), cliquable pour y remonter.
@@ -46,9 +46,9 @@ Dans les fils multi-participants (« Tous » et salons), chaque auteur a une cou
 ## Accusés de réception (conversations privées uniquement)
 
 - ✓ : message envoyé.
-- ✓✓ gris : livré — le destinataire renvoie un `Ack` automatique à la réception.
-- ✓✓ bleu : lu — le `ReadReceipt` n'est envoyé que lorsque le destinataire a la conversation ouverte **et** la fenêtre au premier plan (lecture réelle, pas simple réception).
-- Sans `Ack`, le message est retransmis avec un backoff exponentiel (1 s, 2 s, 4 s… plafonné à 32 s).
+- ✓✓ gris : livré — le destinataire renvoie un `Ack` automatique, **une fois le message commité en base** et pas avant. Un accusé dit « je l'ai » : l'émettre dès la mise en file d'écriture aurait laissé l'expéditeur croire son message livré alors qu'un arrêt avant commit l'aurait fait disparaître. Si l'écriture échoue, aucun accusé ne part et l'expéditeur réémet.
+- ✓✓ bleu : lu — le `ReadReceipt` n'est envoyé que lorsque le destinataire a la conversation ouverte **et** la fenêtre au premier plan (lecture réelle, pas simple réception). Le rattrapage est déclenché à l'ouverture d'une conversation **et au retour du focus** : un message arrivé pendant que la fenêtre était en arrière-plan est acquitté dès qu'on clique dessus, sans avoir à quitter la conversation et y revenir.
+- Sans `Ack`, le message est retransmis avec un backoff exponentiel (1 s, 2 s, 4 s… plafonné à 32 s). Un message mis de côté pour un destinataire hors ligne reste dans une **file durable** jusqu'à son accusé : l'admission dans le canal réseau ne garantit ni l'écriture sur la socket ni la réception, et le retirer à ce moment le privait de toute réémission après un arrêt brutal.
 
 Les salons et le fil « Tous » n'ont ni accusés ni retransmission : un reçu par destinataire n'a pas de sémantique claire à N participants (choix assumé, voir [09](09-limites-et-pistes.md)).
 
@@ -87,7 +87,7 @@ Cinq événements (`Create`, `AddMember`, `RemoveMember`, `Rename`, `Delete`) ci
 - **« Quitter, c'est partir »** : celui qui quitte (ou est exclu) perd le salon **et son historique local** (mémoire, base, compteur de lecture) — d'où une confirmation en deux temps qui l'annonce. Chez les membres restants, rien ne change : les messages de l'ex-membre restent affichés et attribués. Réécrire le passé chez les autres serait à la fois trompeur et inapplicable en pair-à-pair.
 - **Suppression** par le propriétaire : chaque membre purge salon et historique.
 - Un membre hors ligne au moment d'un envoi **ne recevra pas ce message** (pas de file de réémission ; les mutations de membres, elles, sont rattrapées par le propriétaire).
-- Le renommage existe dans le protocole (avec migration d'historique) mais n'a pas encore de bouton dans l'UI.
+- Le renommage existe dans le protocole mais n'a pas encore de bouton dans l'UI. Il ne coûte plus rien depuis que les salons portent un identifiant immuable : le nom n'est qu'un libellé, l'historique et les hashs ne bougent pas.
 
 ### UI
 
@@ -95,8 +95,8 @@ Création par le `+` de la barre latérale (validation du nom en direct, cases �
 
 ## Fichiers et médias
 
-- **Envoi** : fichier ou dossier (compressé en ZIP à la volée, [archive.rs](../src/archive.rs)), vers un pair ou les membres d'un salon. Aucune limite pratique de taille (streaming par tranches de 60 Ko, accepté au-delà de 1 Go).
-- **Acceptation** : au-delà de 1 Go, le destinataire reçoit une proposition qu'il accepte ou refuse (sans réponse sous 120 s, le transfert est abandonné) ; en deçà, la réception est automatique. Progression affichée des deux côtés. Le fichier reçu est rangé par l'application dans son dossier `media/` ; depuis la visionneuse, le bouton « ⬇ Télécharger » en dépose une copie dans le dossier Téléchargements du système.
+- **Envoi** : fichier ou dossier (compressé en ZIP à la volée, [archive.rs](../src/archive.rs)), vers un pair ou les membres d'un salon. Streaming par tranches de 60 Ko, jusqu'à 2 Gio par transfert.
+- **Acceptation** : au-delà de 50 Mo, le destinataire reçoit une proposition qu'il accepte ou refuse (sans réponse sous 120 s, le transfert est abandonné) ; en deçà, la réception est automatique — le seuil borne ce qu'un pair peut écrire sur le disque sans accord explicite. Progression affichée des deux côtés. Le fichier reçu est rangé par l'application dans son dossier `media/` ; depuis la visionneuse, le bouton « ⬇ Télécharger » en dépose une copie dans le dossier Téléchargements du système.
 - **Images** : vignette dans le fil (360×300 max, ratio préservé), visionneuse plein écran au clic.
 - **GIF, mèmes, stickers** : sélecteur Klipy à trois onglets (recherche avec anti-rebond de 300 ms, scroll infini). Le GIF est transmis **par URL** : chaque pair le charge depuis le CDN Klipy. Nécessite la clé `ABCOM_KLIPY_API_KEY` ; sans elle, le bouton GIF affiche une notification au lieu du sélecteur. Attribution « Powered by KLIPY » dans le pied du sélecteur, crédits détaillés dans Paramètres.
 

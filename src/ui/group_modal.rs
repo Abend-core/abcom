@@ -223,11 +223,11 @@ impl AbcomApp {
             let created = {
                 let mut s = self.state.lock_safe();
                 s.create_group(trimmed.clone(), members)
-                    .map(|g| (g.clone(), s.group_member_recipients(&g.name)))
+                    .map(|g| (g.clone(), s.group_member_recipients(&g.id)))
             };
             match created {
                 Some((group, addrs)) => {
-                    let conv = format!("#{}", group.name);
+                    let conv = crate::app::AppState::group_conv_key(&group.id);
                     self.send_group_event(&addrs, GroupAction::Create { group });
                     self.modals.group_modal_open = false;
                     self.modals.group_name_input.clear();
@@ -255,7 +255,7 @@ impl AbcomApp {
     /// suppression (propriétaire) — actions destructrices confirmées en
     /// deux temps.
     pub(crate) fn render_group_manage_modal(&mut self, ctx: &egui::Context) {
-        let Some(group_name) = self.modals.group_manage_target.clone() else {
+        let Some(group_id) = self.modals.group_manage_target.clone() else {
             return;
         };
         // Groupe disparu entre-temps (suppression ou exclusion reçue du
@@ -264,7 +264,7 @@ impl AbcomApp {
             .sidebar_cache
             .groups
             .iter()
-            .find(|g| g.name == group_name)
+            .find(|g| g.id == group_id)
             .cloned()
         else {
             self.modals.group_manage_target = None;
@@ -449,9 +449,9 @@ impl AbcomApp {
                 // Adresses AVANT l'ajout : les membres existants reçoivent
                 // l'AddMember, le nouveau reçoit l'état complet du groupe
                 // (il ne connaît pas encore le salon).
-                let prev_addrs = s.group_member_recipients(&group_name);
-                if s.add_member_to_group(&group_name, user.clone()) {
-                    let updated = s.get_group(&group_name).cloned();
+                let prev_addrs = s.group_member_recipients(&group_id);
+                if s.add_member_to_group(&group_id, user.clone()) {
+                    let updated = s.get_group(&group_id).cloned();
                     let new_addr = s
                         .peers
                         .iter()
@@ -466,7 +466,7 @@ impl AbcomApp {
                 self.send_group_event(
                     &prev_addrs,
                     GroupAction::AddMember {
-                        group_name: group_name.clone(),
+                        group_id: group_id.clone(),
                         username: user,
                     },
                 );
@@ -480,15 +480,15 @@ impl AbcomApp {
             let addrs = {
                 let mut s = self.state.lock_safe();
                 // Adresses AVANT le retrait : l'exclu est prévenu lui aussi.
-                let addrs = s.group_member_recipients(&group_name);
-                s.remove_member_from_group(&group_name, &user)
+                let addrs = s.group_member_recipients(&group_id);
+                s.remove_member_from_group(&group_id, &user)
                     .then_some(addrs)
             };
             if let Some(addrs) = addrs {
                 self.send_group_event(
                     &addrs,
                     GroupAction::RemoveMember {
-                        group_name: group_name.clone(),
+                        group_id: group_id.clone(),
                         username: user,
                     },
                 );
@@ -501,15 +501,15 @@ impl AbcomApp {
                 GroupConfirmAction::Leave => {
                     let outcome = {
                         let mut s = self.state.lock_safe();
-                        let addrs = s.group_member_recipients(&group_name);
+                        let addrs = s.group_member_recipients(&group_id);
                         let me = s.my_username.clone();
-                        s.leave_group(&group_name).then_some((addrs, me))
+                        s.leave_group(&group_id).then_some((addrs, me))
                     };
                     if let Some((addrs, me)) = outcome {
                         self.send_group_event(
                             &addrs,
                             GroupAction::RemoveMember {
-                                group_name: group_name.clone(),
+                                group_id: group_id.clone(),
                                 username: me,
                             },
                         );
@@ -519,14 +519,14 @@ impl AbcomApp {
                 GroupConfirmAction::Delete => {
                     let addrs = {
                         let mut s = self.state.lock_safe();
-                        let addrs = s.group_member_recipients(&group_name);
-                        s.delete_group(&group_name).then_some(addrs)
+                        let addrs = s.group_member_recipients(&group_id);
+                        s.delete_group(&group_id).then_some(addrs)
                     };
                     if let Some(addrs) = addrs {
                         self.send_group_event(
                             &addrs,
                             GroupAction::Delete {
-                                group_name: group_name.clone(),
+                                group_id: group_id.clone(),
                             },
                         );
                         self.modals.group_manage_target = None;

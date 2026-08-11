@@ -263,7 +263,9 @@ impl AbcomApp {
             ui.weak(self.t(i18n::AUCUN_GROUPE));
         } else {
             for (gidx, group) in groups.iter().enumerate() {
-                let conv_key = format!("#{}", group.name);
+                // Clé de conversation : l'identifiant. Le `#nom` affiché plus
+                // bas n'est qu'un libellé.
+                let conv_key = crate::app::AppState::group_conv_key(&group.id);
                 let is_selected = selected_conv.as_deref() == Some(conv_key.as_str());
                 let desired = egui::vec2(ui.available_width(), 56.0);
                 let (rect, resp) = ui.allocate_exact_size(desired, egui::Sense::click());

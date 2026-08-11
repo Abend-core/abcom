@@ -3,9 +3,11 @@
 //! (Hello), vérifie la clé du pair (TOFU) puis dispatche les paquets reçus
 //! en boucle jusqu'à la fermeture.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Notify;
 
 use crate::config;
 use crate::message::{AppEvent, NetworkPacket};
@@ -33,7 +35,7 @@ pub async fn run_server(ctx: Arc<NetContext>) {
 /// Boucle d'acceptation sur un listener déjà lié (testable sur port éphémère).
 pub async fn run_server_on(listener: TcpListener, ctx: Arc<NetContext>) {
     let connection_limit = Arc::new(tokio::sync::Semaphore::new(MAX_INCOMING_CONNECTIONS));
-    let active_peers = Arc::new(std::sync::Mutex::new(std::collections::HashSet::new()));
+    let active_peers: ActiveSessions = Arc::new(std::sync::Mutex::new(HashMap::new()));
     loop {
         match listener.accept().await {
             Ok((stream, _addr)) => {
@@ -65,14 +67,26 @@ async fn handle_incoming(stream: TcpStream, ctx: Arc<NetContext>) -> std::io::Re
     handle_incoming_tracked(stream, ctx, None).await
 }
 
+/// Session entrante vivante par pair, avec de quoi la faire cesser.
+type ActiveSessions = Arc<std::sync::Mutex<HashMap<String, Arc<Notify>>>>;
+
 struct ActivePeerGuard {
     peer: String,
-    active: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    token: Arc<Notify>,
+    active: ActiveSessions,
 }
 
 impl Drop for ActivePeerGuard {
     fn drop(&mut self) {
-        self.active.lock_safe().remove(&self.peer);
+        let mut active = self.active.lock_safe();
+        // Une session plus récente a pu prendre la place : elle ne nous
+        // appartient pas, la retirer la laisserait sans garde.
+        if active
+            .get(&self.peer)
+            .is_some_and(|token| Arc::ptr_eq(token, &self.token))
+        {
+            active.remove(&self.peer);
+        }
     }
 }
 
@@ -80,7 +94,7 @@ impl Drop for ActivePeerGuard {
 async fn handle_incoming_tracked(
     mut stream: TcpStream,
     ctx: Arc<NetContext>,
-    active: Option<Arc<std::sync::Mutex<std::collections::HashSet<String>>>>,
+    active: Option<ActiveSessions>,
 ) -> std::io::Result<()> {
     let (transport, remote_key) = tokio::time::timeout(
         HANDSHAKE_TIMEOUT,
@@ -99,25 +113,30 @@ async fn handle_incoming_tracked(
         ctx.report_key_mismatch(&peer, &remote_key).await;
         return Ok(());
     }
-    let _active_guard = if let Some(active) = active {
-        if !active.lock_safe().insert(peer.clone()) {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::ConnectionRefused,
-                "une session entrante existe déjà pour ce pair",
-            ));
+    // Une seule session entrante par pair, et c'est la dernière qui vaut :
+    // refuser la nouvelle laissait l'émetteur écrire dans une connexion que
+    // nous avions déjà abandonnée — ses messages disparaissaient sans erreur
+    // jusqu'à l'expiration de l'ancienne session, six minutes plus tard.
+    let token = Arc::new(Notify::new());
+    let _active_guard = active.map(|active| {
+        if let Some(previous) = active.lock_safe().insert(peer.clone(), token.clone()) {
+            previous.notify_one();
         }
-        Some(ActivePeerGuard {
+        ActivePeerGuard {
             peer: peer.clone(),
+            token: token.clone(),
             active,
-        })
-    } else {
-        None
-    };
+        }
+    });
 
     loop {
-        let bytes = match tokio::time::timeout(CONNECTION_IDLE_TIMEOUT, secure.recv()).await {
-            Ok(Ok(bytes)) => bytes,
-            Ok(Err(_)) | Err(_) => return Ok(()),
+        let bytes = tokio::select! {
+            biased;
+            () = token.notified() => return Ok(()),
+            received = tokio::time::timeout(CONNECTION_IDLE_TIMEOUT, secure.recv()) => match received {
+                Ok(Ok(bytes)) => bytes,
+                Ok(Err(_)) | Err(_) => return Ok(()),
+            },
         };
         dispatch_packet(&bytes, &peer, &ctx.username, &ctx.event_tx).await;
     }

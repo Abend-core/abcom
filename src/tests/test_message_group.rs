@@ -2,6 +2,7 @@ use super::{Group, GroupAction, GroupEvent};
 
 fn make_group(name: &str, owner: &str) -> Group {
     Group {
+        id: name.to_string(),
         name: name.to_string(),
         owner: owner.to_string(),
         members: vec![owner.to_string()],
@@ -40,18 +41,15 @@ fn action_create_round_trip() {
 fn action_add_member_round_trip() {
     let event = GroupEvent {
         action: GroupAction::AddMember {
-            group_name: "Team".to_string(),
+            group_id: "Team".to_string(),
             username: "bob".to_string(),
         },
     };
     let json = serde_json::to_string(&event).unwrap();
     let decoded: GroupEvent = serde_json::from_str(&json).unwrap();
     match decoded.action {
-        GroupAction::AddMember {
-            group_name,
-            username,
-        } => {
-            assert_eq!(group_name, "Team");
+        GroupAction::AddMember { group_id, username } => {
+            assert_eq!(group_id, "Team");
             assert_eq!(username, "bob");
         }
         _ => panic!("Mauvais variant"),
@@ -62,18 +60,15 @@ fn action_add_member_round_trip() {
 fn action_remove_member_round_trip() {
     let event = GroupEvent {
         action: GroupAction::RemoveMember {
-            group_name: "Team".to_string(),
+            group_id: "Team".to_string(),
             username: "charlie".to_string(),
         },
     };
     let json = serde_json::to_string(&event).unwrap();
     let decoded: GroupEvent = serde_json::from_str(&json).unwrap();
     match decoded.action {
-        GroupAction::RemoveMember {
-            group_name,
-            username,
-        } => {
-            assert_eq!(group_name, "Team");
+        GroupAction::RemoveMember { group_id, username } => {
+            assert_eq!(group_id, "Team");
             assert_eq!(username, "charlie");
         }
         _ => panic!("Mauvais variant"),
@@ -84,18 +79,15 @@ fn action_remove_member_round_trip() {
 fn action_rename_round_trip() {
     let event = GroupEvent {
         action: GroupAction::Rename {
-            group_name: "OldName".to_string(),
+            group_id: "OldName".to_string(),
             new_name: "NewName".to_string(),
         },
     };
     let json = serde_json::to_string(&event).unwrap();
     let decoded: GroupEvent = serde_json::from_str(&json).unwrap();
     match decoded.action {
-        GroupAction::Rename {
-            group_name,
-            new_name,
-        } => {
-            assert_eq!(group_name, "OldName");
+        GroupAction::Rename { group_id, new_name } => {
+            assert_eq!(group_id, "OldName");
             assert_eq!(new_name, "NewName");
         }
         _ => panic!("Mauvais variant"),
@@ -106,13 +98,13 @@ fn action_rename_round_trip() {
 fn action_delete_round_trip() {
     let event = GroupEvent {
         action: GroupAction::Delete {
-            group_name: "OldTeam".to_string(),
+            group_id: "OldTeam".to_string(),
         },
     };
     let json = serde_json::to_string(&event).unwrap();
     let decoded: GroupEvent = serde_json::from_str(&json).unwrap();
     match decoded.action {
-        GroupAction::Delete { group_name } => assert_eq!(group_name, "OldTeam"),
+        GroupAction::Delete { group_id } => assert_eq!(group_id, "OldTeam"),
         _ => panic!("Mauvais variant"),
     }
 }
@@ -126,4 +118,16 @@ fn group_members_preserved() {
     let decoded: Group = serde_json::from_str(&json).unwrap();
     assert_eq!(decoded.members.len(), 3);
     assert!(decoded.members.contains(&"bob".to_string()));
+}
+
+#[test]
+fn derived_id_matches_the_seed_script() {
+    // Valeur figée, calculée indépendamment par `scripts/seed-demo.py` qui
+    // réimplémente la dérivation en Python. Les deux doivent rester d'accord :
+    // le seed écrit des messages dont la clé de conversation est `#<id>`, et
+    // l'application ne les rattacherait à aucun salon en cas d'écart.
+    assert_eq!(
+        Group::derived_id("alice", "2026-07-04 10:00:00", "projet"),
+        "g8ec89923ef88b8bb"
+    );
 }

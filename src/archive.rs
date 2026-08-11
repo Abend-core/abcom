@@ -28,7 +28,12 @@ fn zip_dir_into<W: Write + std::io::Seek>(root: &Path, writer: W) -> std::io::Re
     let options = zip::write::SimpleFileOptions::default()
         .compression_method(zip::CompressionMethod::Deflated);
 
-    for entry in WalkDir::new(root).into_iter().filter_map(Result::ok) {
+    // Les erreurs de parcours remontent : les ignorer produisait une archive
+    // silencieusement incomplète, alors que l'utilisateur est informé que son
+    // dossier est parti en entier.
+    for entry in WalkDir::new(root) {
+        let entry =
+            entry.map_err(|e| std::io::Error::other(format!("parcours du dossier : {e}")))?;
         let path = entry.path();
         let Ok(relative) = path.strip_prefix(base) else {
             continue;

@@ -1,83 +1,57 @@
-# Abcom
+# Archives de documentation
 
-> 📅 **Généré le** : 2026-04-28
-> 🔖 **Stack analysée** : Rust 2021, tokio 1, serde 1, serde_json 1, eframe 0.31, egui 0.31, chrono 0.4, anyhow 1
-> 🔄 **À régénérer si** : refonte de l’architecture, ajout d’un service ou d’un composant, migration vers un backend central
+**Ce dossier ne contient que de la documentation** — aucun code, rien qui soit
+compilé ou exécuté. C'est la mémoire écrite du projet : les documents qui ont
+servi à le construire, conservés tels qu'ils étaient au moment où ils ont servi.
 
-## 🎯 Pitch projet
-Abcom est une application de messagerie instantanée conçue pour un réseau local (LAN). Le client fonctionne en mode peer-to-peer, découvre automatiquement les pairs via UDP broadcast et échange les messages au format JSON par TCP.
+**Rien ici n'est tenu à jour.** Certains contenus décrivent des états dépassés
+(persistance JSON, protocole en clair, absence de tests) et leurs liens vers le
+code pointent vers une arborescence qui a changé depuis. La documentation
+vivante est dans [`docs/`](../docs/).
 
-> Ancienne documentation archivée dans les fichiers `.old.md` pour assurer traçabilité.
+On les garde pour une seule raison : retrouver **pourquoi** une décision a été
+prise, quand la question ressurgit des mois plus tard. Les fichiers sont
+préfixés de leur date, donc classés par ordre chronologique.
 
-## 🏗️ Architecture globale
-Le projet est un monolithe Rust à exécution locale. L’application combine un runtime Tokio, un serveur TCP, un émetteur UDP de découverte, et une interface graphique native `egui`.
+## Avril 2026 — documentation d'origine
 
-```mermaid
-C4Context
-    title Abcom — Vue système
-    Person(user, "Utilisateur LAN", "Utilisateur d’une machine sur le LAN")
-    System(abcom, "Abcom", "Application de chat LAN en Rust")
-    System_Ext(network, "Réseau local", "Méthode de transport et de découverte")
-    Rel(user, abcom, "utilise")
-    Rel(abcom, network, "découvre et échange des messages via")
-```
+Écrite avant la refonte du 5 juillet 2026. Décrit une version antérieure du
+projet : monolithe, persistance JSON, sans chiffrement.
 
-## 🚀 Quick start
+| Fichier | Contenu | Remplacé par |
+|---|---|---|
+| `2026-04-readme-racine.md` | Premier README du dépôt | [README.md](../README.md) |
+| `2026-04-architecture-globale.md` | Architecture initiale | [docs/02](../docs/02-architecture.md) |
+| `2026-04-developer-experience.md` | Build, Makefile, service systemd | [docs/07](../docs/07-developpement.md) |
+| `2026-04-cicd-et-deploiement.md` | Première chaîne CI/CD | [docs/07](../docs/07-developpement.md) |
+| `2026-04-securite-globale.md` | Sécurité avant le chiffrement Noise | [docs/03](../docs/03-reseau-et-securite.md) |
+| `2026-04-glossaire.md` | Vocabulaire du projet | [docs/01](../docs/01-presentation.md) |
+| `2026-04-installation-windows.md` | Guide d'installation Windows | [docs/06](../docs/06-installation.md) |
+| `2026-04-doc-generee/` | Documentation générée (architecture, mécanismes, perfs, tests) | [docs/01](../docs/01-presentation.md) à [04](../docs/04-stockage.md) |
+| `2026-04-adr/` | Deux décisions d'architecture : choix de Rust, choix du P2P LAN | [docs/01](../docs/01-presentation.md), section « Décisions fondatrices » |
 
-### Développement
-```bash
-cargo run --release -- <username>
-```
+## Juin 2026 — premier audit et solidification
 
-### Installation locale
-```bash
-make install
-```
+| Fichier | Contenu | Remplacé par |
+|---|---|---|
+| `2026-06-audit-technique.md` | Premier audit formel et ses quatre sprints | [docs/08](../docs/08-historique-et-audits.md) |
+| `2026-06-dependances-et-licences.md` | Inventaire des dépendances et de leurs licences | [docs/07](../docs/07-developpement.md) |
+| `2026-06-workflow-git.md` | Règles Git et conventions de commit | [docs/07](../docs/07-developpement.md), [CONTRIBUTING.md](../CONTRIBUTING.md) |
 
-### Setup (une fois après le clone)
-```bash
-git config core.hooksPath .githooks
-```
-Active le hook pre-commit qui bloque les commits non formatés (`cargo fmt`).
+## Juillet 2026 — performance, sécurisation, spécifications
 
-### Déploiement utilisateur
-```bash
-bash scripts/abcom-install.sh ./target/release/abcom
-systemctl --user enable --now abcom.service
-```
+| Fichier | Contenu | Remplacé par |
+|---|---|---|
+| `2026-07-audit-performance.md` | Audit performance détaillé (constats `fichier:ligne`, **protocole de mesure** encore utilisé pour refaire les relevés) | [docs/08](../docs/08-historique-et-audits.md) |
+| `2026-07-plan-optimisation.md` | Plan d'exécution des phases A/B/C et résultats | [docs/08](../docs/08-historique-et-audits.md) |
+| `2026-07-seconde-passe-et-securisation.md` | Seconde passe d'audit et plan de passage à Noise | [docs/03](../docs/03-reseau-et-securite.md), [docs/08](../docs/08-historique-et-audits.md) |
+| `2026-07-spec-runner-resident.md` | Spécification du mode résident (tray) | [docs/05](../docs/05-fonctionnalites.md) |
+| `2026-07-spec-groupes.md` | Spécification des groupes — décrit l'époque où **le nom d'un salon était son identifiant**, ce qui a depuis été corrigé | [docs/05](../docs/05-fonctionnalites.md) |
 
-### Mode distribution Docker
-```bash
-cd scripts/docker
-docker compose up --build
-```
+## Août 2026 — audit de dette et son exécution
 
-## 📚 Sommaire exhaustif
-
-- **Documentation globale**
-  - [Architecture globale](docs/01-architecture-globale.md)
-  - [Developer Experience](docs/02-developer-experience.md)
-  - [CICD et déploiement](docs/03-cicd-et-deploiement.md)
-  - [Sécurité globale](docs/04-securite-globale.md)
-  - [Glossaire](docs/05-glossaire.md)
-  - [Groupes — Phase 10](docs/10_groupe.md)
-  - [Installation Windows](docs/INSTALL_WINDOWS.md)
-  - [Notes de migration](docs/_MIGRATION_NOTES.md)
-- **Décisions (ADR)**
-  - [Choix du langage Rust et de la stack](docs/adr/ADR-001-langage-et-stack-rust.md)
-  - [Architecture peer-to-peer sur LAN](docs/adr/ADR-002-architecture-lan-peer-to-peer.md)
-- **Composant Abcom**
-  - [Présentation du composant](docs/abcom/README.md)
-  - [Architecture et structure](docs/abcom/01-architecture-et-structure.md)
-  - [Mécanismes et données](docs/abcom/02-mecanismes-et-donnees.md)
-  - [Performances et optimisations](docs/abcom/03-performances-et-optimisations.md)
-  - [Fiabilité et tests](docs/abcom/04-fiabilite-et-tests.md)
-
-## 🧭 Glossaire express
-
-- [LAN](docs/05-glossaire.md#lan)
-- [UDP broadcast](docs/05-glossaire.md#udp-broadcast)
-- [TCP](docs/05-glossaire.md#tcp)
-- [Tokio](docs/05-glossaire.md#tokio)
-- [egui / eframe](docs/05-glossaire.md#egui--eframe)
-- [systemd user](docs/05-glossaire.md#systemd-user)
+| Fichier | Contenu | Remplacé par |
+|---|---|---|
+| `2026-08-audit-dette-de-code.md` | Checklist de dette de code, 69 des 71 points appliqués | [docs/08](../docs/08-historique-et-audits.md), [docs/09](../docs/09-limites-et-pistes.md) |
+| `2026-08-plan-maintenabilite.md` | Plan séquencé (phases P1 à P6) de cet audit, déroulé intégralement | [docs/08](../docs/08-historique-et-audits.md) |
+| `2026-08-audit-dependances.md` | Écart entre ce que les dépendances offrent et ce qu'on en tirait — 25 de ses 30 constats appliqués | [docs/08](../docs/08-historique-et-audits.md) ; les 5 restants dans [docs/09](../docs/09-limites-et-pistes.md) |

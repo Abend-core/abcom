@@ -456,6 +456,20 @@ fn parse_code_span(input: &str) -> Option<(&str, usize)> {
     Some((&rest[..end], delimiter_len + end + delimiter_len))
 }
 
+/// Seuls schémas rendus cliquables. Le contenu d'un message vient du réseau et
+/// l'URL finit dans le gestionnaire de liens du système : `file://`, `smb://`
+/// (fuite d'empreinte NTLM sous Windows) ou tout schéma applicatif enregistré
+/// deviendraient déclenchables par un pair derrière un libellé anodin. Ce qui
+/// n'est pas reconnu reste du texte brut, pas un lien.
+const ALLOWED_LINK_SCHEMES: &[&str] = &["http://", "https://"];
+
+fn link_scheme_allowed(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    ALLOWED_LINK_SCHEMES
+        .iter()
+        .any(|scheme| lower.starts_with(scheme))
+}
+
 fn parse_link(input: &str) -> Option<(&str, &str, usize)> {
     let rest = input.strip_prefix('[')?;
     let label_end = rest.find("](")?;
@@ -463,6 +477,9 @@ fn parse_link(input: &str) -> Option<(&str, &str, usize)> {
     let url_end = after_label.find(')')?;
     let label = &rest[..label_end];
     let url = &after_label[..url_end];
+    if !link_scheme_allowed(url) {
+        return None;
+    }
     let consumed = 1 + label_end + 2 + url_end + 1;
     Some((label, url, consumed))
 }

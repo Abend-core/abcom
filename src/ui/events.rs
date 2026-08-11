@@ -8,6 +8,13 @@ use crate::message::{
 use crate::protocol::media_requires_ack;
 use crate::util::MutexExt;
 
+/// Accusés retenus en attente de commit. Plafond de sécurité : si la
+/// persistance tombe durablement, on cesse d'accumuler.
+const MAX_PENDING_ACKS: usize = 10_000;
+
+/// Période du nettoyage du cache disque des médias.
+const MEDIA_GC_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
+
 impl AbcomApp {
     /// Dépile les événements réseau reçus depuis les tâches tokio.
     ///
@@ -93,12 +100,40 @@ impl AbcomApp {
                                 }
                             }
 
-                            outbound.extend(ack_reqs.into_iter().map(Into::into));
-                            outbound.extend(receipt_reqs.into_iter().map(Into::into));
+                            // Déjà en base (réémission) : rien n'attend, on
+                            // acquitte tout de suite. Sinon l'accusé patiente
+                            // jusqu'au commit — le dire « reçu » avant serait
+                            // un mensonge qu'un arrêt brutal démentirait.
+                            if s.has_message(msg_hash) || !s.has_storage() {
+                                outbound.extend(ack_reqs.into_iter().map(Into::into));
+                                // Mémorisé comme envoyé : sinon le rattrapage
+                                // au retour du focus réémettrait tout le fil.
+                                for req in &receipt_reqs {
+                                    self.read_receipts_sent
+                                        .entry(req.to_peer.clone())
+                                        .or_default()
+                                        .insert(msg_hash);
+                                }
+                                outbound.extend(receipt_reqs.into_iter().map(Into::into));
+                            } else if self.pending_acks.len() < MAX_PENDING_ACKS {
+                                let waiting: Vec<NetworkSendRequest> = ack_reqs
+                                    .into_iter()
+                                    .map(Into::into)
+                                    .chain(receipt_reqs.into_iter().map(Into::into))
+                                    .collect();
+                                self.pending_acks
+                                    .entry(msg_hash)
+                                    .or_default()
+                                    .extend(waiting);
+                            } else {
+                                // Persistance durablement en panne : on cesse
+                                // d'accumuler plutôt que d'enfler sans fin.
+                                tracing::warn!("accusés en attente saturés, message non acquitté");
+                            }
                         }
                     }
 
-                    // Doublon d'une réémission : l'ACK vient d'être renvoyé
+                    // Doublon d'une réémission : l'ACK vient d'être traité
                     // ci-dessus, il ne reste qu'à ne pas dupliquer le message.
                     if s.has_message(AppState::message_hash(&msg)) {
                         tracing::debug!("message déjà reçu ignoré (réémission)");
@@ -247,6 +282,27 @@ impl AbcomApp {
                     self.last_notification = Some(format!("{username} : {label}"));
                     self.notification_time = std::time::Instant::now();
                 }
+                AppEvent::MessagesPersisted { hashes } => {
+                    for hash in hashes {
+                        if let Some(waiting) = self.pending_acks.remove(&hash) {
+                            outbound.extend(waiting);
+                        }
+                    }
+                }
+                AppEvent::ConversationExported { error } => {
+                    self.last_notification = Some(match error {
+                        None => self.t(i18n::CONVERSATION_EXPORTEE).to_string(),
+                        Some(error) => format!("{} : {error}", self.t(i18n::EXPORT_IMPOSSIBLE)),
+                    });
+                    self.notification_time = std::time::Instant::now();
+                }
+                AppEvent::MediaDownloaded { filename } => {
+                    self.last_notification = Some(match filename {
+                        Some(name) => format!("{} {name}", self.t(i18n::TELECHARGE)),
+                        None => self.t(i18n::TELECHARGEMENT_IMPOSSIBLE).to_string(),
+                    });
+                    self.notification_time = std::time::Instant::now();
+                }
                 AppEvent::OlderMessagesLoaded {
                     messages,
                     oldest_rowid,
@@ -342,16 +398,17 @@ impl AbcomApp {
             self.net.try_send(request);
         }
         for (hash, request) in outbox_flush {
-            // La sortie de file suit l'émission, jamais l'inverse.
+            // `try_send` ne dit que l'admission dans le canal : ni l'écriture
+            // sur la socket, ni la réception. Le message reste donc dans la
+            // file durable jusqu'à son ACK (cf. `mark_message_acked`), sans
+            // quoi un arrêt au mauvais moment le laisserait en mémoire seule.
             if self.net.try_send(request.clone()) {
-                let mut state = self.state.lock_safe();
-                state.drop_from_outbox(hash);
-                state.mark_message_sent(hash, request);
+                self.state.lock_safe().mark_message_sent(hash, request);
             }
         }
     }
 
-    /// Récupère les offres de médias volumineux (> 1 Go) en attente d'accord et
+    /// Récupère les offres de médias volumineux (au-delà du seuil d'accord) en attente d'accord et
     /// les ajoute au bandeau d'acceptation.
     pub(crate) fn process_media_offers(&mut self) {
         while let Ok(offer) = self.media.offer_rx.try_recv() {
@@ -414,6 +471,13 @@ impl AbcomApp {
                 self.notification_time = std::time::Instant::now();
             }
         }
+
+        // Plafond du cache média : le GC ne tournait qu'au démarrage, si bien
+        // qu'une longue session pouvait dépasser durablement la limite.
+        if self.last_media_gc.elapsed() >= MEDIA_GC_INTERVAL {
+            self.last_media_gc = std::time::Instant::now();
+            self.state.lock_safe().request_media_gc();
+        }
     }
 }
 
@@ -426,11 +490,14 @@ fn group_media_authorized(state: &AppState, group_name: &str, sender: &str) -> b
 
 fn apply_group_event(s: &mut AppState, peer: &str, event: GroupEvent) {
     match event.action {
-        GroupAction::Create { group } => {
+        GroupAction::Create { mut group } => {
             if group.owner != peer || !group.members.contains(&s.my_username) {
                 return;
             }
-            if let Some(existing) = s.groups.iter_mut().find(|g| g.name == group.name) {
+            // Un pair antérieur aux identifiants n'en envoie pas : on le dérive
+            // des champs immuables, à l'identique chez tous les membres.
+            group.ensure_id();
+            if let Some(existing) = s.groups.iter_mut().find(|g| g.id == group.id) {
                 if existing.owner != peer {
                     return;
                 }
@@ -440,14 +507,11 @@ fn apply_group_event(s: &mut AppState, peer: &str, event: GroupEvent) {
             }
             s.save_groups();
         }
-        GroupAction::AddMember {
-            group_name,
-            username,
-        } => {
+        GroupAction::AddMember { group_id, username } => {
             let Some(g) = s
                 .groups
                 .iter_mut()
-                .find(|g| g.name == group_name && g.owner == peer)
+                .find(|g| g.id == group_id && g.owner == peer)
             else {
                 return;
             };
@@ -456,38 +520,26 @@ fn apply_group_event(s: &mut AppState, peer: &str, event: GroupEvent) {
                 s.save_groups();
             }
         }
-        GroupAction::RemoveMember {
-            group_name,
-            username,
-        } => {
+        GroupAction::RemoveMember { group_id, username } => {
             let allowed = s
                 .groups
                 .iter()
-                .find(|g| g.name == group_name)
+                .find(|g| g.id == group_id)
                 .is_some_and(|g| g.owner == peer || peer == username);
             if allowed {
-                s.apply_member_removal(&group_name, &username);
+                s.apply_member_removal(&group_id, &username);
             }
         }
-        GroupAction::Rename {
-            group_name,
-            new_name,
-        } => {
-            let allowed = s
-                .groups
-                .iter()
-                .any(|g| g.name == group_name && g.owner == peer);
+        GroupAction::Rename { group_id, new_name } => {
+            let allowed = s.groups.iter().any(|g| g.id == group_id && g.owner == peer);
             if allowed {
-                s.apply_group_rename(&group_name, new_name);
+                s.apply_group_rename(&group_id, new_name);
             }
         }
-        GroupAction::Delete { group_name } => {
-            let allowed = s
-                .groups
-                .iter()
-                .any(|g| g.name == group_name && g.owner == peer);
+        GroupAction::Delete { group_id } => {
+            let allowed = s.groups.iter().any(|g| g.id == group_id && g.owner == peer);
             if allowed {
-                s.apply_group_delete(&group_name);
+                s.apply_group_delete(&group_id);
             }
         }
     }

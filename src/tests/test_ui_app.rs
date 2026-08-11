@@ -23,7 +23,7 @@ fn test_app() -> AbcomApp {
     let state = Arc::new(Mutex::new(AppState::new_with_base("moi", &dir)));
     let (send_tx, _send_rx) = mpsc::channel(16);
     let (send_media_tx, _media_rx) = mpsc::channel(16);
-    let (_event_tx, event_rx) = mpsc::channel(16);
+    let (event_tx, event_rx) = mpsc::channel(16);
     let (_offer_tx, media_offer_rx) = mpsc::channel(16);
     AbcomApp::new(
         state,
@@ -31,6 +31,7 @@ fn test_app() -> AbcomApp {
         false,
         UiRuntimeChannels {
             event_rx,
+            event_tx,
             send_tx,
             send_media_tx,
             media_offer_rx,
@@ -124,4 +125,73 @@ fn renders_every_modal_and_picker_open() {
     app.search.open = true;
     app.search.query = "bureau".into();
     render(&mut app, 3);
+}
+
+/// Les onglets de Paramètres ne s'ouvraient dans aucun test : Crédits et
+/// Licence n'étaient jamais peints, donc ni panique ni identifiant egui
+/// dupliqué n'y auraient été détectés.
+#[test]
+fn renders_every_settings_tab() {
+    use crate::ui::SettingsTab;
+
+    let mut app = test_app();
+    app.modals.settings_open = true;
+    for tab in [
+        SettingsTab::Profile,
+        SettingsTab::General,
+        SettingsTab::Credits,
+        SettingsTab::License,
+    ] {
+        app.modals.settings_tab = tab;
+        render(&mut app, 2);
+    }
+}
+
+/// Le rattrapage d'accusés de lecture doit fonctionner sans changer de
+/// conversation — c'est ce que `logic` déclenche au retour du focus — et ne
+/// pas réémettre à chaque passage.
+#[test]
+fn read_receipts_are_swept_without_switching_conversation() {
+    let mut app = test_app();
+    let (send_tx, mut send_rx) = mpsc::channel(64);
+    app.net.send_tx = send_tx;
+
+    let conv = {
+        let mut s = app.state.lock().unwrap();
+        s.peers.push(crate::app::Peer {
+            username: "alice".to_string(),
+            addr: "127.0.0.1:9000".parse().unwrap(),
+            last_seen: 0,
+            online: true,
+        });
+        let group = s
+            .create_group("equipe".to_string(), vec!["alice".to_string()])
+            .expect("création du salon");
+        let conv = AppState::group_conv_key(&group.id);
+        // Message reçu pendant que la fenêtre n'avait pas le focus.
+        s.add_message(crate::message::ChatMessage {
+            from: "alice".to_string(),
+            content: "coucou".to_string(),
+            timestamp: "12:00".to_string(),
+            timestamp_epoch: Some(1),
+            to_user: Some(conv.clone()),
+            media: None,
+            reply_to: None,
+            nonce: Some(1),
+        });
+        s.selected_conversation = Some(conv.clone());
+        conv
+    };
+
+    app.send_read_receipts_for_conversation(Some(conv.clone()));
+    assert!(
+        send_rx.try_recv().is_ok(),
+        "l'accusé doit partir sans quitter puis rouvrir le salon"
+    );
+
+    app.send_read_receipts_for_conversation(Some(conv));
+    assert!(
+        send_rx.try_recv().is_err(),
+        "et ne pas être réémis au passage suivant"
+    );
 }
