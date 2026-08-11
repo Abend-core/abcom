@@ -895,6 +895,20 @@ impl eframe::App for AbcomApp {
         if let Some(t) = &mut self.tray {
             t.set_unread(unread);
         }
+
+        // Battement de cœur : plancher de réactivité, quel que soit l'état de
+        // la fenêtre.
+        //
+        // Le repli temporel de `ui()` ne couvre que les passes de rendu ; dès
+        // qu'eframe n'en fait plus (fenêtre repliée, minimisée ou masquée), il
+        // n'appelle plus que `logic()` et plus personne ne programme le
+        // réveil suivant. L'application dormait alors jusqu'à un événement
+        // système : « Quitter » depuis le tray a mesuré **204 897 ms**
+        // d'attente avant d'être dépilé, alors que l'arrêt lui-même prend
+        // 134 ms. Une passe par seconde borne ce délai sans coûter
+        // grand-chose — sans rendu quand la fenêtre est cachée, et la
+        // fréquence d'un curseur clignotant quand elle est visible.
+        ctx.request_repaint_after(LOGIC_HEARTBEAT);
     }
 
     /// Rendu : jamais appelé fenêtre repliée, la logique vit dans [`Self::logic`].
@@ -1102,6 +1116,10 @@ impl eframe::App for AbcomApp {
         arm_shutdown_watchdog();
     }
 }
+
+/// Intervalle maximal entre deux passes de `logic()`, donc délai maximal avant
+/// qu'une action du tray soit vue.
+const LOGIC_HEARTBEAT: Duration = Duration::from_secs(1);
 
 /// Délai au-delà duquel l'arrêt est forcé. Large pour laisser le chemin propre
 /// se dérouler (flush borné à 3 s, purge des tâches réseau à 2 s) : seul un
