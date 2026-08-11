@@ -1,4 +1,4 @@
-> [🏠 Accueil](../README.md) > [📖 Glossaire](05-glossaire.md)
+> [🏠 Accueil](../README.md) > [📖 Glossaire](2026-04-glossaire.md)
 
 > 📅 **Généré le** : 2026-04-28
 > 🔖 **Stack analysée** : Rust 2021, tokio 1, serde 1, serde_json 1, eframe 0.31, egui 0.31, chrono 0.4, anyhow 1

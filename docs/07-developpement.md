@@ -13,7 +13,7 @@ cargo build
 
 ```bash
 cargo run --release -- <pseudo>       # lancer
-cargo test --all-features --locked    # 289 tests
+cargo test --all-features --locked    # 329 tests
 cargo test app::groups                # un module
 cargo fmt && cargo clippy -- -D warnings   # ce que la CI exigera
 ```
@@ -22,7 +22,7 @@ Le profil release est optimisé pour un binaire compact (`lto = "thin"`, `codege
 
 ## Tests
 
-289 tests automatisés : 288 tests unitaires regroupés dans [src/tests/](../src/tests/) et un test d'intégration externe dans [tests/p2p_e2e.rs](../tests/p2p_e2e.rs). Points notables :
+329 tests automatisés : 328 tests unitaires regroupés dans [src/tests/](../src/tests/) et un test d'intégration externe dans [tests/p2p_e2e.rs](../tests/p2p_e2e.rs). Les tests manuels — réseau réel, interface, différences entre OS — sont dans le [cahier de tests](10-cahier-de-tests.md). Points notables :
 
 - les tests réseau utilisent de **vraies sockets** (`TcpListener::bind("127.0.0.1:0")`, UDP réel) — pas de mocks ;
 - le chiffrement est testé par des handshakes Noise complets en mémoire et entre endpoints réels (y compris le rejet d'un client en clair et le refus sur clé changée) ;
@@ -113,7 +113,6 @@ docs(git): ajouter les règles de workflow pour l'équipe
 - **Jamais de `git push` sans accord explicite de l'utilisateur.**
 - **Pas de trailer `Co-Authored-By` dans les messages de commit.**
 - PR via `gh pr create` puis `gh pr merge` — ne pas renvoyer l'utilisateur vers GitHub.
-- Après le merge d'une feature : mettre à jour `AVANCEMENT.md` **sur `dev` uniquement** (ce fichier ne doit jamais être modifié depuis une branche feature, c'est ce qui le garde sans conflits).
 
 ### Releases
 
@@ -149,12 +148,28 @@ Les dépendances directes sont déclarées dans [Cargo.toml](../Cargo.toml) et v
 
 Vérifier après toute montée d'`eframe` que `cargo tree | grep -i glow` ne renvoie **rien** : réintroduire les features par défaut relierait silencieusement le backend OpenGL.
 
-**Licence du projet : AGPL-3.0** — alignée le 08/08/2026. `LICENSE` (texte intégral de la GNU AGPL v3) et l'onglet Licence de l'application faisaient déjà foi ; `Cargo.toml` déclarait `MIT` par erreur et déclare désormais `AGPL-3.0-only`. Ce n'était pas une double licence, juste une incohérence. Ressources embarquées : police Inter (OFL-1.1, licence dans `assets/fonts/`), jeu d'emojis type Twemoji.
+**Licence du projet : AGPL-3.0** — alignée le 08/08/2026. `LICENSE` (texte intégral de la GNU AGPL v3) et l'onglet Licence de l'application faisaient déjà foi ; `Cargo.toml` déclarait `MIT` par erreur et déclare désormais `AGPL-3.0-only`. Ce n'était pas une double licence, juste une incohérence. Ressources embarquées : jeu d'emojis type Twemoji et quatre polices, licences dans `assets/fonts/` — Noto Sans, Noto Sans Symbols 2 et Inter en OFL-1.1, GNU Unifont en OFL-1.1 ou GPLv2+ avec exception d'embarquement, au choix. Elles forment une chaîne consultée dans cet ordre (cf. `ui::FONT_CHAIN`), chacune ne servant qu'à ce que les précédentes ne savent pas dessiner ; Unifont ferme la marche et couvre tout le plan multilingue de base. Sans cette chaîne, un message écrit hors alphabet latin s'affiche entièrement en carrés vides — `src/tests/test_ui_fonts.rs` le vérifie sur le glyphe réellement peint.
+
+Noto Color Emoji a été essayée puis écartée : ses glyphes sont des images CBDT, qu'egui ne sait pas rasteriser. Présente dans la chaîne, elle capte tous les codets emoji et n'en dessine aucun. Les emoji des messages passent de toute façon par le registre PNG (`emoji_registry`), en couleur.
 
 Outils d'entretien : `cargo audit` (vulnérabilités) et `cargo deny check` (licences, sources, doublons) — les deux exécutés par la CI `dev` **et** `main` ; `cargo outdated` (rapport mensuel automatique), `cargo update` (mises à jour semver). `Cargo.lock` est versionné : builds reproductibles.
 
-## Fichiers de suivi
+## Ce qu'il y a à la racine
 
-- [CHANGELOG.md](../CHANGELOG.md) — modifications notables, alimenté en continu, consolidé à chaque release.
-- [AVANCEMENT.md](../AVANCEMENT.md) — tableau des features en cours/terminées, tenu sur `dev` uniquement.
-- [old/](../old/) — documentation historique (audits, plans, ADR, anciennes versions), conservée en l'état.
+La racine ne contient que ce qu'un outil exige d'y trouver, plus quatre points
+d'entrée de lecture. Tout le reste vit dans un dossier.
+
+| Élément | Rôle |
+|---|---|
+| `Cargo.toml`, `Cargo.lock` | Manifeste et verrouillage des versions. `Cargo.lock` est versionné : builds reproductibles |
+| `deny.toml` | Configuration de **cargo-deny** : licences autorisées, sources de crates admises, doublons interdits. Vérifié en CI par `cargo deny check licenses sources bans`. Doit rester à la racine, c'est là que l'outil le cherche |
+| `Makefile` | Raccourcis de build, tests, lancement multi-instances et installation |
+| `LICENSE` | Texte intégral de l'AGPL-3.0 |
+| `.githooks/`, `.github/` | Hook pre-commit partagé, workflows CI |
+| `README.md` | Point d'entrée du dépôt |
+| `CONTRIBUTING.md` | Conventions et barrière verte |
+| `CHANGELOG.md` | Modifications notables, alimenté en continu, consolidé à chaque release |
+| `docs/` | Documentation vivante, numérotée de 01 à 10 |
+| `old/` | Archives de documentation — jamais de code, jamais tenues à jour, indexées par [old/README.md](../old/README.md) |
+| `src/`, `tests/` | Code et test d'intégration externe |
+| `scripts/`, `assets/` | Installation et distribution ; ressources embarquées ou packagées |

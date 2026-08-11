@@ -10,7 +10,7 @@
 > constat marqué « vérifié » l'a été par lecture de source ou `grep` sur `src/`,
 > pas de mémoire.
 >
-> Compagnon de [`AUDIT.md`](AUDIT.md) (dette de code) : ce document-ci ne parle
+> Compagnon de l'audit de dette de code, exécuté et archivé dans [`old/2026-08-audit-dette-de-code.md`](2026-08-audit-dette-de-code.md) : ce document-ci ne parle
 > que de l'écart entre ce que nos dépendances offrent et ce qu'on en tire.
 >
 > **Complété le 8 août 2026 (2ᵉ passe)** par une remontée d'historique complète
@@ -106,7 +106,7 @@ sans objet aujourd'hui.
 ### D16 — tokio : deux API qu'on réimplémente 🟢
 
 - `Sender::try_reserve_many(n)` fait exactement ce que notre boucle manuelle de
-  [`ui/outbound.rs`](src/ui/outbound.rs) fait à la main (réserver N places avant
+  [`ui/outbound.rs`](../src/ui/outbound.rs) fait à la main (réserver N places avant
   d'émettre, pour ne jamais envoyer une diffusion à moitié).
 - `Receiver::recv_many(&mut buf, limit)` permettrait de traiter les paquets par
   lots dans `run_sender` et la tâche d'écriture du pool, au lieu d'un réveil de
@@ -130,8 +130,8 @@ Nous appelons cette fonction sur des données venues du réseau :
 
 | Site | Source |
 |---|---|
-| [`ui/avatar.rs:148`](src/ui/avatar.rs#L148) | avatar annoncé par un pair |
-| [`ui/media.rs:454`](src/ui/media.rs#L454) | média reçu |
+| [`ui/avatar.rs:148`](../src/ui/avatar.rs#L148) | avatar annoncé par un pair |
+| [`ui/media.rs:454`](../src/ui/media.rs#L454) | média reçu |
 
 Un pair authentifié peut donc nous faire allouer jusqu'à **512 Mo d'un coup**
 avec un fichier de quelques kilo-octets (une image très large et très plate
@@ -150,7 +150,7 @@ bornés (8192 suffit très largement) sur les deux chemins réseau.*
 
 **Vérifié** : egui expose `ThemePreference { System, Light, Dark }`
 (`egui-0.36.1/src/memory/theme.rs:67`) et suit le thème du système. Nous avons
-notre propre `enum ThemePreference` dans [`ui/mod.rs`](src/ui/mod.rs), notre
+notre propre `enum ThemePreference` dans [`ui/mod.rs`](../src/ui/mod.rs), notre
 champ `system_dark_mode`, notre `applied_dark_mode` et notre
 `apply_theme_preference`.
 

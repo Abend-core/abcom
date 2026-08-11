@@ -64,6 +64,9 @@ pub struct AppState {
     /// rowid du plus ancien message chargé en mémoire (pagination) ;
     /// `None` = tout l'historique est déjà en mémoire.
     pub oldest_loaded_rowid: Option<i64>,
+    /// La fenêtre mémoire a débordé : `oldest_loaded_rowid` vaut `None` sans
+    /// que l'historique soit épuisé pour autant.
+    pub window_overflowed: bool,
     /// Plafond de messages conservés en mémoire ; grandit quand l'historique
     /// est paginé vers le haut, borné par [`Self::MAX_WINDOW`].
     history_cap: usize,
@@ -111,6 +114,7 @@ impl AppState {
             presence_generation: 0,
             storage,
             oldest_loaded_rowid: loaded.oldest_rowid,
+            window_overflowed: false,
             history_cap,
             avatar_path: base.join("avatar.png"),
             media_dir: base.join("media"),
@@ -146,6 +150,7 @@ impl AppState {
             presence_generation: 0,
             storage: None,
             oldest_loaded_rowid: None,
+            window_overflowed: false,
             history_cap: storage::INITIAL_WINDOW as usize,
             avatar_path: base.join("avatar.png"),
             media_dir: base.join("media"),
@@ -203,6 +208,25 @@ impl AppState {
     }
 
     /// Envoie une commande au thread de stockage (no-op sans stockage).
+    /// Un thread de stockage est-il branché ?
+    ///
+    /// Sans lui, aucune écriture n'est confirmée : ce qui attend un commit
+    /// (les accusés de réception) doit partir sans attendre plutôt que de
+    /// rester en suspens indéfiniment.
+    pub fn has_storage(&self) -> bool {
+        self.storage.is_some()
+    }
+
+    /// Demande un nettoyage du cache disque des médias.
+    ///
+    /// Le tri des fichiers encore référencés se fait côté stockage : la liste
+    /// est une requête SQL, l'historique en mémoire n'étant qu'une fenêtre.
+    pub(crate) fn request_media_gc(&self) {
+        self.persist(StorageCmd::GcMedia {
+            dir: self.media_dir.clone(),
+        });
+    }
+
     pub(crate) fn persist(&self, cmd: StorageCmd) {
         if let Some(tx) = &self.storage {
             let _ = tx.send(cmd);
@@ -216,13 +240,22 @@ impl AppState {
         if self.messages.len() >= Self::MAX_WINDOW {
             return false;
         }
-        let Some(before_rowid) = self.oldest_loaded_rowid else {
-            return false;
+        let cursor = match self.oldest_loaded_rowid {
+            Some(rowid) => storage::HistoryCursor::Before(rowid),
+            // Curseur perdu par un débordement de fenêtre : il se redérive du
+            // plus ancien message encore en mémoire. Sans ce repli, la
+            // pagination restait morte jusqu'au redémarrage.
+            None if self.window_overflowed => match self.messages.first() {
+                Some(oldest) => storage::HistoryCursor::BeforeHash(Self::message_hash(oldest)),
+                None => return false,
+            },
+            // Historique entier déjà en mémoire : rien à charger.
+            None => return false,
         };
         if self.storage.is_none() {
             return false;
         }
-        self.persist(StorageCmd::LoadOlder { before_rowid });
+        self.persist(StorageCmd::LoadOlder { cursor });
         true
     }
 
@@ -230,6 +263,10 @@ impl AppState {
     /// mémoire (résultat de [`Self::request_older_messages`]).
     pub fn prepend_older_messages(&mut self, older: Vec<ChatMessage>, oldest_rowid: Option<i64>) {
         self.oldest_loaded_rowid = oldest_rowid;
+        // Le stockage a tranché : soit il rend un vrai curseur, soit il n'y a
+        // plus rien avant. Dans les deux cas le repli par hash n'a plus lieu
+        // d'être, sinon on rechargerait la même page sans fin.
+        self.window_overflowed = false;
         if older.is_empty() {
             return;
         }
@@ -259,12 +296,24 @@ impl AppState {
         });
     }
 
-    pub fn flush_storage(&self) {
-        if let Some(tx) = &self.storage {
-            let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(1);
-            if tx.send(StorageCmd::Flush(ack_tx)).is_ok() {
-                let _ = ack_rx.recv_timeout(std::time::Duration::from_secs(3));
-            }
+    /// Attend que le thread de stockage ait appliqué tout ce qui précède.
+    ///
+    /// Renvoie `Err` si une écriture a échoué (disque plein, base en lecture
+    /// seule) ou si le thread n'a pas répondu : l'appelant doit le dire à
+    /// l'utilisateur plutôt que de le laisser quitter en croyant son
+    /// historique sauvegardé.
+    pub fn flush_storage(&self) -> Result<(), String> {
+        let Some(tx) = &self.storage else {
+            return Ok(());
+        };
+        let (ack_tx, ack_rx) = std::sync::mpsc::sync_channel(1);
+        if tx.send(StorageCmd::Flush(ack_tx)).is_err() {
+            return Err("thread de stockage arrêté".to_string());
+        }
+        match ack_rx.recv_timeout(std::time::Duration::from_secs(3)) {
+            Ok(None) => Ok(()),
+            Ok(Some(error)) => Err(error),
+            Err(_) => Err("le stockage n'a pas répondu".to_string()),
         }
     }
 

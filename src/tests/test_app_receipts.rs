@@ -167,6 +167,7 @@ fn recipients_group_only_online_members() {
         peer("eve", 9004, true), // pas membre → exclue
     ];
     s.groups = vec![Group {
+        id: "team".to_string(),
         name: "team".to_string(),
         owner: "alice".to_string(),
         members: vec!["alice".to_string(), "bob".to_string(), "carol".to_string()],
@@ -244,6 +245,7 @@ fn ack_from_another_peer_does_not_complete_delivery() {
 fn group_ack_is_accepted_only_from_a_member() {
     let mut s = state();
     s.groups.push(Group {
+        id: "team".into(),
         name: "team".into(),
         owner: "alice".into(),
         members: vec!["alice".into(), "bob".into()],
@@ -262,6 +264,7 @@ fn group_ack_is_accepted_only_from_a_member() {
 fn group_read_receipt_is_shared_for_messages_from_other_members() {
     let mut s = state();
     s.groups.push(Group {
+        id: "team".into(),
         name: "team".into(),
         owner: "alice".into(),
         members: vec!["alice".into(), "bob".into(), "carol".into()],
@@ -358,4 +361,30 @@ fn offline_messages_wait_for_the_peer_to_return() {
     s.drop_from_outbox(hash);
     assert!(!s.is_queued_offline(hash));
     assert!(s.outbox_for("alice").is_empty());
+}
+
+#[test]
+fn outbox_survives_until_the_ack_confirms_delivery() {
+    let mut s = state();
+    let message = make_msg("alice", "hello bob");
+    let hash = AppState::message_hash(&message);
+    s.queue_offline(message.clone(), "bob".to_string());
+
+    // En attente de reconnexion : visible comme tel.
+    assert!(s.is_queued_offline(hash));
+    assert_eq!(s.outbox_for("bob").len(), 1);
+
+    // Confié au réseau : il quitte l'affichage « hors ligne » mais reste dans
+    // la file durable — une coupure ici doit pouvoir le réémettre.
+    s.mark_message_sent(hash, request(9000, message));
+    assert!(!s.is_queued_offline(hash));
+    assert!(s.outbox.contains_key(&hash), "la file durable le conserve");
+    assert!(
+        s.outbox_for("bob").is_empty(),
+        "déjà en vol : pas de réémission par cette file"
+    );
+
+    // ACK : seulement maintenant il disparaît.
+    assert!(s.mark_message_acked(hash, "bob"));
+    assert!(!s.outbox.contains_key(&hash));
 }

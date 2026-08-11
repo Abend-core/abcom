@@ -1,6 +1,6 @@
-> [🏠 Accueil](../README.md) > [🛠 Plan d'optimisation](07-plan-optimisation.md)
+> [🏠 Accueil](../README.md) > [🛠 Plan d'optimisation](2026-07-plan-optimisation.md)
 
-> 📅 **Généré le** : 2026-07-04 — plan d'exécution de l'audit [06-audit-performance.md](06-audit-performance.md)
+> 📅 **Généré le** : 2026-07-04 — plan d'exécution de l'audit [06-audit-performance.md](2026-07-audit-performance.md)
 > 🔖 **Baseline** : RSS 443 Mo · **CPU 22 % au repos · GPU 9,7 % · 15 threads** (Moniteur d'activité, capture utilisateur)
 > 🔄 **Décision produit** : les GIFs restent en **HD dans le fil** (pas de variante md) — le bornage mémoire passe par le gel hors écran + l'éviction, pas par la résolution.
 
@@ -23,7 +23,7 @@ sur base) : PR suivante, prérequis posés ici. Phase E : optionnelle, à mesure
 Reste à mesurer en usage réel : RSS après navigation GIF intensive (attendu :
 borné par le gel hors écran + `forget_image`), débit d'un transfert > 1 Go.
 
-➡️ Suite : [08-seconde-passe-et-securisation.md](08-seconde-passe-et-securisation.md)
+➡️ Suite : [08-seconde-passe-et-securisation.md](2026-07-seconde-passe-et-securisation.md)
 — seconde passe d'audit (reste à faire, nouvelles détections) et plan de
 chiffrement du transport.
 
@@ -148,7 +148,7 @@ un avatar PNG 256×256 sérialisé en tableau JSON d'octets dépasse facilement
 
 ## Phase D — SQLite + pagination sur base (PR suivante)
 
-Schéma et bénéfices : voir [06-audit-performance.md §7](06-audit-performance.md).
+Schéma et bénéfices : voir [06-audit-performance.md §7](2026-07-audit-performance.md).
 1. Dépendance `rusqlite` (feature `bundled`), ouverture WAL dans le thread de
    persistance créé en C5 (le canal d'écriture existe déjà).
 2. Migration au premier lancement : import des JSON → `abcom.db`, JSON

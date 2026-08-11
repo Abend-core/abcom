@@ -8,6 +8,8 @@ Format basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/), versi
 ## [Non publié]
 
 ### Ajouté
+- **Identifiant immuable pour les salons** : le nom d'un groupe devient un simple libellé, renommable sans rien casser. Auparavant le nom entrait dans le hash des messages, si bien qu'un renommage orphelinait d'un coup réactions, accusés et repère de lecture. Migration de base automatique ; **le protocole passe en version 3**, les pairs restés en version 2 ne se connectent plus
+- **Cahier de tests manuels** ([docs/10](docs/10-cahier-de-tests.md)) : fonctionnalités, régressions et spécificités par OS
 - **Recherche dans l'historique** (Cmd/Ctrl+F) : index FTS5 sans seconde copie des messages sur le disque, recherche au fil de la frappe, clic sur un résultat pour sauter au message
 - **Raccourcis clavier globaux** : Cmd/Ctrl+F recherche, Cmd/Ctrl+, paramètres, Ctrl+Tab et Ctrl+Maj+Tab pour changer de conversation, Échap ferme la surcouche la plus haute
 - **Glisser-déposer** de fichiers directement dans la fenêtre
@@ -23,6 +25,32 @@ Format basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/), versi
 - MSRV déclarée (`rust-version = "1.95"`) et vérifiée en CI ; `cargo audit` et `cargo deny` désormais exécutés sur `dev` comme sur `main`
 
 ### Corrigé
+- **Arrêt brutal à l'ouverture d'un sélecteur de fichiers** (joindre un fichier, exporter, changer d'image de profil) : les boîtes de dialogue natives bloquantes démarrent une boucle d'événements imbriquée, dans laquelle winit se retrouve à traiter un événement alors qu'il en traite déjà un — et panique. L'application se fermait sans un mot, de façon intermittente selon les événements en vol. Les sélecteurs sont désormais asynchrones, le thread de rendu ne bloque plus
+- **Carrés vides à la place des caractères non latins** : les polices par défaut ne couvraient ni la coche `✓`, ni les flèches, ni surtout le moindre alphabet non latin — un message collé en chinois, en japonais ou en coréen était illisible d'un bout à l'autre. Une chaîne de polices remplace le choix unique : **Noto Sans** (texte), **Noto Sans Symbols 2** (symboles), **Inter** (flèches, déjà embarquée pour les noms d'auteur) puis **GNU Unifont** en dernier recours, qui couvre tout le plan multilingue de base. Chaque police n'est consultée que pour ce que les précédentes ne savent pas dessiner : le rendu tramé d'Unifont ne sert donc que là où le choix est entre « moche » et « rien ». Couverture du plan de base : 4 340 → 57 496 caractères
+- **Images BMP en vignette cassée** : l'extension était traitée comme une image sans que le décodeur correspondant soit compilé
+- **Messages perdus en silence entre deux pairs** : chaque annonce de découverte part deux fois (multicast et broadcast) et revient sous deux adresses source, si bien que l'adresse retenue pour un pair basculait toutes les trois secondes. Le pool rouvrait une connexion à chaque bascule, le pair d'en face refusait cette session en double *après* le handshake — l'émetteur croyait donc son canal établi — et les messages écrits entre-temps disparaissaient sans la moindre erreur, jusqu'à six minutes durant. Mesuré à 69 % de pertes entre deux instances locales, aussi bien en privé qu'en salon ou en diffusion. L'adresse d'un pair est désormais stable tant qu'il donne signe de vie, et une session entrante est remplacée par la plus récente au lieu d'être refusée
+- **Envoi de salon vers une adresse fantôme** : la branche « groupe » était la seule à ne pas écarter les pairs restaurés hors ligne (`0.0.0.0:0`)
+- **Accusé de lecture au retour du focus** : un message reçu pendant que la fenêtre était en arrière-plan n'était acquitté qu'après avoir quitté la conversation et y être revenu
+- **Accusé de réception avant persistance** : le destinataire acquittait dès la mise en file d'écriture ; un arrêt avant commit laissait l'expéditeur croire son message livré alors qu'il avait disparu. L'accusé suit désormais le commit
+- **File d'envoi vidée trop tôt** : un message quittait la file durable dès son admission dans le canal réseau — ni écriture socket, ni réception garanties. Un arrêt au mauvais moment le privait de toute réémission
+- **Erreurs SQLite invisibles** : disque plein ou base en lecture seule ne produisaient qu'une ligne de log, et la fermeture annonçait un succès. L'échec est maintenant remonté
+- **Pagination définitivement bloquée** après débordement de la fenêtre mémoire : le curseur perdu se confondait avec « tout l'historique est chargé », au moment précis où il restait le plus à charger
+- **Seuil d'acceptation des médias abaissé de 1 Gio à 50 Mo** : le pire cas écrit sans accord explicite passe de plusieurs Gio à environ 200 Mo
+- **Traçage par média distant** : l'URL d'un GIF venue d'un pair déclenchait une requête HTTP à l'affichage, sans clic — révélant l'adresse IP du destinataire et l'instant de sa lecture. Le chargement est restreint au CDN Klipy
+- **Schémas d'URL non filtrés** dans les liens Markdown : `file://` et `smb://` (fuite d'empreinte NTLM sous Windows) restent désormais du texte brut
+- **Débordement d'entier** sur la péremption des pairs : une horloge corrigée en arrière déclarait tous les pairs perdus d'un coup (et tuait la tâche de découverte en build debug)
+- **Fenêtre de lisibilité sur `identity.key`** : le fichier était créé selon l'umask puis resserré, et une clé existante n'était jamais revérifiée
+- **Passphrase de salon** dérivée par un hachage unique sans sel : la dérivation est désormais itérée, ce qui coûte une dérivation complète par tentative à un attaquant
+- **Effacement d'une conversation** laissant réactions et accusés orphelins jusqu'au redémarrage
+- **Un thread OS par pièce jointe** : remplacé par un pool borné, la préparation étant limitée par le disque
+- **Plafond du cache média** appliqué au seul démarrage : réappliqué toutes les 15 minutes
+- **Erreurs de parcours ignorées** à l'archivage d'un dossier, produisant un ZIP silencieusement incomplet
+- **Export annoncé avant écriture** : le succès s'affichait avant que le fichier ne soit écrit
+- **Accusé de lecture marqué envoyé avant émission** : une file d'envoi pleine le condamnait à ne jamais partir
+- **Découverte non bornée** : plafond du nombre de pairs suivis
+- **Ports d'instance** : un `ABCOM_INSTANCE` élevé faisait déborder le calcul
+- **Lanceur Linux cassé** : `%h` n'est pas développé dans un fichier `.desktop`, le raccourci ne lançait rien
+- **Bouton de mise en forme** jamais implémenté, retiré de la barre de saisie
 - Un avatar ou un événement de groupe volumineux pouvait dépasser la taille logique maximale et faire couper la connexion par le destinataire : la vérification est maintenant générique à tout paquet, à la source
 - Les connexions vers des pairs disparus n'étaient jamais libérées : balayage périodique et libération immédiate quand la découverte déclare un pair expiré
 - Chaque ouverture de conversation réémettait un accusé de lecture pour toute la fenêtre de messages (jusqu'à 2 000 × N membres) : seul le delta est envoyé, et le mémo d'un pair est réinitialisé à sa déconnexion

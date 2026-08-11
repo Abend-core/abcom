@@ -11,7 +11,7 @@
 //! sources importées avec succès sont renommées en `.bak`.
 
 use std::collections::{HashMap, HashSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, Sender, SyncSender};
 
 use rusqlite::types::Type;
@@ -26,7 +26,9 @@ pub const INITIAL_WINDOW: u32 = 500;
 pub const SEARCH_LIMIT: u32 = 200;
 /// Taille d'une page de chargement d'historique (scroll vers le haut).
 pub const OLDER_PAGE: u32 = 100;
-const SCHEMA_VERSION: i64 = 1;
+/// 2 : les salons sont désignés par un identifiant immuable — `to_user` porte
+/// `#<id>` au lieu de `#<nom>`, et les hashs qui en dépendent sont recalculés.
+const SCHEMA_VERSION: i64 = 2;
 
 /// Nature d'un accusé nominatif persisté.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -46,6 +48,22 @@ impl ReceiptKind {
     }
 }
 
+/// Point de reprise pour charger la page d'historique précédente.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HistoryCursor {
+    /// Position connue : charger ce qui précède ce rowid.
+    Before(i64),
+    /// Position perdue — la fenêtre mémoire a débordé et les rowids des
+    /// messages restants sont inconnus. Le stockage la reconstruit depuis le
+    /// hash du plus ancien message encore en mémoire.
+    ///
+    /// Sans ce cas, un débordement se confondait avec « tout l'historique est
+    /// déjà chargé » et la pagination s'arrêtait définitivement pour la
+    /// session, alors que c'est précisément le moment où il reste le plus à
+    /// charger.
+    BeforeHash(u64),
+}
+
 /// Commandes du thread de stockage (FIFO : l'ordre des mutations est
 /// préservé ; `Flush` répond une fois toutes les commandes précédentes
 /// appliquées).
@@ -56,12 +74,6 @@ pub enum StorageCmd {
     DeleteConversation {
         me: String,
         conv: Option<String>,
-    },
-    /// Migre l'historique d'un salon renommé (`to_user` : ancienne clé
-    /// `#ancien` vers la nouvelle `#nouveau`).
-    RenameConversation {
-        old: String,
-        new: String,
     },
     DeleteMessageByMediaId(String),
     /// Remplace l'ensemble des réactions d'un message (vide = suppression).
@@ -124,15 +136,27 @@ pub enum StorageCmd {
     /// Charge la page précédente de l'historique ; le résultat revient à
     /// l'UI via `AppEvent::OlderMessagesLoaded`.
     LoadOlder {
-        before_rowid: i64,
+        cursor: HistoryCursor,
     },
     /// Préférence persistée (table kv) : notifications, autostart…
     SetKv {
         k: String,
         v: String,
     },
-    /// Accusé de traitement : toutes les commandes précédentes sont écrites.
-    Flush(SyncSender<()>),
+    /// Nettoyage du cache disque des médias (orphelins + plafond).
+    ///
+    /// Traité ici parce que la liste des médias encore référencés est une
+    /// requête SQL : l'historique en mémoire est fenêtré, s'en servir
+    /// supprimerait les fichiers des messages plus anciens.
+    GcMedia {
+        dir: PathBuf,
+    },
+    /// Accusé de traitement : toutes les commandes précédentes ont été
+    /// appliquées. La réponse porte la **dernière erreur d'écriture** survenue
+    /// depuis le flush précédent, ou `None` si tout est bien passé — sans quoi
+    /// un disque plein ou une base en lecture seule resterait invisible et
+    /// l'utilisateur quitterait en croyant son historique sauvegardé.
+    Flush(SyncSender<Option<String>>),
 }
 
 /// État initial chargé depuis la base au démarrage.
@@ -260,8 +284,11 @@ impl Storage {
             if !has_nonce {
                 tx.execute("ALTER TABLE messages ADD COLUMN nonce INTEGER", [])?;
             }
-            tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         }
+        if version < 2 {
+            Self::migrate_groups_to_ids(&tx)?;
+        }
+        tx.pragma_update(None, "user_version", SCHEMA_VERSION)?;
         tx.commit()?;
 
         let mut storage = Self { conn };
@@ -273,6 +300,108 @@ impl Storage {
         storage.purge_orphan_receipts()?;
         purge_legacy_backups(base);
         Ok(storage)
+    }
+
+    /// Bascule les salons du nom vers l'identifiant (schéma v2).
+    ///
+    /// `to_user` portait `#<nom>` et ce nom entrait dans le hash des messages :
+    /// un renommage laissait derrière lui des réactions, des accusés et un
+    /// repère de lecture accrochés à des hashs que plus aucun message ne
+    /// produisait. On réécrit donc la clé en `#<id>`, on recalcule les hashs
+    /// concernés et on reporte les tables qui s'y réfèrent.
+    fn migrate_groups_to_ids(tx: &Connection) -> rusqlite::Result<()> {
+        let groups: Vec<Group> = {
+            let mut stmt = tx.prepare("SELECT data FROM groups")?;
+            let rows = stmt
+                .query_map([], |row| {
+                    let data = row.get::<_, String>(0)?;
+                    serde_json::from_str::<Group>(&data)
+                        .map_err(|error| Self::serde_from_sql(0, error))
+                })?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            rows
+        };
+
+        for mut group in groups {
+            let old_key = format!("#{}", group.name);
+            group.ensure_id();
+            let new_key = format!("#{}", group.id);
+            if old_key == new_key {
+                continue;
+            }
+
+            // Le salon lui-même : on persiste l'identifiant dérivé.
+            let data = serde_json::to_string(&group).map_err(Self::serde_to_sql)?;
+            tx.execute(
+                "UPDATE groups SET data = ?2 WHERE name = ?1",
+                params![group.name, data],
+            )?;
+
+            // Messages du salon : nouvelle clé et nouveau hash.
+            let rows: Vec<(i64, i64, ChatMessage)> = {
+                let mut stmt = tx.prepare(
+                    "SELECT id, hash, from_user, content, timestamp, ts_epoch, media, reply_to,
+                            nonce
+                     FROM messages WHERE to_user = ?1",
+                )?;
+                let rows = stmt
+                    .query_map(params![old_key], |row| {
+                        let media = row
+                            .get::<_, Option<String>>(6)?
+                            .map(|raw| serde_json::from_str(&raw))
+                            .transpose()
+                            .map_err(|error| Self::serde_from_sql(6, error))?;
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, i64>(1)?,
+                            ChatMessage {
+                                from: row.get::<_, String>(2)?,
+                                content: row.get::<_, String>(3)?,
+                                timestamp: row.get::<_, String>(4)?,
+                                timestamp_epoch: row.get::<_, Option<i64>>(5)?.map(|v| v as u64),
+                                // La nouvelle clé : c'est elle qui change le hash.
+                                to_user: Some(new_key.clone()),
+                                media,
+                                reply_to: row.get::<_, Option<i64>>(7)?.map(|v| v as u64),
+                                nonce: row.get::<_, Option<i64>>(8)?.map(|v| v as u64),
+                            },
+                        ))
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+                rows
+            };
+
+            for (row_id, old_hash, message) in rows {
+                let new_hash = message.stable_hash() as i64;
+                tx.execute(
+                    "UPDATE messages SET to_user = ?2, hash = ?3 WHERE id = ?1",
+                    params![row_id, new_key, new_hash],
+                )?;
+                if new_hash != old_hash {
+                    // `OR REPLACE` : deux hashs distincts peuvent converger vers
+                    // la même ligne cible, la clé primaire absorbe le doublon.
+                    tx.execute(
+                        "UPDATE OR REPLACE reactions SET message_hash = ?2 WHERE message_hash = ?1",
+                        params![old_hash, new_hash],
+                    )?;
+                    tx.execute(
+                        "UPDATE OR REPLACE receipts SET message_hash = ?2 WHERE message_hash = ?1",
+                        params![old_hash, new_hash],
+                    )?;
+                    tx.execute(
+                        "UPDATE read_marks SET message_hash = ?2 WHERE message_hash = ?1",
+                        params![old_hash, new_hash],
+                    )?;
+                }
+            }
+
+            // Repère de lecture : il est indexé par la clé de conversation.
+            tx.execute(
+                "UPDATE OR REPLACE read_marks SET username = ?2 WHERE username = ?1",
+                params![old_key, new_key],
+            )?;
+        }
+        Ok(())
     }
 
     fn serde_to_sql(error: serde_json::Error) -> rusqlite::Error {
@@ -356,6 +485,12 @@ impl Storage {
         Self::insert_message_on(&self.conn, msg)
     }
 
+    /// Force la version de schéma, pour rejouer une migration dans les tests.
+    #[cfg(test)]
+    pub fn set_user_version(&self, version: i64) -> rusqlite::Result<()> {
+        self.conn.pragma_update(None, "user_version", version)
+    }
+
     /// Insertion groupée : un seul commit WAL par rafale au lieu d'un par message.
     pub fn insert_messages(&mut self, msgs: &[ChatMessage]) -> rusqlite::Result<()> {
         match msgs {
@@ -371,35 +506,64 @@ impl Storage {
         }
     }
 
+    /// Efface une conversation **et tout ce qui s'y rattache**.
+    ///
+    /// Réactions, accusés et repère de lecture sont indexés par hash de
+    /// message : les laisser derrière eux les rendait orphelins jusqu'à la
+    /// prochaine ouverture de l'application, où seul `purge_orphan_receipts`
+    /// finissait par les ramasser. Une conversation effacée doit l'être tout
+    /// de suite et entièrement.
     pub fn delete_conversation(&self, me: &str, conv: Option<&str>) -> rusqlite::Result<()> {
-        match conv {
-            None => {
-                self.conn
-                    .execute("DELETE FROM messages WHERE to_user IS NULL", [])?;
-            }
+        // Filtre commun à la sélection des hashs et à la suppression.
+        let (predicate, args): (&str, Vec<String>) = match conv {
+            None => ("to_user IS NULL", Vec::new()),
             // Salon de groupe : tous les messages portent la clé en `to_user`,
             // quel que soit l'auteur.
-            Some(conv) if conv.starts_with('#') => {
-                self.conn
-                    .execute("DELETE FROM messages WHERE to_user = ?1", params![conv])?;
-            }
-            Some(user) => {
-                self.conn.execute(
-                    "DELETE FROM messages
-                     WHERE (from_user = ?1 AND to_user = ?2)
-                        OR (from_user = ?2 AND to_user = ?1)",
-                    params![user, me],
-                )?;
-            }
-        }
-        Ok(())
-    }
+            Some(conv) if conv.starts_with('#') => ("to_user = ?1", vec![conv.to_string()]),
+            Some(user) => (
+                "(from_user = ?1 AND to_user = ?2) OR (from_user = ?2 AND to_user = ?1)",
+                vec![user.to_string(), me.to_string()],
+            ),
+        };
+        let params = rusqlite::params_from_iter(args.iter());
 
-    pub fn rename_conversation(&self, old: &str, new: &str) -> rusqlite::Result<()> {
+        let mut stmt = self
+            .conn
+            .prepare(&format!("SELECT hash FROM messages WHERE {predicate}"))?;
+        let hashes: Vec<i64> = stmt
+            .query_map(params, |row| row.get::<_, i64>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        drop(stmt);
+
         self.conn.execute(
-            "UPDATE messages SET to_user = ?2 WHERE to_user = ?1",
-            params![old, new],
+            &format!("DELETE FROM messages WHERE {predicate}"),
+            rusqlite::params_from_iter(args.iter()),
         )?;
+
+        // Un même hash peut rester porté par un message d'une autre
+        // conversation (rare mais possible) : on ne purge que ceux devenus
+        // réellement orphelins.
+        let mut still_used = self
+            .conn
+            .prepare("SELECT EXISTS(SELECT 1 FROM messages WHERE hash = ?1)")?;
+        let mut drop_reactions = self
+            .conn
+            .prepare("DELETE FROM reactions WHERE message_hash = ?1")?;
+        let mut drop_receipts = self
+            .conn
+            .prepare("DELETE FROM receipts WHERE message_hash = ?1")?;
+        let mut drop_marks = self
+            .conn
+            .prepare("DELETE FROM read_marks WHERE message_hash = ?1")?;
+        for hash in hashes {
+            let used: bool = still_used.query_row(params![hash], |row| row.get(0))?;
+            if used {
+                continue;
+            }
+            drop_reactions.execute(params![hash])?;
+            drop_receipts.execute(params![hash])?;
+            drop_marks.execute(params![hash])?;
+        }
         Ok(())
     }
 
@@ -694,6 +858,27 @@ impl Storage {
 
     /// Page précédente de l'historique (messages plus anciens que
     /// `before_rowid`), ordre chronologique.
+    /// Résout un curseur en rowid : `BeforeHash` demande une recherche par
+    /// hash (colonne indexée). Un hash introuvable — message purgé entre-temps
+    /// — ne renvoie rien plutôt que de repartir du début de l'historique.
+    fn resolve_cursor(&self, cursor: HistoryCursor) -> rusqlite::Result<Option<i64>> {
+        match cursor {
+            HistoryCursor::Before(rowid) => Ok(Some(rowid)),
+            HistoryCursor::BeforeHash(hash) => self
+                .conn
+                .query_row(
+                    "SELECT id FROM messages WHERE hash = ?1 ORDER BY id LIMIT 1",
+                    params![hash as i64],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(Some)
+                .or_else(|error| match error {
+                    rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                    other => Err(other),
+                }),
+        }
+    }
+
     pub fn load_older(
         &self,
         before_rowid: i64,
@@ -813,7 +998,15 @@ impl Storage {
         let groups = stmt
             .query_map([], |row| {
                 let data = row.get::<_, String>(0)?;
-                serde_json::from_str::<Group>(&data).map_err(|error| Self::serde_from_sql(0, error))
+                serde_json::from_str::<Group>(&data)
+                    .map(|mut group| {
+                        // Salon enregistré avant l'introduction des
+                        // identifiants : on le dérive, à l'identique chez tous
+                        // les membres.
+                        group.ensure_id();
+                        group
+                    })
+                    .map_err(|error| Self::serde_from_sql(0, error))
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
@@ -1083,6 +1276,8 @@ fn run(
 ) {
     // Commande qui a interrompu un lot : à rejouer avant toute lecture, sinon l'ordre change.
     let mut deferred: Option<StorageCmd> = None;
+    // Dernière erreur d'écriture, rendue au prochain `Flush`.
+    let mut last_error: Option<String> = None;
     loop {
         let cmd = match deferred.take() {
             Some(cmd) => cmd,
@@ -1105,19 +1300,31 @@ fn run(
                     Err(_) => break,
                 }
             }
-            if let Err(e) = storage.insert_messages(&batch) {
-                tracing::error!("erreur d'écriture : {e}");
+            match storage.insert_messages(&batch) {
+                Ok(()) => {
+                    // Commit acquis : les accusés en attente peuvent partir.
+                    let hashes = batch.iter().map(|msg| msg.stable_hash()).collect();
+                    let _ = event_tx.blocking_send(AppEvent::MessagesPersisted { hashes });
+                }
+                Err(e) => {
+                    tracing::error!("erreur d'écriture : {e}");
+                    last_error = Some(e.to_string());
+                }
             }
             continue;
         }
 
         let result = match cmd {
-            // Traité juste au-dessus.
-            StorageCmd::InsertMessage(msg) => storage.insert_message(&msg),
+            // Le chemin normal est le lot ci-dessus ; ce bras ne sert qu'au
+            // message rejoué après interruption d'une rafale.
+            StorageCmd::InsertMessage(msg) => storage.insert_message(&msg).inspect(|()| {
+                let _ = event_tx.blocking_send(AppEvent::MessagesPersisted {
+                    hashes: vec![msg.stable_hash()],
+                });
+            }),
             StorageCmd::DeleteConversation { me, conv } => {
                 storage.delete_conversation(&me, conv.as_deref())
             }
-            StorageCmd::RenameConversation { old, new } => storage.rename_conversation(&old, &new),
             StorageCmd::DeleteMessageByMediaId(id) => storage.delete_by_media_id(&id),
             StorageCmd::ReplaceReactions { hash, entries } => {
                 storage.replace_reactions(hash, &entries)
@@ -1152,17 +1359,24 @@ fn run(
                 Err(error) => Err(error),
             },
             StorageCmd::ExportConversation { me, conv, path } => {
-                match storage.export_conversation(&me, conv.as_deref()) {
-                    Ok(text) => {
-                        if let Err(error) = std::fs::write(&path, text) {
-                            tracing::error!("export impossible : {error}");
-                        } else {
-                            tracing::info!("conversation exportée vers {}", path.display());
-                        }
-                        Ok(())
+                // Le verdict remonte à l'UI : c'est elle qui a annoncé
+                // l'export, elle doit pouvoir se dédire.
+                let outcome = match storage.export_conversation(&me, conv.as_deref()) {
+                    Ok(text) => std::fs::write(&path, text).map_err(|error| error.to_string()),
+                    Err(error) => Err(error.to_string()),
+                };
+                let error = match outcome {
+                    Ok(()) => {
+                        tracing::info!("conversation exportée vers {}", path.display());
+                        None
                     }
-                    Err(error) => Err(error),
-                }
+                    Err(error) => {
+                        tracing::error!("export impossible : {error}");
+                        Some(error)
+                    }
+                };
+                let _ = event_tx.blocking_send(AppEvent::ConversationExported { error });
+                Ok(())
             }
             StorageCmd::AddReceipt {
                 hash,
@@ -1170,8 +1384,17 @@ fn run(
                 kind,
             } => storage.add_receipt(hash, &username, kind),
             StorageCmd::SetKv { k, v } => storage.set_kv(&k, &v),
-            StorageCmd::LoadOlder { before_rowid } => {
-                match storage.load_older(before_rowid, OLDER_PAGE) {
+            StorageCmd::LoadOlder { cursor } => match storage.resolve_cursor(cursor) {
+                Ok(None) => {
+                    // Curseur irrécupérable : on le signale comme fin
+                    // d'historique plutôt que de laisser l'UI attendre.
+                    let _ = event_tx.blocking_send(AppEvent::OlderMessagesLoaded {
+                        messages: Vec::new(),
+                        oldest_rowid: None,
+                    });
+                    Ok(())
+                }
+                Ok(Some(before_rowid)) => match storage.load_older(before_rowid, OLDER_PAGE) {
                     Ok((messages, oldest_rowid)) => {
                         let _ = event_tx.blocking_send(AppEvent::OlderMessagesLoaded {
                             messages,
@@ -1180,15 +1403,29 @@ fn run(
                         Ok(())
                     }
                     Err(e) => Err(e),
+                },
+                Err(e) => Err(e),
+            },
+            StorageCmd::GcMedia { dir } => match storage.all_media_ids() {
+                Ok(referenced) => {
+                    // Le parcours du dossier part sur un thread : il ne doit
+                    // bloquer ni les écritures suivantes, ni l'UI.
+                    std::thread::spawn(move || crate::app::media::gc_media_dir(dir, referenced));
+                    Ok(())
                 }
-            }
+                Err(error) => Err(error),
+            },
             StorageCmd::Flush(ack) => {
-                let _ = ack.send(());
+                // Les commandes sont appliquées dans l'ordre : à ce point,
+                // tout ce qui précède est traité. On rend le verdict, pas
+                // seulement l'accusé de passage.
+                let _ = ack.send(last_error.take());
                 Ok(())
             }
         };
         if let Err(e) = result {
             tracing::error!("erreur d'écriture : {e}");
+            last_error = Some(e.to_string());
         }
     }
 

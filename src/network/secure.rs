@@ -32,10 +32,38 @@ use crate::util::MutexExt;
 /// établir de session.
 pub const NOISE_PATTERN_PSK: &str = "Noise_XXpsk3_25519_ChaChaPoly_BLAKE2s";
 
+/// Nombre d'itérations d'étirement de la passphrase de salon.
+///
+/// Un hachage simple se calcule des millions de fois par seconde : un
+/// dictionnaire de passphrases courantes tombe alors instantanément. L'attaque
+/// reste ici en ligne — XXpsk3 n'autorise pas la vérification hors ligne depuis
+/// une capture passive — mais l'étirement rend chaque tentative coûteuse pour
+/// un attaquant sans rien coûter à l'usage : le calcul n'a lieu qu'au
+/// démarrage, une seule fois.
+const PSK_ITERATIONS: u32 = 200_000;
+
 /// Dérive le secret partagé 32 octets d'une passphrase de salon.
+///
+/// Étirement itératif et sel de domaine plutôt qu'un hachage unique : sans le
+/// sel, une même passphrase donnerait la même clé dans n'importe quel contexte
+/// et se prêterait aux tables précalculées.
 pub fn derive_psk(passphrase: &str) -> Vec<u8> {
     use blake2::{Blake2s256, Digest};
-    Blake2s256::digest(passphrase.as_bytes()).to_vec()
+
+    let mut acc = Blake2s256::new();
+    acc.update(b"abcom-room-psk-v1");
+    acc.update(passphrase.as_bytes());
+    let mut out = acc.finalize();
+    for _ in 0..PSK_ITERATIONS {
+        let mut round = Blake2s256::new();
+        round.update(b"abcom-room-psk-v1");
+        round.update(out);
+        // Passphrase réinjectée à chaque tour : un attaquant ne peut pas
+        // précalculer la chaîne sans elle.
+        round.update(passphrase.as_bytes());
+        out = round.finalize();
+    }
+    out.to_vec()
 }
 
 /// Taille maximale d'un message Noise (limite du protocole).

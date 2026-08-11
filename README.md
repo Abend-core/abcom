@@ -13,7 +13,7 @@ Interface graphique native (egui), pensée pour tourner en permanence : la fenê
 - **Conversations** : fil public « Tous », messages privés, salons de groupe avec gestion des membres
 - **Messages riches** : Markdown, emojis (picker + `:shortcodes:`), réactions, réponses citées, indicateur de frappe
 - **Accusés** : livraison (✓✓ gris) et lecture (✓✓ bleu) en privé, avec retransmission automatique
-- **Fichiers et médias** : envoi de fichiers et dossiers (> 1 Go), acceptation par le destinataire, vignettes et visionneuse
+- **Fichiers et médias** : envoi de fichiers et dossiers jusqu'à 2 Gio, acceptation explicite du destinataire au-delà de 50 Mo, vignettes et visionneuse
 - **GIF, mèmes, stickers** : sélecteur Klipy intégré
 - **Sécurité** : identité X25519 par machine, chiffrement Noise XX, épinglage des clés (TOFU), passphrase de salon optionnelle
 - **Résident** : fermeture = repli dans le tray, notifications système, badge non-lus, lancement automatique à l'ouverture de session
@@ -51,11 +51,12 @@ Installation par plateforme (Linux/systemd, Windows, Docker) : voir [docs/06-ins
 | [07 — Développement](docs/07-developpement.md) | Build, tests, CI, workflow Git, dépendances et licences |
 | [08 — Historique et audits](docs/08-historique-et-audits.md) | Phases du projet, audits menés, résultats mesurés |
 | [09 — Limites et pistes](docs/09-limites-et-pistes.md) | Limites connues et travaux envisagés |
+| [10 — Cahier de tests](docs/10-cahier-de-tests.md) | Tests manuels : fonctionnalités, régressions, spécificités par OS |
 
-Pour contribuer : [CONTRIBUTING.md](CONTRIBUTING.md) (barrière verte, conventions, workflow Git). Le suivi au fil de l'eau est dans [CHANGELOG.md](CHANGELOG.md) et [AVANCEMENT.md](AVANCEMENT.md). Les documents historiques (audits et plans d'origine, ADR, anciennes versions) sont conservés tels quels dans [old/](old/).
+Pour contribuer : [CONTRIBUTING.md](CONTRIBUTING.md) (barrière verte, conventions, workflow Git). Le suivi au fil de l'eau est dans [CHANGELOG.md](CHANGELOG.md). Les documents historiques (audits et plans exécutés, ADR, anciennes versions) sont conservés tels quels dans [old/](old/), indexés par [old/README.md](old/README.md).
 
 ## État du projet
 
-Version **1.0.0-beta.1**, sous licence **AGPL-3.0**. 308 tests automatisés — dont un scénario P2P headless externe et un rendu headless de toute l'interface — et CI GitHub Actions sur Linux, macOS et Windows, avec MSRV, `cargo audit`, `cargo deny` et mesure de couverture.
+Version **1.0.0-beta.1**, sous licence **AGPL-3.0**. 329 tests automatisés — dont un scénario P2P headless externe et un rendu headless de toute l'interface — et CI GitHub Actions sur Linux, macOS et Windows, avec MSRV, `cargo audit`, `cargo deny` et mesure de couverture.
 
-Ce qui reste ouvert est listé dans [AUDIT.md](AUDIT.md) (dette de code) et [AUDIT-DEPENDANCES.md](AUDIT-DEPENDANCES.md) (ce que nos dépendances offrent et qu'on n'exploite pas).
+Ce qui reste ouvert est listé dans [docs/09 — Limites et pistes](docs/09-limites-et-pistes.md).

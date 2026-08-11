@@ -11,6 +11,7 @@ fn state() -> AppState {
 
 fn group(owner: &str, members: &[&str]) -> Group {
     Group {
+        id: "Team".to_string(),
         name: "Team".to_string(),
         owner: owner.to_string(),
         members: members.iter().map(|member| member.to_string()).collect(),
@@ -70,7 +71,7 @@ fn add_rename_and_delete_require_known_owner() {
         &mut state,
         "mallory",
         GroupAction::AddMember {
-            group_name: "Team".to_string(),
+            group_id: "Team".to_string(),
             username: "bob".to_string(),
         },
     );
@@ -78,7 +79,7 @@ fn add_rename_and_delete_require_known_owner() {
         &mut state,
         "mallory",
         GroupAction::Rename {
-            group_name: "Team".to_string(),
+            group_id: "Team".to_string(),
             new_name: "Hijacked".to_string(),
         },
     );
@@ -86,7 +87,7 @@ fn add_rename_and_delete_require_known_owner() {
         &mut state,
         "mallory",
         GroupAction::Delete {
-            group_name: "Team".to_string(),
+            group_id: "Team".to_string(),
         },
     );
     assert_eq!(state.groups[0].name, "Team");
@@ -96,7 +97,7 @@ fn add_rename_and_delete_require_known_owner() {
         &mut state,
         "alice",
         GroupAction::AddMember {
-            group_name: "Team".to_string(),
+            group_id: "Team".to_string(),
             username: "bob".to_string(),
         },
     );
@@ -104,18 +105,21 @@ fn add_rename_and_delete_require_known_owner() {
         &mut state,
         "alice",
         GroupAction::Rename {
-            group_name: "Team".to_string(),
+            group_id: "Team".to_string(),
             new_name: "Crew".to_string(),
         },
     );
     assert!(state.groups[0].members.contains(&"bob".to_string()));
     assert_eq!(state.groups[0].name, "Crew");
+    // Le renommage n'a pas touché à l'identité du salon : les événements
+    // suivants le désignent toujours par le même identifiant.
+    assert_eq!(state.groups[0].id, "Team");
 
     apply(
         &mut state,
         "alice",
         GroupAction::Delete {
-            group_name: "Crew".to_string(),
+            group_id: "Team".to_string(),
         },
     );
     assert!(state.groups.is_empty());
@@ -132,7 +136,7 @@ fn remove_requires_owner_or_voluntary_departure() {
         &mut state,
         "mallory",
         GroupAction::RemoveMember {
-            group_name: "Team".to_string(),
+            group_id: "Team".to_string(),
             username: "bob".to_string(),
         },
     );
@@ -142,7 +146,7 @@ fn remove_requires_owner_or_voluntary_departure() {
         &mut state,
         "bob",
         GroupAction::RemoveMember {
-            group_name: "Team".to_string(),
+            group_id: "Team".to_string(),
             username: "bob".to_string(),
         },
     );
@@ -152,7 +156,7 @@ fn remove_requires_owner_or_voluntary_departure() {
         &mut state,
         "alice",
         GroupAction::RemoveMember {
-            group_name: "Team".to_string(),
+            group_id: "Team".to_string(),
             username: "charlie".to_string(),
         },
     );

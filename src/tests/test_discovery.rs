@@ -95,3 +95,106 @@ fn a_foreign_key_cannot_sign_for_another_identity() {
     let forged: DiscoveryPacket = serde_json::from_slice(&bytes).unwrap();
     assert!(!super::announcement_is_authentic(&forged, 1_000));
 }
+
+/// Régression : une même annonce part en multicast **et** en broadcast, et
+/// nous revient donc sous deux adresses source. Tant que le pair répond,
+/// l'application ne doit voir qu'une seule adresse, annoncée une seule fois.
+///
+/// Sans cela l'adresse du pair basculait à chaque annonce : le pool rouvrait
+/// une connexion à chaque bascule, la session en double était refusée d'en
+/// face, et les messages émis entre-temps disparaissaient sans erreur (mesuré
+/// à 69 % de pertes entre deux instances locales).
+#[test]
+fn the_two_channels_of_one_announcement_yield_one_discovery() {
+    use std::collections::HashMap;
+    use std::net::SocketAddr;
+
+    let loopback: SocketAddr = "127.0.0.1:9010".parse().unwrap();
+    let lan: SocketAddr = "192.168.1.39:9010".parse().unwrap();
+    let mut timestamps = HashMap::new();
+    let mut addrs = HashMap::new();
+
+    let mut announced = Vec::new();
+    // Dix cycles d'annonce, chacun reçu par les deux canaux.
+    for cycle in 0..10 {
+        let now = 1_000 + cycle * super::BROADCAST_INTERVAL;
+        for source in [loopback, lan] {
+            let seen =
+                super::observe_announcement(&mut timestamps, &mut addrs, "alice", source, now);
+            announced.extend(seen);
+        }
+    }
+    assert_eq!(
+        announced,
+        vec![loopback],
+        "un pair stable ne doit être annoncé qu'une fois, à une seule adresse"
+    );
+}
+
+#[test]
+fn the_tracked_peer_cap_still_holds() {
+    use std::collections::HashMap;
+    use std::net::SocketAddr;
+
+    let mut timestamps = HashMap::new();
+    let mut addrs = HashMap::new();
+    let addr: SocketAddr = "127.0.0.1:9000".parse().unwrap();
+    for i in 0..super::MAX_TRACKED_PEERS {
+        assert!(super::observe_announcement(
+            &mut timestamps,
+            &mut addrs,
+            &format!("p{i}"),
+            addr,
+            1_000
+        )
+        .is_some());
+    }
+    assert!(
+        super::observe_announcement(&mut timestamps, &mut addrs, "un-de-trop", addr, 1_000)
+            .is_none(),
+        "au-delà du plafond, un pair inconnu est ignoré"
+    );
+    assert!(
+        super::observe_announcement(&mut timestamps, &mut addrs, "p0", addr, 1_100).is_none(),
+        "un pair déjà suivi reste rafraîchi sans nouvel événement"
+    );
+}
+
+#[test]
+fn a_peer_keeps_one_address_while_it_answers() {
+    use std::collections::HashMap;
+    use std::net::SocketAddr;
+
+    let loopback: SocketAddr = "127.0.0.1:9010".parse().unwrap();
+    let lan: SocketAddr = "192.168.1.39:9010".parse().unwrap();
+    let mut known = HashMap::new();
+
+    // Première annonce : adresse adoptée.
+    assert!(super::adopt_addr(&mut known, "alice", loopback, 1_000));
+    // La même annonce arrivée par l'autre canal (multicast/broadcast) ne doit
+    // pas faire basculer l'adresse — c'est ce va-et-vient qui rouvrait une
+    // connexion toutes les trois secondes.
+    assert!(!super::adopt_addr(&mut known, "alice", lan, 1_000));
+    assert!(!super::adopt_addr(&mut known, "alice", loopback, 1_003));
+    assert!(!super::adopt_addr(&mut known, "alice", lan, 1_003));
+    assert_eq!(known["alice"].0, loopback);
+
+    // Vrai déménagement : l'adresse retenue s'est tue, la nouvelle est adoptée.
+    let later = 1_003 + super::DISCOVERY_TIMEOUT;
+    assert!(super::adopt_addr(&mut known, "alice", lan, later));
+    assert_eq!(known["alice"].0, lan);
+}
+
+#[test]
+fn a_backward_clock_jump_does_not_drop_every_peer() {
+    // Pair vu à l'instant : pas encore périmé.
+    assert!(!super::peer_is_stale(1_000, 1_000));
+    // Silencieux au-delà du délai : périmé.
+    assert!(super::peer_is_stale(
+        1_000 + super::DISCOVERY_TIMEOUT,
+        1_000
+    ));
+    // Horloge reculée de 100 s : `now - last_seen` déborderait et déclarerait
+    // le pair perdu. Il doit rester considéré comme frais.
+    assert!(!super::peer_is_stale(1_000, 1_100));
+}

@@ -255,6 +255,7 @@ fn main() -> anyhow::Result<()> {
         psk_active,
         ui::UiRuntimeChannels {
             event_rx,
+            event_tx: event_tx.clone(),
             send_tx,
             send_media_tx,
             media_offer_rx,

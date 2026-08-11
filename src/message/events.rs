@@ -64,4 +64,28 @@ pub enum AppEvent {
     SendFailed {
         username: String,
     },
+    /// Fin d'une copie vers le dossier Téléchargements. Le travail se fait sur
+    /// un thread dédié — un média peut peser plusieurs Gio et gèlerait l'UI —
+    /// donc le verdict revient par événement.
+    MediaDownloaded {
+        /// Nom du fichier écrit, ou `None` si la copie a échoué.
+        filename: Option<String>,
+    },
+    /// Fin d'un export de conversation. L'écriture a lieu sur le thread de
+    /// stockage : annoncer le succès à l'ouverture du sélecteur de fichier
+    /// mentait dès que l'écriture échouait (disque plein, dossier en lecture
+    /// seule).
+    ConversationExported {
+        error: Option<String>,
+    },
+    /// Messages effectivement commités en base.
+    ///
+    /// Un ACK dit à l'émetteur « je l'ai » : l'envoyer dès la mise en file
+    /// d'écriture mentait, un arrêt avant commit lui laissant croire le
+    /// message livré alors qu'il avait disparu. Les accusés attendent donc ce
+    /// signal, et une écriture qui échoue ne l'émet jamais — l'émetteur
+    /// réémet.
+    MessagesPersisted {
+        hashes: Vec<u64>,
+    },
 }

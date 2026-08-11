@@ -5,7 +5,6 @@ set -euo pipefail
 BINARY_SOURCE="${1:-.}"
 BINARY_DIR="$HOME/.local/bin"
 DATA_DIR="$HOME/.local/share/abcom"
-SERVICE_DIR="$HOME/.config/systemd/user"
 APPS_DIR="$HOME/.local/share/applications"
 
 echo "╔════════════════════════════════════╗"
@@ -46,38 +45,22 @@ echo "  ✓ Binaire → $BINARY_DIR/abcom"
 mkdir -p "$DATA_DIR"
 echo "  ✓ Dossier de données → $DATA_DIR"
 
-# Service systemd (optionnel, mais pratique)
-mkdir -p "$SERVICE_DIR"
-cat > "$SERVICE_DIR/abcom.service" << 'EOF'
-[Unit]
-Description=Abcom - LAN Chat
-After=network-online.target
-Wants=network-online.target
-
-[Service]
-Type=simple
-ExecStart=%h/.local/bin/abcom %u
-Restart=on-failure
-RestartSec=5
-
-[Install]
-WantedBy=default.target
-EOF
-echo "  ✓ Service systemd installé"
-
-# Activer le service
-systemctl --user daemon-reload 2>/dev/null || true
-loginctl enable-linger "$(whoami)" 2>/dev/null || true
-echo "  ✓ Service prêt pour démarrage auto"
+# Lancement automatique : aucun service systemd. L'application gère elle-même
+# son démarrage à l'ouverture de session (entrée XDG dans ~/.config/autostart),
+# réglable depuis Paramètres → Général. Installer les deux mécanismes lançait
+# deux instances qui se disputaient les mêmes ports.
 
 # ── Raccourci Menu (Desktop file) ─────────────────────────────────────────────
 mkdir -p "$APPS_DIR"
-cat > "$APPS_DIR/abcom.desktop" << 'EOF'
+# `%h` est un spécificateur systemd : dans un fichier .desktop il n'est pas
+# développé et le raccourci ne lance rien. On écrit le chemin absolu (heredoc
+# non quoté), en échappant `$username` qui doit rester pour le shell appelé.
+cat > "$APPS_DIR/abcom.desktop" << EOF
 [Desktop Entry]
 Type=Application
 Name=Abcom
 Comment=Chat LAN P2P et découverte automatique des pairs
-Exec=bash -c 'read -p "Ton pseudonyme: " username; %h/.local/bin/abcom "$username"'
+Exec=bash -c 'read -p "Ton pseudonyme: " username; "$BINARY_DIR/abcom" "\$username"'
 Icon=chat
 Terminal=true
 Categories=Network;Chat;
@@ -109,12 +92,9 @@ echo "   Méthode 2 (Menu/Raccourci):"
 echo "     → Applications → Abcom"
 echo "     (ou cherche 'Abcom' dans ton app launcher)"
 echo ""
-echo "   Méthode 3 (Service auto au démarrage - optionnel):"
-echo "     $ systemctl --user enable abcom.service"
-echo "     $ systemctl --user start abcom.service"
-echo ""
 echo "📝 Configuration:"
-echo "   • Historique: $DATA_DIR/messages.json"
+echo "   • Données: $DATA_DIR (base abcom.db, médias, identité)"
+echo "   • Démarrage à l'ouverture de session : réglable dans Paramètres → Général"
 echo "   • Ports: 9000/tcp (P2P), 9001/udp (découverte)"
 echo ""
 echo "💡 Prochaines étapes:"

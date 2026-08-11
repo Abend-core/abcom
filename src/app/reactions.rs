@@ -1,6 +1,11 @@
 use super::AppState;
 use crate::message::{ChatMessage, ReactionAction, ReactionEntry, ReactionEvent};
 
+/// Emojis distincts retenus pour un même message.
+const MAX_REACTIONS_PER_MESSAGE: usize = 32;
+/// Messages distincts pour lesquels des réactions sont conservées.
+const MAX_TRACKED_REACTION_MESSAGES: usize = 100_000;
+
 impl AppState {
     /// Chemin LOCAL : l'utilisateur courant clique un emoji. Calcule lui-même
     /// s'il s'agit d'un ajout ou d'un retrait (toggle), met à jour l'état, et
@@ -50,7 +55,25 @@ impl AppState {
     /// Applique l'action donnée sans recalcul de toggle (idempotent : un Add
     /// déjà présent ou un Remove déjà absent ne change rien).
     pub fn apply_reaction_event(&mut self, event: &ReactionEvent) {
+        // Un hash inconnu n'est pas rejeté : `has_message` ne voit que la
+        // fenêtre mémoire, et une réaction sur un message plus ancien —
+        // légitime — serait perdue. On borne donc la croissance plutôt que
+        // d'exiger l'existence, pour qu'un pair ne puisse pas faire enfler
+        // indéfiniment la table des réactions.
+        if event.action == ReactionAction::Add
+            && !self.reactions.contains_key(&event.message_hash)
+            && self.reactions.len() >= MAX_TRACKED_REACTION_MESSAGES
+        {
+            tracing::warn!("réaction ignorée : trop de messages réactionnés suivis");
+            return;
+        }
         let entries = self.reactions.entry(event.message_hash).or_default();
+        if event.action == ReactionAction::Add
+            && entries.len() >= MAX_REACTIONS_PER_MESSAGE
+            && !entries.iter().any(|e| e.emoji == event.emoji)
+        {
+            return;
+        }
         match event.action {
             ReactionAction::Add => match entries.iter_mut().find(|e| e.emoji == event.emoji) {
                 Some(e) if !e.users.iter().any(|u| u == &event.user) => {
