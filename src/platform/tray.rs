@@ -88,14 +88,95 @@ fn wake_native_event_loop() {
 
 #[cfg(feature = "tray")]
 pub(crate) struct Tray {
-    // Conservée en vie : la dropper retire l'icône du système.
+    // Conservée en vie : la dropper retire l'icône du système. Sous Linux
+    // l'icône appartient au thread GTK, qui la garde en vie lui-même.
+    #[cfg(not(target_os = "linux"))]
     #[allow(dead_code)]
     icon: TrayIcon,
+    #[cfg(not(target_os = "linux"))]
     normal: Icon,
+    #[cfg(not(target_os = "linux"))]
     badge: Icon,
     open_id: MenuId,
     quit_id: MenuId,
     badge_shown: bool,
+}
+
+/// Badge non-lus voulu par l'UI. Sous Linux, l'icône ne peut être touchée que
+/// depuis le thread GTK : l'UI publie ici son intention, le thread l'applique.
+#[cfg(all(feature = "tray", target_os = "linux"))]
+static UNREAD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Monte la boucle GTK et l'icône sur un thread dédié, et renvoie les
+/// identifiants des deux entrées de menu.
+///
+/// `tray-icon` impose sous Linux que l'icône soit créée sur un thread faisant
+/// tourner une boucle GTK ; winit n'en fournit pas. Sans cela, `Menu::new()`
+/// panique (« GTK has not been initialized ») avant même que le repli prévu
+/// par l'appelant ne puisse jouer.
+#[cfg(all(feature = "tray", target_os = "linux"))]
+fn spawn_gtk_thread(open_label: String, quit_label: String) -> Option<(MenuId, MenuId)> {
+    use std::sync::atomic::Ordering;
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::Builder::new()
+        .name("abcom-tray-gtk".into())
+        .spawn(move || {
+            // Chaque étape peut échouer sur un poste sans zone de
+            // notification : on prévient l'appelant plutôt que de paniquer.
+            let build = || -> Option<((MenuId, MenuId), TrayIcon, Icon, Icon)> {
+                gtk::init().ok()?;
+                let (normal, badge) = build_icons()?;
+                let menu = Menu::new();
+                let open_item = MenuItem::new(&open_label, true, None);
+                let quit_item = MenuItem::new(&quit_label, true, None);
+                menu.append(&open_item).ok()?;
+                menu.append(&PredefinedMenuItem::separator()).ok()?;
+                menu.append(&quit_item).ok()?;
+                let ids = (open_item.id().clone(), quit_item.id().clone());
+                let icon = TrayIconBuilder::new()
+                    .with_menu(Box::new(menu))
+                    .with_tooltip("Abcom")
+                    .with_icon(normal.clone())
+                    .with_menu_on_left_click(false)
+                    .build()
+                    .ok()?;
+                Some((ids, icon, normal, badge))
+            };
+
+            let Some((ids, icon, normal, badge)) = build() else {
+                let _ = tx.send(None);
+                return;
+            };
+            let _ = tx.send(Some(ids));
+
+            // L'UI ne peut pas toucher l'icône depuis son thread : on relit son
+            // intention ici. Au repos le drapeau ne bouge pas, ce réveil ne
+            // coûte donc qu'une comparaison cinq fois par seconde.
+            let mut applied = false;
+            gtk::glib::timeout_add_local(std::time::Duration::from_millis(200), move || {
+                let wanted = UNREAD.load(Ordering::Relaxed);
+                if wanted != applied {
+                    applied = wanted;
+                    let next = if wanted {
+                        badge.clone()
+                    } else {
+                        normal.clone()
+                    };
+                    let _ = icon.set_icon(Some(next));
+                }
+                gtk::glib::ControlFlow::Continue
+            });
+
+            gtk::main();
+        })
+        .ok()?;
+
+    // Le thread répond dès que l'icône est posée ; au-delà, on considère que
+    // le bureau n'offre pas de zone de notification.
+    rx.recv_timeout(std::time::Duration::from_secs(5))
+        .ok()
+        .flatten()
 }
 
 #[cfg(feature = "tray")]
@@ -104,6 +185,17 @@ impl Tray {
     /// principal, event loop démarrée (premier `update()`). Renvoie `None`
     /// si le système n'offre pas de tray (l'appelant retombe alors sur le
     /// comportement « la croix quitte »).
+    #[cfg(target_os = "linux")]
+    pub(crate) fn new(open_label: &str, quit_label: &str) -> Option<Self> {
+        let (open_id, quit_id) = spawn_gtk_thread(open_label.to_owned(), quit_label.to_owned())?;
+        Some(Self {
+            open_id,
+            quit_id,
+            badge_shown: false,
+        })
+    }
+
+    #[cfg(not(target_os = "linux"))]
     pub(crate) fn new(open_label: &str, quit_label: &str) -> Option<Self> {
         let (normal, badge) = build_icons()?;
 
@@ -167,6 +259,20 @@ impl Tray {
     }
 
     /// Affiche/retire la pastille non-lus sur l'icône.
+    ///
+    /// Sous Linux, l'icône appartient au thread GTK : on n'y publie qu'un
+    /// drapeau, appliqué par ce thread à son prochain réveil.
+    #[cfg(target_os = "linux")]
+    pub(crate) fn set_unread(&mut self, unread: bool) {
+        if unread == self.badge_shown {
+            return;
+        }
+        self.badge_shown = unread;
+        UNREAD.store(unread, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Affiche/retire la pastille non-lus sur l'icône.
+    #[cfg(not(target_os = "linux"))]
     pub(crate) fn set_unread(&mut self, unread: bool) {
         if unread == self.badge_shown {
             return;

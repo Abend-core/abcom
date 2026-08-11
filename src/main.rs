@@ -109,11 +109,79 @@ fn install_panic_hook() {
     }));
 }
 
+/// Écarte les réglages GTK hérités d'un terminal confiné par snap.
+///
+/// Lancée depuis le terminal intégré de VS Code (distribué en snap), l'appli
+/// hérite de `GTK_PATH`, `GDK_PIXBUF_MODULE_FILE`… pointant dans `/snap/…`.
+/// À l'initialisation de GTK (thread du tray), ces modules tirent la glibc du
+/// snap et le processus meurt sur `undefined symbol: __libc_pthread_init`.
+/// On ne touche à rien si c'est bien nous qui tournons en snap.
+#[cfg(target_os = "linux")]
+fn drop_foreign_snap_gtk_env() {
+    const LEAKED: [&str; 6] = [
+        "GTK_PATH",
+        "GTK_EXE_PREFIX",
+        "GTK_IM_MODULE_FILE",
+        "GDK_PIXBUF_MODULE_FILE",
+        "GSETTINGS_SCHEMA_DIR",
+        "GIO_MODULE_DIR",
+    ];
+    let own_snap = std::env::var_os("SNAP_NAME").is_some_and(|n| n == *"abcom");
+    if own_snap {
+        return;
+    }
+    for key in LEAKED {
+        let leaks = std::env::var(key).is_ok_and(|v| v.starts_with("/snap/"));
+        if leaks {
+            // SAFETY : appelé avant tout spawn, aucun autre fil ne lit l'environnement.
+            std::env::remove_var(key);
+            tracing::debug!("variable GTK héritée d'un snap tiers ignorée : {key}");
+        }
+    }
+}
+
+/// Sous Wayland, la boucle d'événements de winit tourne à vide et sature un
+/// cœur : un minuteur de calloop dont l'échéance est dépassée sans être
+/// consommé force un timeout nul à chaque tour (`calloop-0.13.0/src/sys.rs`,
+/// `if next_timeout <= now { timeout = Some(Duration::ZERO) }`). `epoll_wait`
+/// rend alors la main aussitôt, la fenêtre cesse d'être repeinte et le
+/// processus brûle 100 % d'un cœur — mesuré à 0,1 % sur le même binaire via
+/// XWayland. Le défaut est en amont (winit 0.30.13, épinglé par eframe 0.36) :
+/// à retirer dès que la montée d'eframe l'aura corrigé.
+///
+/// Rien n'est forcé si le lanceur a déjà choisi son backend : poser
+/// `WINIT_UNIX_BACKEND=wayland` retrouve le rendu natif, bug compris.
+#[cfg(target_os = "linux")]
+fn prefer_x11_backend() {
+    if std::env::var_os("WINIT_UNIX_BACKEND").is_some() {
+        return;
+    }
+    // Session X11 pure : winit choisirait X11 de toute façon.
+    if std::env::var_os("WAYLAND_DISPLAY").is_none() {
+        return;
+    }
+    // Sans serveur X accessible, XWayland est absent : mieux vaut une fenêtre
+    // Wayland qui sature qu'aucune fenêtre du tout.
+    if std::env::var_os("DISPLAY").is_none() {
+        tracing::warn!("session Wayland sans DISPLAY : backend natif conservé");
+        return;
+    }
+    // SAFETY : appelé avant tout spawn, aucun autre fil ne lit l'environnement.
+    std::env::set_var("WINIT_UNIX_BACKEND", "x11");
+    tracing::info!("session Wayland : bascule sur X11 (contournement winit 0.30)");
+}
+
 fn main() -> anyhow::Result<()> {
     load_dotenv(".env");
+    #[cfg(target_os = "linux")]
+    drop_foreign_snap_gtk_env();
     // Le garde doit vivre aussi longtemps que le processus, sinon les
     // dernières lignes ne sont jamais écrites sur disque.
     let _log_guard = init_logging();
+    // Après l'initialisation du journal, sinon la trace du choix de backend
+    // n'irait nulle part. Reste bien avant la création de la fenêtre.
+    #[cfg(target_os = "linux")]
+    prefer_x11_backend();
     install_panic_hook();
 
     let username = std::env::args().nth(1).unwrap_or_else(|| {
