@@ -850,6 +850,10 @@ impl eframe::App for AbcomApp {
                 match action {
                     tray::TrayAction::Open => self.show_from_tray(ctx),
                     tray::TrayAction::Quit => {
+                        tracing::info!(
+                            fenetre_repliee = self.window_hidden,
+                            "arrêt : demandé depuis le tray"
+                        );
                         self.really_quit = true;
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
@@ -1084,12 +1088,17 @@ impl eframe::App for AbcomApp {
     /// Flush final du stockage : attend que toutes les écritures en file
     /// soient appliquées avant la fermeture.
     fn on_exit(&mut self) {
+        let started = std::time::Instant::now();
         if let Err(error) = self.state.lock_safe().flush_storage() {
             // Dernier instant utile : la fenêtre se ferme, il n'y a plus d'UI
             // pour prévenir. Le journal garde la trace de ce qui n'a pas été
             // écrit, au lieu de laisser croire à une sauvegarde réussie.
             tracing::error!("historique non sauvegardé : {error}");
         }
+        tracing::info!(
+            duree_ms = started.elapsed().as_millis(),
+            "arrêt : flush fait"
+        );
     }
 }
 
