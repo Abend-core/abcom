@@ -255,11 +255,11 @@ fn paint_eye_icon(painter: &egui::Painter, rect: egui::Rect, color: egui::Color3
     painter.circle_filled(center, rect.height() * 0.28, color);
 }
 
-/// Compteur de lecture des salons et de « Tous » : œil suivi de « lu / total ».
-/// Un clic ouvre le détail nominatif de qui a reçu et qui a lu.
+/// Accusés des salons et de « Tous » : un œil, bleu une fois que tout le monde
+/// a lu. Le survol donne le compte, le clic le détail nominatif.
 ///
 /// Les coches du 1-à-1 n'ont pas de sens à plusieurs — chaque membre peut avoir
-/// reçu ou lu indépendamment —, d'où un compteur plutôt qu'un état unique.
+/// reçu ou lu indépendamment —, d'où un indicateur distinct.
 pub(super) fn show_receipt_detail_button(
     ui: &mut egui::Ui,
     detail: &crate::app::ReceiptDetail,
@@ -275,35 +275,19 @@ pub(super) fn show_receipt_detail_button(
         crate::ui::theme::palette(ui).text_muted
     };
 
-    let count = format!("{read}/{}", detail.audience);
-    let galley = ui.painter().layout_no_wrap(
-        count.clone(),
-        egui::TextStyle::Small.resolve(ui.style()),
-        color,
-    );
+    // Zone cliquable plus haute que l'œil : de quoi viser sans effort, sans
+    // écarter la ligne d'en-tête pour autant.
     const EYE: egui::Vec2 = egui::vec2(14.0, 9.0);
-    let (rect, btn) = ui.allocate_exact_size(
-        egui::vec2(EYE.x + 3.0 + galley.size().x, EYE.y.max(galley.size().y)),
-        egui::Sense::click(),
-    );
+    let (rect, btn) = ui.allocate_exact_size(egui::vec2(EYE.x, 14.0), egui::Sense::click());
     if ui.is_rect_visible(rect) {
         paint_eye_icon(
             ui.painter(),
-            egui::Rect::from_center_size(
-                egui::pos2(rect.left() + EYE.x * 0.5, rect.center().y),
-                EYE,
-            ),
-            color,
-        );
-        ui.painter().galley(
-            egui::pos2(
-                rect.left() + EYE.x + 3.0,
-                rect.center().y - galley.size().y * 0.5,
-            ),
-            galley,
+            egui::Rect::from_center_size(rect.center(), EYE),
             color,
         );
     }
+    // Sans libellé, l'œil n'existe pas pour un lecteur d'écran — et le compte,
+    // retiré de l'affichage, reste accessible au survol.
     let label = format!("{} {read}/{}", i18n::LU_PAR.get(language), detail.audience);
     btn.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
     let btn = btn
