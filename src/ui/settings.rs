@@ -256,8 +256,9 @@ impl AbcomApp {
                                     let (textures, texture_count) = egui_texture_bytes(ctx);
                                     let caches = egui_loader_bytes(ctx);
                                     let mo = |bytes: u64| format!("{:.0} Mo", bytes as f64 / 1e6);
+                                    let atlas = ctx.fonts(|f| f.font_image_size());
                                     let line = format!(
-                                        "{} {} ({} {}) · {} {} ({}) · {} {} · {} {} ({} {})",
+                                        "{} {} ({} {}) · {} {} ({}) · {} {} · {} {}×{} · {} {} ({} {})",
                                         self.t(i18n::TAS),
                                         mo(m.heap),
                                         self.t(i18n::PIC),
@@ -267,12 +268,29 @@ impl AbcomApp {
                                         texture_count,
                                         self.t(i18n::CACHES_IMAGES),
                                         mo(caches),
+                                        self.t(i18n::ATLAS_POLICE),
+                                        atlas[0],
+                                        atlas[1],
                                         self.t(i18n::PROCESSUS),
                                         mo(m.rss),
                                         self.t(i18n::PIC),
                                         mo(m.rss_peak),
                                     );
-                                    ui.label(egui::RichText::new(line).small().weak());
+                                    ui.vertical(|ui| {
+                                        ui.label(egui::RichText::new(line).small().weak());
+                                        // Distingue la mémoire vivante de celle
+                                        // que l'allocateur retient : si le tas
+                                        // chute après ce bouton, il n'y avait
+                                        // rien à corriger dans notre code.
+                                        if ui
+                                            .small_button(self.t(i18n::LIBERER_LA_MEMOIRE))
+                                            .clicked()
+                                        {
+                                            self.emoji.textures.clear();
+                                            ctx.forget_all_images();
+                                            crate::ui::release_memory_to_os();
+                                        }
+                                    });
                                 }
                                 ui.end_row();
                             });
