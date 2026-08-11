@@ -398,6 +398,7 @@ impl AbcomApp {
                                                     self.show_emoji_picker,
                                                 )
                                             };
+                                        self.emoji_btn_rect = emoji_btn.rect;
                                         if emoji_btn.clicked() {
                                             self.show_emoji_picker = !self.show_emoji_picker;
                                             self.gif_picker.show = false;

@@ -48,7 +48,6 @@ catalog! {
     TRANSFERT_MEDIA_INTERROMPU => ("Transfert média interrompu", "Media transfer interrupted"),
     FICHIER_REFUSE => ("fichier refusé", "file declined"),
     ECHEC_DE_LIVRAISON_D_UN_MESSAGE => ("Échec de livraison d'un message privé", "A private message could not be delivered"),
-    EMOJIS => ("Emojis", "Emojis"),
     BOUTON_EMOJIS => ("Emojis", "Emoji"),
     MEMES => ("Mèmes", "Memes"),
     SEARCH_KLIPY => ("Search KLIPY", "Search KLIPY"),

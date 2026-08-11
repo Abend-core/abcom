@@ -294,6 +294,9 @@ pub(crate) struct AbcomApp {
     pub(crate) composer: ComposerState,
     pub(crate) show_attachment_menu: bool,
     pub(crate) show_emoji_picker: bool,
+    /// Bouton emoji de la barre de saisie : ancre de la popup, qui s'affiche
+    /// juste au-dessus de lui comme celle des réactions au-dessus de leur « + ».
+    pub(crate) emoji_btn_rect: egui::Rect,
     pub(crate) gif_picker: GifPickerState,
     pub(crate) enable_sound_notifications: bool,
     pub(crate) last_notification: Option<String>,
@@ -431,6 +434,7 @@ impl AbcomApp {
             },
             show_attachment_menu: false,
             show_emoji_picker: false,
+            emoji_btn_rect: egui::Rect::NOTHING,
             gif_picker: GifPickerState {
                 show: false,
                 tab: GifPickerTab::Gif,
