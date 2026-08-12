@@ -1315,6 +1315,11 @@ pub fn run(
         anyhow::anyhow!("Échec GUI : {}", e)
     })?;
 
+    // Fermeture propre : le backend graphique de cette session n'est pas en
+    // cause, rien à contourner au prochain lancement.
+    #[cfg(windows)]
+    crate::config::clear_gpu_backend_attempt();
+
     Ok(())
 }
 
@@ -1342,23 +1347,35 @@ fn low_power_wgpu() -> eframe::egui_wgpu::WgpuConfiguration {
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_setup {
         setup.power_preference = eframe::wgpu::PowerPreference::LowPower;
 
-        // Windows : Direct3D 12 imposé, Vulkan écarté.
+        // Windows : D3D12 ou Vulkan, jamais les deux à la fois.
         //
-        // Le pilote Vulkan Intel plante l'application, au lancement comme à la
-        // fermeture, par accès mémoire invalide. Le journal d'événements le
-        // désigne sans ambiguïté — quatre occurrences, module `igvk64.dll`
-        // version 31.0.101.2135, exception 0xc0000005, toujours au même offset
-        // 0x64ea72. Le plantage est dans le pilote, pas dans notre code : rien
-        // à corriger ici, seulement un chemin à éviter.
+        // wgpu initialise tous les backends autorisés pour énumérer leurs
+        // adaptateurs. Or le pilote Vulkan Intel peut planter l'application,
+        // au lancement comme à la fermeture, par accès mémoire invalide —
+        // observé une première fois avec le journal d'événements Windows
+        // désignant `igvk64.dll` sans ambiguïté. Rien à corriger de notre
+        // côté : c'est le pilote qui plante, pas notre appel.
         //
-        // D3D12 est l'autre backend natif de Windows, disponible sur toute
-        // machine capable de faire tourner l'application. `WGPU_BACKEND` reste
-        // prioritaire pour revenir à Vulkan une fois le pilote à jour, ou pour
-        // vérifier que le plantage a bien disparu.
+        // `WGPU_BACKEND` garde la priorité absolue (débogage). À défaut,
+        // `resolve_gpu_backend` retient le contenu du fichier `gpu_backend`
+        // du répertoire de données s'il existe (édité à la main, aucun
+        // réglage dans l'interface), sinon D3D12 — sauf si ce choix est
+        // justement celui que le lancement précédent a laissé en plan, auquel
+        // cas l'autre backend est pris à sa place. Voir
+        // `config::resolve_gpu_backend`.
         #[cfg(windows)]
         {
-            setup.instance_descriptor.backends =
-                eframe::wgpu::Backends::from_env().unwrap_or(eframe::wgpu::Backends::DX12);
+            setup.instance_descriptor.backends = match eframe::wgpu::Backends::from_env() {
+                Some(forced) => forced,
+                None => {
+                    let backend = crate::config::resolve_gpu_backend();
+                    crate::config::mark_gpu_backend_attempt(backend);
+                    match backend {
+                        crate::config::GpuBackend::Dx12 => eframe::wgpu::Backends::DX12,
+                        crate::config::GpuBackend::Vulkan => eframe::wgpu::Backends::VULKAN,
+                    }
+                }
+            };
         }
     }
     options
