@@ -320,6 +320,11 @@ pub(crate) struct AbcomApp {
     /// Préférence de thème : egui suit le système et détecte ses changements
     /// en cours d'exécution, ce que notre détection au démarrage ne faisait pas.
     pub(crate) theme_preference: egui::ThemePreference,
+    /// Backend graphique choisi dans Paramètres → Général (Windows). `None` =
+    /// automatique. Ne prend effet qu'au prochain lancement : le backend de
+    /// la session en cours est déjà figé (cf. `low_power_wgpu`).
+    #[cfg(windows)]
+    pub(crate) gpu_backend_choice: Option<crate::config::GpuBackend>,
     /// Textures d'avatars, indexées par nom d'utilisateur (cache de rendu).
     pub(crate) avatar_textures: std::collections::HashMap<String, egui::TextureHandle>,
     /// Pairs auxquels notre avatar a déjà été envoyé (évite les répétitions).
@@ -486,6 +491,8 @@ impl AbcomApp {
             pending_picker: 0,
             ui_language: UiLanguage::French,
             theme_preference: egui::ThemePreference::System,
+            #[cfg(windows)]
+            gpu_backend_choice: crate::config::gpu_backend_choice(),
             avatar_textures: std::collections::HashMap::new(),
             avatar_sent_to: std::collections::HashSet::new(),
             pending_avatar_pick: false,
@@ -1315,6 +1322,11 @@ pub fn run(
         anyhow::anyhow!("Échec GUI : {}", e)
     })?;
 
+    // Fermeture propre : le backend graphique de cette session n'est pas en
+    // cause, rien à contourner au prochain lancement.
+    #[cfg(windows)]
+    crate::config::clear_gpu_backend_attempt();
+
     Ok(())
 }
 
@@ -1342,23 +1354,34 @@ fn low_power_wgpu() -> eframe::egui_wgpu::WgpuConfiguration {
     if let eframe::egui_wgpu::WgpuSetup::CreateNew(setup) = &mut options.wgpu_setup {
         setup.power_preference = eframe::wgpu::PowerPreference::LowPower;
 
-        // Windows : Direct3D 12 imposé, Vulkan écarté.
+        // Windows : D3D12 ou Vulkan, jamais les deux à la fois.
         //
-        // Le pilote Vulkan Intel plante l'application, au lancement comme à la
-        // fermeture, par accès mémoire invalide. Le journal d'événements le
-        // désigne sans ambiguïté — quatre occurrences, module `igvk64.dll`
-        // version 31.0.101.2135, exception 0xc0000005, toujours au même offset
-        // 0x64ea72. Le plantage est dans le pilote, pas dans notre code : rien
-        // à corriger ici, seulement un chemin à éviter.
+        // wgpu initialise tous les backends autorisés pour énumérer leurs
+        // adaptateurs. Or le pilote Vulkan Intel peut planter l'application,
+        // au lancement comme à la fermeture, par accès mémoire invalide —
+        // observé une première fois avec le journal d'événements Windows
+        // désignant `igvk64.dll` sans ambiguïté. Rien à corriger de notre
+        // côté : c'est le pilote qui plante, pas notre appel.
         //
-        // D3D12 est l'autre backend natif de Windows, disponible sur toute
-        // machine capable de faire tourner l'application. `WGPU_BACKEND` reste
-        // prioritaire pour revenir à Vulkan une fois le pilote à jour, ou pour
-        // vérifier que le plantage a bien disparu.
+        // `WGPU_BACKEND` garde la priorité absolue (débogage). À défaut,
+        // `resolve_gpu_backend` retient soit le choix explicite de
+        // Paramètres → Général, soit — s'il détecte que le lancement
+        // précédent ne s'est pas terminé proprement — l'autre backend que
+        // celui tenté alors, soit D3D12 par défaut (le plus éprouvé en
+        // pratique sous Windows). Voir `config::resolve_gpu_backend`.
         #[cfg(windows)]
         {
-            setup.instance_descriptor.backends =
-                eframe::wgpu::Backends::from_env().unwrap_or(eframe::wgpu::Backends::DX12);
+            setup.instance_descriptor.backends = match eframe::wgpu::Backends::from_env() {
+                Some(forced) => forced,
+                None => {
+                    let backend = crate::config::resolve_gpu_backend();
+                    crate::config::mark_gpu_backend_attempt(backend);
+                    match backend {
+                        crate::config::GpuBackend::Dx12 => eframe::wgpu::Backends::DX12,
+                        crate::config::GpuBackend::Vulkan => eframe::wgpu::Backends::VULKAN,
+                    }
+                }
+            };
         }
     }
     options
