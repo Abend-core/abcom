@@ -146,6 +146,39 @@ fn clear_gpu_backend_choice() {
     }
 }
 
+/// Backend retenu pour cette session, mémorisé par `resolve_gpu_backend` pour
+/// que `confirm_gpu_backend_healthy` sache lequel valider.
+static SESSION_BACKEND: OnceLock<GpuBackend> = OnceLock::new();
+
+/// Acte qu'un backend a tenu assez longtemps pour être considéré comme bon.
+///
+/// Le marqueur de tentative ne peut pas n'être effacé qu'à la fermeture
+/// propre : un `kill` (gestionnaire des tâches, coupure de courant, arrêt
+/// forcé pendant un test) est alors indiscernable d'un plantage, et le
+/// lancement suivant bascule vers l'autre backend — éventuellement vers celui
+/// qui, lui, plante réellement sur cette machine. On efface donc dès que la
+/// session a fait ses preuves.
+///
+/// Quand le backend en cours n'est pas celui par défaut, il est en plus
+/// persisté : le contournement d'un pilote fautif se fixe de lui-même au lieu
+/// d'être redécouvert à chaque démarrage, au prix d'un plantage à chaque fois.
+pub fn confirm_gpu_backend_healthy() {
+    let Some(backend) = SESSION_BACKEND.get().copied() else {
+        return;
+    };
+    clear_gpu_backend_attempt();
+    if backend != GpuBackend::Dx12 && gpu_backend_choice() != Some(backend) {
+        if let Err(error) = std::fs::write(gpu_backend_choice_path(), backend.as_str()) {
+            tracing::warn!("backend graphique retenu non persisté : {error}");
+        } else {
+            tracing::info!(
+                backend = backend.as_str(),
+                "backend graphique validé et retenu pour les prochains lancements"
+            );
+        }
+    }
+}
+
 fn gpu_backend_attempt_path() -> PathBuf {
     data_dir().join("gpu_backend_attempt")
 }
@@ -223,6 +256,7 @@ pub fn resolve_gpu_backend() -> GpuBackend {
         );
         clear_gpu_backend_choice();
     }
+    let _ = SESSION_BACKEND.set(backend);
     backend
 }
 

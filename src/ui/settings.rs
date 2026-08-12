@@ -27,6 +27,7 @@ impl AbcomApp {
         let title = self.t(i18n::PARAMETRES);
         let profile_label = self.t(i18n::PROFIL);
         let general_label = self.t(i18n::GENERAL);
+        let storage_label = self.t(i18n::STOCKAGE);
         let credits_label = self.t(i18n::CREDITS);
         let license_label = self.t(i18n::LICENCE);
 
@@ -44,6 +45,9 @@ impl AbcomApp {
         let has_avatar = self.state.lock_safe().my_avatar.is_some();
         let mut pick_avatar = false;
         let mut clear_avatar = false;
+        // Le scan parcourt des dossiers : demandé après la fenêtre, hors de
+        // la closure qui emprunte déjà `self`.
+        let mut request_scan = false;
 
         // Onglet Général
         let language_label = self.t(i18n::LANGUE);
@@ -75,6 +79,7 @@ impl AbcomApp {
                     for (tab, label) in [
                         (SettingsTab::Profile, profile_label),
                         (SettingsTab::General, general_label),
+                        (SettingsTab::Storage, storage_label),
                         (SettingsTab::Credits, credits_label),
                         (SettingsTab::License, license_label),
                     ] {
@@ -246,6 +251,11 @@ impl AbcomApp {
                                 }
                                 ui.end_row();
                             });
+                    }
+                    SettingsTab::Storage => {
+                        storage_tab(ui, self.storage_usage.as_ref(), self.ui_language, || {
+                            request_scan = true;
+                        });
                     }
                     SettingsTab::Credits => {
                         egui::ScrollArea::vertical()
@@ -508,5 +518,100 @@ impl AbcomApp {
             self.avatar_textures.remove(&my_name);
             self.broadcast_my_avatar();
         }
+        if request_scan {
+            self.state.lock_safe().request_storage_usage();
+        }
     }
+}
+
+/// Formate une taille en unité lisible. Les octets bruts d'un cache de
+/// plusieurs gigaoctets ne disent rien à l'œil.
+fn human_bytes(bytes: u64) -> String {
+    const UNITS: [(&str, u64); 3] = [("Go", 1_000_000_000), ("Mo", 1_000_000), ("ko", 1_000)];
+    for (unit, scale) in UNITS {
+        if bytes >= scale {
+            return format!("{:.1} {unit}", bytes as f64 / scale as f64);
+        }
+    }
+    format!("{bytes} o")
+}
+
+/// Onglet Stockage : ventilation de l'occupation disque.
+///
+/// `on_refresh` est appelé quand un nouveau calcul est demandé — y compris à
+/// la première ouverture, tant qu'aucun résultat n'est arrivé.
+fn storage_tab(
+    ui: &mut egui::Ui,
+    usage: Option<&crate::app::usage::Usage>,
+    language: UiLanguage,
+    mut on_refresh: impl FnMut(),
+) {
+    let Some(usage) = usage else {
+        // Premier affichage : le calcul n'a pas encore répondu.
+        on_refresh();
+        ui.label(egui::RichText::new(i18n::CALCUL_EN_COURS.get(language)).weak());
+        return;
+    };
+
+    let total = usage.total();
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(i18n::ESPACE_OCCUPE.get(language)).strong());
+        ui.label(
+            egui::RichText::new(human_bytes(total.bytes))
+                .heading()
+                .strong(),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui.button(i18n::RECALCULER.get(language)).clicked() {
+                on_refresh();
+            }
+        });
+    });
+    ui.label(
+        egui::RichText::new(format!(
+            "{} {}",
+            total.files,
+            i18n::UNITE_FICHIERS.get(language)
+        ))
+        .small()
+        .weak(),
+    );
+    ui.add_space(10.0);
+    ui.separator();
+    ui.add_space(6.0);
+
+    egui::Grid::new("storage_breakdown")
+        .num_columns(3)
+        .spacing([16.0, 8.0])
+        .striped(true)
+        .show(ui, |ui| {
+            // Les envois d'abord parmi les médias : ce sont des copies dont
+            // l'original est ailleurs, donc le poste le plus sûr à purger.
+            let rows = [
+                (i18n::MEDIAS_RECUS.get(language), usage.media_received),
+                (i18n::MEDIAS_ENVOYES.get(language), usage.media_sent),
+                (i18n::HISTORIQUE.get(language), usage.database),
+                (i18n::IMAGE_DE_PROFIL.get(language), usage.avatar),
+                (i18n::JOURNAUX.get(language), usage.logs),
+                (i18n::FICHIERS_DE_TRAVAIL.get(language), usage.scratch),
+            ];
+            for (label, entry) in rows {
+                ui.label(label);
+                ui.label(human_bytes(entry.bytes));
+                let detail = if entry.files == 0 {
+                    String::new()
+                } else {
+                    format!("{} {}", entry.files, i18n::UNITE_FICHIERS.get(language))
+                };
+                ui.label(egui::RichText::new(detail).small().weak());
+                ui.end_row();
+            }
+        });
+
+    ui.add_space(10.0);
+    ui.label(
+        egui::RichText::new(i18n::LES_ENVOIS_SONT_DES_COPIES.get(language))
+            .small()
+            .weak(),
+    );
 }

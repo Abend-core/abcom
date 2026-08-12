@@ -39,6 +39,13 @@ mod theme;
 /// façon Discord (le fil charge 100 messages de plus en remontant).
 pub(crate) const CHAT_WINDOW_STEP: usize = 100;
 
+/// Durée au-delà de laquelle le backend graphique de la session est réputé
+/// bon. Assez long pour couvrir l'initialisation GPU, qui est le moment où
+/// un pilote fautif plante ; assez court pour qu'un usage ordinaire la
+/// dépasse toujours.
+#[cfg(windows)]
+const GPU_HEALTHY_AFTER: Duration = Duration::from_secs(20);
+
 /// Emojis de réaction par défaut proposés avant tout historique d'usage,
 /// façon Discord.
 const DEFAULT_RECENT_EMOJIS: [&str; 6] = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
@@ -64,6 +71,7 @@ pub(crate) enum UiLanguage {
 pub(crate) enum SettingsTab {
     Profile,
     General,
+    Storage,
     Credits,
     License,
 }
@@ -320,6 +328,14 @@ pub(crate) struct AbcomApp {
     /// Préférence de thème : egui suit le système et détecte ses changements
     /// en cours d'exécution, ce que notre détection au démarrage ne faisait pas.
     pub(crate) theme_preference: egui::ThemePreference,
+    /// Dernière ventilation de l'occupation disque (onglet Stockage).
+    /// `None` tant que le calcul, qui parcourt des dossiers, n'a pas répondu.
+    pub(crate) storage_usage: Option<crate::app::usage::Usage>,
+    /// Début de la session, pour juger le backend graphique sur sa tenue.
+    pub(crate) started_at: std::time::Instant,
+    /// Le backend a déjà été validé : on n'y revient plus de la session.
+    #[cfg(windows)]
+    pub(crate) gpu_backend_confirmed: bool,
     /// Textures d'avatars, indexées par nom d'utilisateur (cache de rendu).
     pub(crate) avatar_textures: std::collections::HashMap<String, egui::TextureHandle>,
     /// Pairs auxquels notre avatar a déjà été envoyé (évite les répétitions).
@@ -486,6 +502,10 @@ impl AbcomApp {
             pending_picker: 0,
             ui_language: UiLanguage::French,
             theme_preference: egui::ThemePreference::System,
+            storage_usage: None,
+            started_at: std::time::Instant::now(),
+            #[cfg(windows)]
+            gpu_backend_confirmed: false,
             avatar_textures: std::collections::HashMap::new(),
             avatar_sent_to: std::collections::HashSet::new(),
             pending_avatar_pick: false,
@@ -894,6 +914,15 @@ impl eframe::App for AbcomApp {
         let unread = self.has_unread;
         if let Some(t) = &mut self.tray {
             t.set_unread(unread);
+        }
+
+        // Le backend graphique a tenu : la session compte comme saine, plus
+        // rien à contourner au prochain lancement (cf.
+        // `config::confirm_gpu_backend_healthy`).
+        #[cfg(windows)]
+        if !self.gpu_backend_confirmed && self.started_at.elapsed() >= GPU_HEALTHY_AFTER {
+            self.gpu_backend_confirmed = true;
+            crate::config::confirm_gpu_backend_healthy();
         }
     }
 

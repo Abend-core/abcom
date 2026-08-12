@@ -15,6 +15,7 @@ mod receipts;
 pub mod storage;
 mod transfers;
 mod typing;
+pub mod usage;
 
 pub use conversation::ConversationId;
 pub use peers::Peer;
@@ -224,6 +225,16 @@ impl AppState {
     pub(crate) fn request_media_gc(&self) {
         self.persist(StorageCmd::GcMedia {
             dir: self.media_dir.clone(),
+        });
+    }
+
+    /// Demande la ventilation de l'occupation disque. Le résultat arrive par
+    /// `AppEvent::StorageUsage` : rien ne bloque ici.
+    pub(crate) fn request_storage_usage(&self) {
+        self.persist(StorageCmd::ScanUsage {
+            data_dir: crate::config::data_dir(),
+            media_dir: self.media_dir.clone(),
+            me: self.my_username.clone(),
         });
     }
 

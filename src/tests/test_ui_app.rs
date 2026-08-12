@@ -139,6 +139,7 @@ fn renders_every_settings_tab() {
     for tab in [
         SettingsTab::Profile,
         SettingsTab::General,
+        SettingsTab::Storage,
         SettingsTab::Credits,
         SettingsTab::License,
     ] {
