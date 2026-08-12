@@ -61,6 +61,9 @@ pub enum AppEvent {
     /// Ventilation de l'occupation disque, calculée hors du thread de rendu
     /// (parcours de dossiers) à la demande de l'onglet Stockage.
     StorageUsage(crate::app::usage::Usage),
+    /// Compte rendu d'une purge du cache média demandée depuis Paramètres —
+    /// réelle, ou simulée pour l'aperçu « libérerait X ».
+    MediaPurged(crate::app::media::GcReport),
     /// Aucune connexion sécurisée n'a pu être établie vers ce pair : le
     /// paquet est perdu. Remonté à l'UI (bannière) car sur un binaire release
     /// sans console, l'utilisateur n'a aucun autre signal.

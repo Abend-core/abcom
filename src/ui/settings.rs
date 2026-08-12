@@ -47,7 +47,7 @@ impl AbcomApp {
         let mut clear_avatar = false;
         // Le scan parcourt des dossiers : demandé après la fenêtre, hors de
         // la closure qui emprunte déjà `self`.
-        let mut request_scan = false;
+        let mut storage_actions = StorageActions::default();
 
         // Onglet Général
         let language_label = self.t(i18n::LANGUE);
@@ -87,6 +87,13 @@ impl AbcomApp {
                             .selectable_label(self.modals.settings_tab == tab, label)
                             .clicked()
                         {
+                            // Revenir sur Stockage doit repartir du disque : le
+                            // dossier a pu changer depuis le dernier calcul, et
+                            // un aperçu périmé activerait « Purger » à tort.
+                            if tab == SettingsTab::Storage {
+                                storage_actions.refresh = true;
+                                storage_actions.preview = true;
+                            }
                             self.modals.settings_tab = tab;
                         }
                     }
@@ -253,9 +260,17 @@ impl AbcomApp {
                             });
                     }
                     SettingsTab::Storage => {
-                        storage_tab(ui, self.storage_usage.as_ref(), self.ui_language, || {
-                            request_scan = true;
-                        });
+                        storage_tab(
+                            ui,
+                            self.storage_usage.as_ref(),
+                            self.purge_preview.as_ref(),
+                            StorageSettings {
+                                retention_days: &mut self.retention_days,
+                                cache_max_mib: &mut self.cache_max_mib,
+                            },
+                            self.ui_language,
+                            &mut storage_actions,
+                        );
                     }
                     SettingsTab::Credits => {
                         egui::ScrollArea::vertical()
@@ -518,15 +533,49 @@ impl AbcomApp {
             self.avatar_textures.remove(&my_name);
             self.broadcast_my_avatar();
         }
-        if request_scan {
+        self.apply_storage_actions(storage_actions);
+    }
+
+    /// Applique les demandes de l'onglet Stockage. Hors de la closure de la
+    /// fenêtre : chacune reprend le verrou de l'état partagé.
+    fn apply_storage_actions(&mut self, actions: StorageActions) {
+        // Réglages d'abord : la simulation qui suit doit porter sur eux.
+        if actions.save {
+            let (days, mib) = (self.retention_days, self.cache_max_mib);
+            let mut state = self.state.lock_safe();
+            state.set_pref("media_retention_days", &days.to_string());
+            state.set_pref("media_cache_max_mib", &mib.to_string());
+            drop(state);
+            self.purge_preview = None;
+        }
+        if actions.refresh && !self.storage_scan_pending {
+            self.storage_scan_pending = true;
             self.state.lock_safe().request_storage_usage();
+        }
+        // Une purge réelle rend son propre compte rendu : inutile de simuler
+        // en plus, et la simulation d'après portera sur le dossier nettoyé.
+        if actions.purge {
+            self.purge_preview = None;
+            self.state.lock_safe().request_media_gc(false, true);
+            return;
+        }
+        if actions.preview {
+            self.purge_preview = None;
+        }
+        // L'aperçu se redemande tant qu'il manque : c'est lui qui décide si le
+        // bouton « Purger » est actif.
+        let on_storage_tab =
+            self.modals.settings_open && self.modals.settings_tab == SettingsTab::Storage;
+        if on_storage_tab && self.purge_preview.is_none() && !self.purge_preview_pending {
+            self.purge_preview_pending = true;
+            self.state.lock_safe().request_media_gc(true, true);
         }
     }
 }
 
 /// Formate une taille en unité lisible. Les octets bruts d'un cache de
 /// plusieurs gigaoctets ne disent rien à l'œil.
-fn human_bytes(bytes: u64) -> String {
+pub(crate) fn human_bytes(bytes: u64) -> String {
     const UNITS: [(&str, u64); 3] = [("Go", 1_000_000_000), ("Mo", 1_000_000), ("ko", 1_000)];
     for (unit, scale) in UNITS {
         if bytes >= scale {
@@ -536,19 +585,45 @@ fn human_bytes(bytes: u64) -> String {
     format!("{bytes} o")
 }
 
-/// Onglet Stockage : ventilation de l'occupation disque.
-///
-/// `on_refresh` est appelé quand un nouveau calcul est demandé — y compris à
-/// la première ouverture, tant qu'aucun résultat n'est arrivé.
+/// Ce que l'onglet Stockage demande à l'application, appliqué hors de la
+/// closure de la fenêtre pour éviter tout emprunt concurrent de `self`.
+#[derive(Default)]
+struct StorageActions {
+    /// Recalculer la ventilation disque.
+    refresh: bool,
+    /// Recalculer l'aperçu (simulation de purge).
+    preview: bool,
+    /// Purger réellement.
+    purge: bool,
+    /// Enregistrer les réglages de conservation.
+    save: bool,
+}
+
+/// Réglages de conservation en cours d'édition dans l'onglet.
+struct StorageSettings<'a> {
+    retention_days: &'a mut u32,
+    cache_max_mib: &'a mut u32,
+}
+
+/// Plafond éditable de 0,1 à 1000 Gio : en deçà le cache ne tient plus une
+/// seule pièce jointe (2 Gio max), au-delà le réglage ne veut plus rien dire.
+const CACHE_GIB_RANGE: std::ops::RangeInclusive<f32> = 0.1..=1000.0;
+/// Dix ans : au-delà, « conserver » et « illimité » se confondent.
+const RETENTION_DAYS_MAX: u32 = 3650;
+
+/// Onglet Stockage : ventilation de l'occupation disque et règles de
+/// conservation des pièces jointes.
 fn storage_tab(
     ui: &mut egui::Ui,
     usage: Option<&crate::app::usage::Usage>,
+    preview: Option<&crate::app::media::GcReport>,
+    settings: StorageSettings<'_>,
     language: UiLanguage,
-    mut on_refresh: impl FnMut(),
+    actions: &mut StorageActions,
 ) {
     let Some(usage) = usage else {
         // Premier affichage : le calcul n'a pas encore répondu.
-        on_refresh();
+        actions.refresh = true;
         ui.label(egui::RichText::new(i18n::CALCUL_EN_COURS.get(language)).weak());
         return;
     };
@@ -563,7 +638,8 @@ fn storage_tab(
         );
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui.button(i18n::RECALCULER.get(language)).clicked() {
-                on_refresh();
+                actions.refresh = true;
+                actions.preview = true;
             }
         });
     });
@@ -590,10 +666,12 @@ fn storage_tab(
             let rows = [
                 (i18n::MEDIAS_RECUS.get(language), usage.media_received),
                 (i18n::MEDIAS_ENVOYES.get(language), usage.media_sent),
+                (i18n::TRANSFERTS_INACHEVES.get(language), usage.incomplete),
                 (i18n::HISTORIQUE.get(language), usage.database),
                 (i18n::IMAGE_DE_PROFIL.get(language), usage.avatar),
                 (i18n::JOURNAUX.get(language), usage.logs),
                 (i18n::FICHIERS_DE_TRAVAIL.get(language), usage.scratch),
+                (i18n::AUTRES.get(language), usage.other),
             ];
             for (label, entry) in rows {
                 ui.label(label);
@@ -611,6 +689,90 @@ fn storage_tab(
     ui.add_space(10.0);
     ui.label(
         egui::RichText::new(i18n::LES_ENVOIS_SONT_DES_COPIES.get(language))
+            .small()
+            .weak(),
+    );
+
+    ui.add_space(12.0);
+    ui.separator();
+    ui.add_space(8.0);
+    ui.label(egui::RichText::new(i18n::CONSERVATION.get(language)).strong());
+    ui.add_space(6.0);
+
+    egui::Grid::new("storage_retention")
+        .num_columns(2)
+        .spacing([16.0, 10.0])
+        .show(ui, |ui| {
+            ui.label(i18n::SUPPRIMER_LES_PIECES_JOINTES_AU_DELA.get(language));
+            ui.horizontal(|ui| {
+                let changed = ui
+                    .add(
+                        egui::DragValue::new(settings.retention_days)
+                            .speed(1.0)
+                            .range(0..=RETENTION_DAYS_MAX),
+                    )
+                    .changed();
+                ui.label(i18n::UNITE_JOURS.get(language));
+                ui.label(
+                    egui::RichText::new(i18n::CONSERVATION_ILLIMITEE.get(language))
+                        .small()
+                        .weak(),
+                );
+                if changed {
+                    actions.save = true;
+                }
+            });
+            ui.end_row();
+
+            ui.label(i18n::PLAFOND_DU_CACHE.get(language));
+            {
+                // Réglé en Gio : c'est l'unité dans laquelle on pense un cache
+                // de pièces jointes, le stockage reste en Mio entiers.
+                let mut gib = *settings.cache_max_mib as f32 / 1024.0;
+                if ui
+                    .add(
+                        egui::DragValue::new(&mut gib)
+                            .speed(0.05)
+                            .range(CACHE_GIB_RANGE)
+                            .max_decimals(2)
+                            .suffix(" Gio"),
+                    )
+                    .changed()
+                {
+                    *settings.cache_max_mib = (gib * 1024.0).round() as u32;
+                    actions.save = true;
+                }
+            }
+            ui.end_row();
+        });
+
+    ui.add_space(10.0);
+    ui.horizontal(|ui| {
+        let freed = preview.map(|report| report.freed_bytes).unwrap_or(0);
+        if ui
+            .add_enabled(
+                freed > 0,
+                egui::Button::new(i18n::PURGER_MAINTENANT.get(language)),
+            )
+            .clicked()
+        {
+            actions.purge = true;
+        }
+        let hint = match preview {
+            None => i18n::CALCUL_EN_COURS.get(language).to_string(),
+            Some(report) if report.freed_files == 0 => {
+                i18n::RIEN_A_PURGER.get(language).to_string()
+            }
+            Some(report) => i18n::LIBERERAIT_MODELE
+                .get(language)
+                .replace("{taille}", &human_bytes(report.freed_bytes))
+                .replace("{fichiers}", &report.freed_files.to_string()),
+        };
+        ui.label(egui::RichText::new(hint).small().weak());
+    });
+    ui.add_space(4.0);
+    ui.label(
+        egui::RichText::new(i18n::LE_MESSAGE_RESTE_DANS_LE_FIL.get(language))
             .small()
             .weak(),
     );

@@ -278,6 +278,25 @@ impl AbcomApp {
                 }
                 AppEvent::StorageUsage(usage) => {
                     self.storage_usage = Some(usage);
+                    self.storage_scan_pending = false;
+                }
+                AppEvent::MediaPurged(report) => {
+                    self.purge_preview_pending = false;
+                    if report.dry_run {
+                        self.purge_preview = Some(report);
+                    } else {
+                        // La ventilation affichée date d'avant la purge : on la
+                        // redemande, sinon l'utilisateur voit le total inchangé.
+                        self.purge_preview = None;
+                        self.state.lock_safe().request_storage_usage();
+                        self.last_notification = Some(format!(
+                            "{} — {} ({})",
+                            self.t(i18n::PURGE_TERMINEE),
+                            super::settings::human_bytes(report.freed_bytes),
+                            report.freed_files
+                        ));
+                        self.notification_time = std::time::Instant::now();
+                    }
                 }
                 AppEvent::SendFailed { username } => {
                     // Sans ceci, l'échec disparaît dans les logs d'un binaire sans console.
@@ -479,7 +498,7 @@ impl AbcomApp {
         // qu'une longue session pouvait dépasser durablement la limite.
         if self.last_media_gc.elapsed() >= MEDIA_GC_INTERVAL {
             self.last_media_gc = std::time::Instant::now();
-            self.state.lock_safe().request_media_gc();
+            self.state.lock_safe().request_media_gc(false, false);
         }
     }
 }

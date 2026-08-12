@@ -225,15 +225,6 @@ fn main() -> anyhow::Result<()> {
     let loaded = storage
         .load_all(app::storage::INITIAL_WINDOW)
         .map_err(|e| anyhow::anyhow!("chargement du stockage : {e}"))?;
-    let referenced_media = match storage.all_media_ids() {
-        Ok(ids) => Some(ids),
-        Err(error) => {
-            tracing::error!(
-                "GC cache désactivé : lecture des médias référencés impossible : {error}"
-            );
-            None
-        }
-    };
     let storage_tx = app::storage::spawn(storage, event_tx.clone());
 
     // Identité cryptographique locale + magasin de confiance TOFU : toutes
@@ -282,12 +273,10 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    // GC du cache disque des médias (orphelins + plafond), hors chemin de
-    // démarrage : l'UI s'ouvre sans attendre le parcours du dossier.
-    if let Some(referenced_media) = referenced_media {
-        let dir = media_dir.clone();
-        std::thread::spawn(move || app::media::gc_media_dir(dir, referenced_media));
-    }
+    // GC du cache disque des médias (inachevés, orphelins, âge, plafond), hors
+    // chemin de démarrage : la commande passe par le thread de stockage, qui
+    // parcourt le dossier sur un thread à lui. L'UI s'ouvre sans attendre.
+    state.lock_safe().request_media_gc(false, false);
 
     // Pair expiré → sa connexion est libérée : son adresse ne sera plus valide.
     let (peer_gone_tx, mut peer_gone_rx) = mpsc::channel::<String>(64);

@@ -173,6 +173,11 @@ impl AppState {
         self.kv.get(key).map(|v| v == "1").unwrap_or(default)
     }
 
+    /// Lit une préférence numérique persistée. `None` si absente ou illisible.
+    pub fn pref_number(&self, key: &str) -> Option<u32> {
+        self.kv.get(key)?.trim().parse().ok()
+    }
+
     /// Écrit une préférence persistée (mémoire + table kv).
     pub fn set_pref(&mut self, key: &str, value: &str) {
         self.kv.insert(key.to_string(), value.to_string());
@@ -222,10 +227,42 @@ impl AppState {
     ///
     /// Le tri des fichiers encore référencés se fait côté stockage : la liste
     /// est une requête SQL, l'historique en mémoire n'étant qu'une fenêtre.
-    pub(crate) fn request_media_gc(&self) {
+    ///
+    /// `dry_run` simule la passe pour l'aperçu de Paramètres ; `report` décide
+    /// si le compte rendu remonte à l'UI — inutile pour la passe périodique.
+    pub fn request_media_gc(&self, dry_run: bool, report: bool) {
         self.persist(StorageCmd::GcMedia {
             dir: self.media_dir.clone(),
+            me: self.my_username.clone(),
+            policy: self.retention_policy(),
+            dry_run,
+            report,
         });
+    }
+
+    /// Règle de conservation courante, relue depuis les préférences.
+    pub fn retention_policy(&self) -> media::RetentionPolicy {
+        media::RetentionPolicy {
+            max_age: match self.retention_days() {
+                0 => None,
+                days => Some(std::time::Duration::from_secs(u64::from(days) * 86_400)),
+            },
+            max_bytes: u64::from(self.cache_max_mib()) * 1024 * 1024,
+        }
+    }
+
+    /// Durée de conservation des pièces jointes, en jours. `0` = illimitée,
+    /// qui reste le réglage par défaut : personne ne doit perdre un fichier
+    /// pour avoir mis à jour l'application.
+    pub fn retention_days(&self) -> u32 {
+        self.pref_number("media_retention_days").unwrap_or(0)
+    }
+
+    /// Plafond du cache média, en Mio.
+    pub fn cache_max_mib(&self) -> u32 {
+        self.pref_number("media_cache_max_mib")
+            .filter(|mib| *mib > 0)
+            .unwrap_or((media::DEFAULT_CACHE_MAX_BYTES / (1024 * 1024)) as u32)
     }
 
     /// Demande la ventilation de l'occupation disque. Le résultat arrive par

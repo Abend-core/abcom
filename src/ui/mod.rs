@@ -331,6 +331,19 @@ pub(crate) struct AbcomApp {
     /// Dernière ventilation de l'occupation disque (onglet Stockage).
     /// `None` tant que le calcul, qui parcourt des dossiers, n'a pas répondu.
     pub(crate) storage_usage: Option<crate::app::usage::Usage>,
+    /// Aperçu de la purge : ce qu'une passe libérerait aux réglages courants.
+    /// Recalculé à chaque changement de réglage, invalidé par la purge réelle.
+    pub(crate) purge_preview: Option<crate::app::media::GcReport>,
+    /// Un calcul est déjà en vol. Sans ces verrous, l'onglet redemandait le
+    /// parcours à chaque frame tant que la réponse n'était pas arrivée — et
+    /// chaque demande ouvre un thread qui relit tout le dossier `media/`.
+    pub(crate) storage_scan_pending: bool,
+    pub(crate) purge_preview_pending: bool,
+    /// Réglages de conservation en cours d'édition. Copiés depuis les
+    /// préférences à l'ouverture : un `DragValue` a besoin d'une cible
+    /// mutable, et écrire en base à chaque pixel de glissement est exclu.
+    pub(crate) retention_days: u32,
+    pub(crate) cache_max_mib: u32,
     /// Début de la session, pour juger le backend graphique sur sa tenue.
     pub(crate) started_at: std::time::Instant,
     /// Le backend a déjà été validé : on n'y revient plus de la session.
@@ -412,11 +425,13 @@ impl AbcomApp {
         let (alias_to_char, aliases) = emoji_picker::build_emoji_shortcode_index(&characters);
         let (picker_tx, picker_rx) = std::sync::mpsc::channel();
         // Préférences persistées (table kv).
-        let (notif_preview, autostart_enabled) = {
+        let (notif_preview, autostart_enabled, retention_days, cache_max_mib) = {
             let s = state.lock_safe();
             (
                 s.pref_bool("notif_preview", true),
                 s.pref_bool("autostart", false),
+                s.retention_days(),
+                s.cache_max_mib(),
             )
         };
 
@@ -503,6 +518,11 @@ impl AbcomApp {
             ui_language: UiLanguage::French,
             theme_preference: egui::ThemePreference::System,
             storage_usage: None,
+            purge_preview: None,
+            storage_scan_pending: false,
+            purge_preview_pending: false,
+            retention_days,
+            cache_max_mib,
             started_at: std::time::Instant::now(),
             #[cfg(windows)]
             gpu_backend_confirmed: false,
