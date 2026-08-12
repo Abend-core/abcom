@@ -83,8 +83,8 @@ pub fn scratch_dir() -> std::io::Result<PathBuf> {
     Ok(dir)
 }
 
-/// Backend graphique concret utilisable par wgpu sous Windows (choix
-/// utilisateur ou résultat de `resolve_gpu_backend`).
+/// Backend graphique concret utilisable par wgpu sous Windows (résultat de
+/// `resolve_gpu_backend`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GpuBackend {
     Dx12,
@@ -119,28 +119,30 @@ fn gpu_backend_choice_path() -> PathBuf {
     data_dir().join("gpu_backend")
 }
 
-/// Backend imposé depuis Paramètres → Général (Windows), ou `None` pour
-/// laisser `resolve_gpu_backend` choisir.
-pub fn gpu_backend_choice() -> Option<GpuBackend> {
+/// Backend imposé par un fichier texte du répertoire de données (contenu
+/// `dx12` ou `vulkan`, à créer ou modifier à la main) — il n'existe aucun
+/// réglage dans l'interface : c'est un contournement de pilote graphique, pas
+/// une préférence d'utilisateur ordinaire. Absent, vide ou illisible :
+/// `None`, laisse `resolve_gpu_backend` choisir.
+fn gpu_backend_choice() -> Option<GpuBackend> {
     std::fs::read_to_string(gpu_backend_choice_path())
         .ok()
         .and_then(|s| GpuBackend::parse(&s))
 }
 
-/// Enregistre le choix (`None` efface la préférence, retour à l'automatique).
-/// N'affecte que le prochain lancement : le backend est déjà figé pour la
-/// session en cours.
-pub fn set_gpu_backend_choice(choice: Option<GpuBackend>) {
+/// Efface le fichier de préférence, retour à l'automatique.
+///
+/// Appelé uniquement par `resolve_gpu_backend`, quand ce choix vient de faire
+/// planter le lancement précédent : un fichier qui impose un backend cassé
+/// planterait sinon à chaque lancement, sans aucun moyen de s'en sortir
+/// puisque l'application ne s'ouvre jamais assez longtemps pour qu'on
+/// corrige quoi que ce soit.
+fn clear_gpu_backend_choice() {
     let path = gpu_backend_choice_path();
-    let result = match choice {
-        Some(backend) => std::fs::write(&path, backend.as_str()),
-        None => std::fs::remove_file(&path).or_else(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => Ok(()),
-            _ => Err(e),
-        }),
-    };
-    if let Err(error) = result {
-        tracing::warn!("préférence de backend graphique non sauvegardée : {error}");
+    if let Err(error) = std::fs::remove_file(&path) {
+        if error.kind() != std::io::ErrorKind::NotFound {
+            tracing::warn!("préférence de backend graphique non effacée : {error}");
+        }
     }
 }
 
@@ -162,29 +164,66 @@ pub fn clear_gpu_backend_attempt() {
     let _ = std::fs::remove_file(gpu_backend_attempt_path());
 }
 
-/// Résout le backend à utiliser pour ce lancement.
-///
-/// Priorité : préférence explicite de l'utilisateur ; sinon, si le lancement
-/// précédent a laissé un marqueur (il ne s'est donc pas terminé proprement),
-/// l'autre backend ; sinon D3D12, le plus fiable en pratique sous Windows —
-/// voir le commentaire de `low_power_wgpu`.
-pub fn resolve_gpu_backend() -> GpuBackend {
-    if let Some(choice) = gpu_backend_choice() {
-        return choice;
-    }
-    let Some(crashed) = std::fs::read_to_string(gpu_backend_attempt_path())
+fn last_incomplete_attempt() -> Option<GpuBackend> {
+    std::fs::read_to_string(gpu_backend_attempt_path())
         .ok()
         .and_then(|s| GpuBackend::parse(&s))
-    else {
-        return GpuBackend::Dx12;
-    };
-    let fallback = crashed.other();
-    tracing::warn!(
-        backend_precedent = crashed.as_str(),
-        backend_choisi = fallback.as_str(),
-        "lancement précédent interrompu avant sa fermeture propre : bascule automatique de backend graphique"
-    );
-    fallback
+}
+
+/// Décision pure, testable sans toucher au disque : backend à retenir pour ce
+/// lancement, et si le fichier de préférence doit être effacé parce qu'il
+/// vient de faire planter le lancement précédent.
+///
+/// `preferred` est déjà résolu (contenu du fichier, ou D3D12 par défaut) ;
+/// `forced` indique s'il vient du fichier — sans ça, l'effacer n'aurait pas
+/// de sens. Le garde-fou porte sur `preferred`, pas sur sa provenance :
+/// qu'un backend cassé soit celui qu'impose le fichier ou simplement le
+/// défaut, il ne doit jamais être rejoué à l'identique juste après avoir fait
+/// planter le processus.
+fn decide_gpu_backend(
+    preferred: GpuBackend,
+    forced: bool,
+    crashed_last_time: Option<GpuBackend>,
+) -> (GpuBackend, bool) {
+    if crashed_last_time != Some(preferred) {
+        return (preferred, false);
+    }
+    (preferred.other(), forced)
+}
+
+/// Résout le backend à utiliser pour ce lancement.
+///
+/// Le backend se fixe par un fichier texte (`gpu_backend`, dans le répertoire
+/// de données, contenu `dx12` ou `vulkan`) — pas de réglage dans l'interface.
+/// Absent → D3D12, le plus fiable en pratique sous Windows (cf.
+/// `low_power_wgpu`).
+///
+/// Garde-fou, quelle que soit l'origine du choix : si le backend qu'on
+/// s'apprête à retenir est celui que le lancement précédent a laissé en plan
+/// (marqueur non nettoyé, donc plantage ou kill), on bascule sur l'autre pour
+/// CE lancement — et le fichier est effacé s'il en était la cause, pour ne
+/// pas rejouer un choix cassé indéfiniment.
+pub fn resolve_gpu_backend() -> GpuBackend {
+    let file_choice = gpu_backend_choice();
+    let preferred = file_choice.unwrap_or(GpuBackend::Dx12);
+    let (backend, should_clear_file) =
+        decide_gpu_backend(preferred, file_choice.is_some(), last_incomplete_attempt());
+
+    if backend != preferred {
+        tracing::warn!(
+            backend_precedent = preferred.as_str(),
+            backend_choisi = backend.as_str(),
+            "lancement précédent interrompu avant sa fermeture propre : bascule automatique de backend graphique"
+        );
+    }
+    if should_clear_file {
+        tracing::warn!(
+            fichier = %gpu_backend_choice_path().display(),
+            "backend imposé par ce fichier : il vient de planter, le fichier est effacé pour éviter une boucle"
+        );
+        clear_gpu_backend_choice();
+    }
+    backend
 }
 
 /// Purge par ancienneté : le transfert média lit le fichier bien après la mise en file.
@@ -209,7 +248,7 @@ pub fn purge_scratch() {
 
 #[cfg(test)]
 mod tests {
-    use super::GpuBackend;
+    use super::{decide_gpu_backend, GpuBackend};
 
     #[test]
     fn gpu_backend_round_trips_through_its_string_form() {
@@ -230,5 +269,51 @@ mod tests {
     fn other_backend_never_returns_the_same_one() {
         assert_eq!(GpuBackend::Dx12.other(), GpuBackend::Vulkan);
         assert_eq!(GpuBackend::Vulkan.other(), GpuBackend::Dx12);
+    }
+
+    #[test]
+    fn decide_keeps_the_preferred_backend_when_nothing_crashed() {
+        assert_eq!(
+            decide_gpu_backend(GpuBackend::Dx12, false, None),
+            (GpuBackend::Dx12, false)
+        );
+        assert_eq!(
+            decide_gpu_backend(GpuBackend::Vulkan, true, None),
+            (GpuBackend::Vulkan, false)
+        );
+    }
+
+    #[test]
+    fn decide_ignores_a_crash_on_a_different_backend() {
+        // Le marqueur d'un plantage sur Vulkan ne doit rien changer si on
+        // s'apprêtait de toute façon à essayer D3D12.
+        assert_eq!(
+            decide_gpu_backend(GpuBackend::Dx12, false, Some(GpuBackend::Vulkan)),
+            (GpuBackend::Dx12, false)
+        );
+    }
+
+    /// Régression : un backend imposé par le fichier qui vient de planter ne
+    /// doit jamais être rejoué à l'identique. Sans ce garde-fou, un fichier
+    /// qui impose un backend cassé plante à chaque lancement, sans aucun
+    /// moyen de s'en sortir puisque l'application ne s'ouvre jamais assez
+    /// longtemps pour qu'on le corrige — le fichier doit donc aussi être
+    /// effacé, pas seulement contourné pour ce lancement.
+    #[test]
+    fn decide_overrides_a_forced_choice_that_just_crashed_and_clears_it() {
+        assert_eq!(
+            decide_gpu_backend(GpuBackend::Vulkan, true, Some(GpuBackend::Vulkan)),
+            (GpuBackend::Dx12, true)
+        );
+    }
+
+    /// Même bascule quand c'est le défaut (pas de fichier) qui vient de
+    /// planter — mais rien à effacer, puisqu'il n'y avait pas de fichier.
+    #[test]
+    fn decide_overrides_a_crashing_default_without_touching_any_file() {
+        assert_eq!(
+            decide_gpu_backend(GpuBackend::Dx12, false, Some(GpuBackend::Dx12)),
+            (GpuBackend::Vulkan, false)
+        );
     }
 }
