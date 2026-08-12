@@ -143,13 +143,20 @@ pub enum StorageCmd {
         k: String,
         v: String,
     },
-    /// Nettoyage du cache disque des médias (orphelins + plafond).
+    /// Nettoyage du cache disque des médias (orphelins, âge, plafond).
     ///
     /// Traité ici parce que la liste des médias encore référencés est une
     /// requête SQL : l'historique en mémoire est fenêtré, s'en servir
     /// supprimerait les fichiers des messages plus anciens.
     GcMedia {
         dir: PathBuf,
+        me: String,
+        policy: crate::app::media::RetentionPolicy,
+        /// Simulation : ne supprime rien, sert l'aperçu du bouton « Purger ».
+        dry_run: bool,
+        /// Rendre le compte rendu à l'UI. Faux pour les passes périodiques,
+        /// qui n'ont rien à annoncer.
+        report: bool,
     },
     /// Ventilation de l'occupation disque, pour l'onglet Stockage.
     ///
@@ -703,8 +710,14 @@ impl Storage {
 
     /// Compacte la base et réindexe : le fichier ne récupère jamais seul
     /// l'espace des conversations effacées.
+    ///
+    /// Le point de contrôle vient d'abord : le WAL grossit sans borne entre
+    /// deux checkpoints (4 Mo de journal pour 470 ko de base, constaté), et
+    /// `VACUUM` seul le laisse tel quel — l'utilisateur compactait sans voir
+    /// le poste « Historique » bouger.
     pub fn compact(&self) -> rusqlite::Result<()> {
-        self.conn.execute_batch("VACUUM; ANALYZE;")
+        self.conn
+            .execute_batch("PRAGMA wal_checkpoint(TRUNCATE); VACUUM; ANALYZE;")
     }
 
     /// Taille du fichier de base et nombre de messages, pour l'affichage Paramètres.
@@ -1436,14 +1449,27 @@ fn run(
                 },
                 Err(e) => Err(e),
             },
-            StorageCmd::GcMedia { dir } => match storage.all_media_ids() {
-                Ok(referenced) => {
+            StorageCmd::GcMedia {
+                dir,
+                me,
+                policy,
+                dry_run,
+                report,
+            } => match (storage.all_media_ids(), storage.sent_media_ids(&me)) {
+                (Ok(referenced), Ok(sent)) => {
                     // Le parcours du dossier part sur un thread : il ne doit
                     // bloquer ni les écritures suivantes, ni l'UI.
-                    std::thread::spawn(move || crate::app::media::gc_media_dir(dir, referenced));
+                    let event_tx = event_tx.clone();
+                    std::thread::spawn(move || {
+                        let outcome =
+                            crate::app::media::gc_media_dir(dir, referenced, sent, policy, dry_run);
+                        if report {
+                            let _ = event_tx.blocking_send(AppEvent::MediaPurged(outcome));
+                        }
+                    });
                     Ok(())
                 }
-                Err(error) => Err(error),
+                (Err(error), _) | (_, Err(error)) => Err(error),
             },
             StorageCmd::ScanUsage {
                 data_dir,

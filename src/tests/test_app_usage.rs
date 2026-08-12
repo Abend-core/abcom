@@ -134,3 +134,43 @@ fn total_sums_every_bucket() {
     assert_eq!(usage.total().bytes, 63);
     assert_eq!(usage.total().files, 6);
 }
+
+/// Un transfert interrompu laisse un `.part` que rien ne référence : le
+/// compter en « reçus » faisait passer un déchet pour une pièce jointe.
+#[test]
+fn part_files_are_counted_as_incomplete() {
+    let dir = TempDir::new("part");
+    let media = dir.path().join("media");
+    write(media.join("recu.png"), 100);
+    write(media.join(".abcom-42-1.part"), 700);
+
+    let usage = scan(dir.path(), &media, &HashSet::new());
+
+    assert_eq!(usage.incomplete.bytes, 700);
+    assert_eq!(usage.incomplete.files, 1);
+    assert_eq!(usage.media_received.bytes, 100);
+}
+
+/// Le total affiché doit être le poids réel du dossier. Tant que la clé
+/// d'identité, `networks.json` et consorts n'étaient comptés nulle part,
+/// « Espace occupé » annonçait moins que ce que l'utilisateur voyait dans son
+/// explorateur de fichiers.
+#[test]
+fn unaccounted_files_land_in_other() {
+    let dir = TempDir::new("other");
+    let media = dir.path().join("media");
+    write(dir.path().join("abcom.db"), 10);
+    write(media.join("recu.png"), 20);
+    write(dir.path().join("identity.key"), 64);
+    write(dir.path().join("networks.json"), 118);
+    write(dir.path().join("last-panic.txt"), 8);
+    // Sous-dossier inconnu : compté récursivement, sinon le total ment encore.
+    write(dir.path().join("inconnu/quelque-chose.bin"), 40);
+
+    let usage = scan(dir.path(), &media, &HashSet::new());
+
+    assert_eq!(usage.other.bytes, 64 + 118 + 8 + 40);
+    assert_eq!(usage.other.files, 4);
+    assert_eq!(usage.total().bytes, 260);
+    assert_eq!(usage.total().files, 6);
+}
