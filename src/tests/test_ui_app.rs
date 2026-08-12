@@ -148,6 +148,48 @@ fn renders_every_settings_tab() {
     }
 }
 
+/// `process_events` tient le verrou d'état pendant toute sa boucle : un
+/// gestionnaire qui le reprend fige l'application entière, fenêtre comprise —
+/// c'est arrivé sur le compte rendu de purge, l'utilisateur ne pouvait plus ni
+/// fermer ni ouvrir quoi que ce soit.
+///
+/// `AbcomApp` n'est pas `Send` (le tray), donc pas de chien de garde sur un
+/// autre thread : un interblocage se manifeste ici en ne rendant jamais la
+/// main. Les assertions vérifient que l'événement a bien été traité.
+#[test]
+fn a_purge_report_is_handled_without_retaking_the_state_lock() {
+    use crate::app::media::GcReport;
+    use crate::message::AppEvent;
+
+    let mut app = test_app();
+    let report = |dry_run| {
+        AppEvent::MediaPurged(GcReport {
+            freed_bytes: 1024,
+            freed_files: 2,
+            dry_run,
+            over_ceiling: false,
+        })
+    };
+
+    app.net.event_tx.try_send(report(true)).unwrap();
+    app.process_events();
+    assert_eq!(
+        app.purge_preview.map(|r| r.freed_bytes),
+        Some(1024),
+        "une simulation doit alimenter l'aperçu"
+    );
+    assert!(!app.purge_preview_pending);
+
+    app.net.event_tx.try_send(report(false)).unwrap();
+    app.process_events();
+    assert!(
+        app.purge_preview.is_none(),
+        "une purge réelle périme l'aperçu"
+    );
+    let notice = app.last_notification.expect("purge annoncée");
+    assert!(notice.contains("1.0 ko"), "compte rendu chiffré : {notice}");
+}
+
 /// Le rattrapage d'accusés de lecture doit fonctionner sans changer de
 /// conversation — c'est ce que `logic` déclenche au retour du focus — et ne
 /// pas réémettre à chaque passage.

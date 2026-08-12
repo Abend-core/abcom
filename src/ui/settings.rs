@@ -714,7 +714,7 @@ fn storage_tab(
                     .changed();
                 ui.label(i18n::UNITE_JOURS.get(language));
                 ui.label(
-                    egui::RichText::new(i18n::CONSERVATION_ILLIMITEE.get(language))
+                    egui::RichText::new(i18n::ZERO_ILLIMITE.get(language))
                         .small()
                         .weak(),
                 );
@@ -725,7 +725,7 @@ fn storage_tab(
             ui.end_row();
 
             ui.label(i18n::PLAFOND_DU_CACHE.get(language));
-            {
+            ui.horizontal(|ui| {
                 // Réglé en Gio : c'est l'unité dans laquelle on pense un cache
                 // de pièces jointes, le stockage reste en Mio entiers.
                 let mut gib = *settings.cache_max_mib as f32 / 1024.0;
@@ -742,9 +742,23 @@ fn storage_tab(
                     *settings.cache_max_mib = (gib * 1024.0).round() as u32;
                     actions.save = true;
                 }
-            }
+                ui.label(
+                    egui::RichText::new(i18n::ZERO_ILLIMITE.get(language))
+                        .small()
+                        .weak(),
+                );
+            });
             ui.end_row();
         });
+
+    if preview.is_some_and(|report| report.over_ceiling) {
+        ui.add_space(6.0);
+        ui.label(
+            egui::RichText::new(i18n::PLAFOND_DEPASSE.get(language))
+                .small()
+                .color(crate::ui::theme::palette(ui).danger),
+        );
+    }
 
     ui.add_space(10.0);
     ui.horizontal(|ui| {

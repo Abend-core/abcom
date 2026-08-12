@@ -287,8 +287,10 @@ impl AbcomApp {
                     } else {
                         // La ventilation affichée date d'avant la purge : on la
                         // redemande, sinon l'utilisateur voit le total inchangé.
+                        // Via le verrou déjà tenu : le reprendre ici gelait
+                        // l'application (cf. l'invariant en tête de fonction).
                         self.purge_preview = None;
-                        self.state.lock_safe().request_storage_usage();
+                        s.request_storage_usage();
                         self.last_notification = Some(format!(
                             "{} — {} ({})",
                             self.t(i18n::PURGE_TERMINEE),

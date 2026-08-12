@@ -247,7 +247,10 @@ impl AppState {
                 0 => None,
                 days => Some(std::time::Duration::from_secs(u64::from(days) * 86_400)),
             },
-            max_bytes: u64::from(self.cache_max_mib()) * 1024 * 1024,
+            max_bytes: match self.cache_max_mib() {
+                0 => None,
+                mib => Some(u64::from(mib) * 1024 * 1024),
+            },
         }
     }
 
@@ -258,11 +261,11 @@ impl AppState {
         self.pref_number("media_retention_days").unwrap_or(0)
     }
 
-    /// Plafond du cache média, en Mio.
+    /// Plafond du cache média, en Mio. `0` = illimité, et c'est le défaut :
+    /// l'ancien plafond de 2 Gio en dur suffisait à faire disparaître tout le
+    /// cache à la réception d'un seul gros fichier.
     pub fn cache_max_mib(&self) -> u32 {
-        self.pref_number("media_cache_max_mib")
-            .filter(|mib| *mib > 0)
-            .unwrap_or((media::DEFAULT_CACHE_MAX_BYTES / (1024 * 1024)) as u32)
+        self.pref_number("media_cache_max_mib").unwrap_or(0)
     }
 
     /// Demande la ventilation de l'occupation disque. Le résultat arrive par
