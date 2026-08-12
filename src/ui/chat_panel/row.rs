@@ -338,6 +338,8 @@ pub(super) fn render_message_body(
     emoji_textures: &crate::ui::EmojiTextures,
     media_textures: &std::collections::HashMap<String, Option<egui::TextureHandle>>,
     media_progress: &std::collections::HashMap<String, crate::message::MediaProgress>,
+    // Pièces jointes dont la copie locale existe encore ; une absence = purgée.
+    media_present: &std::collections::HashSet<String>,
 ) -> (Option<crate::ui::media::MediaAction>, bool) {
     let mut toggled = false;
     if !msg.content.is_empty() {
@@ -377,7 +379,13 @@ pub(super) fn render_message_body(
         }
         let texture = media_textures.get(&media.id).and_then(|t| t.as_ref());
         return (
-            crate::ui::media::render_media_block(ui, media, texture),
+            crate::ui::media::render_media_block(
+                ui,
+                media,
+                texture,
+                media_present.contains(&media.id),
+                language,
+            ),
             toggled,
         );
     }

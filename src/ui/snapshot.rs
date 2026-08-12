@@ -109,6 +109,10 @@ pub(crate) struct ChatCache {
     pub(crate) authors: Vec<String>,
     /// Identifiants des médias image du fil (préchargement des textures).
     pub(crate) image_media_ids: Vec<String>,
+    /// Identifiants de tous les médias du fil qui vivent dans `media/` — les
+    /// GIF en sont exclus, ils pointent une URL distante. Sert à savoir
+    /// lesquels ont encore leur copie locale.
+    pub(crate) local_media_ids: Vec<String>,
     pub(crate) my_name: String,
     pub(crate) multi_person: bool,
     /// Nom d'affichage du pair en 1-à-1 (titre de la conversation).
@@ -188,6 +192,7 @@ impl ChatCache {
         self.markdown.retain(|h, _| live.contains(h));
 
         let mut image_media_ids: Vec<String> = Vec::new();
+        let mut local_media_ids: Vec<String> = Vec::new();
         let mut gif_urls: HashSet<String> = HashSet::new();
         let mut rows: Vec<ChatRow> = Vec::with_capacity(messages.len());
         let mut last_from: Option<&str> = None;
@@ -272,6 +277,8 @@ impl ChatCache {
                     if let Some(url) = &media.url {
                         gif_urls.insert(url.clone());
                     }
+                } else if !local_media_ids.contains(&media.id) {
+                    local_media_ids.push(media.id.clone());
                 }
             }
 
@@ -341,6 +348,7 @@ impl ChatCache {
         self.rows = Arc::new(rows);
         self.authors = authors;
         self.image_media_ids = image_media_ids;
+        self.local_media_ids = local_media_ids;
         self.gif_urls = gif_urls;
         Some(conv_changed)
     }

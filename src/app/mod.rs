@@ -223,49 +223,40 @@ impl AppState {
         self.storage.is_some()
     }
 
-    /// Demande un nettoyage du cache disque des médias.
+    /// Dossier où vivent les pièces jointes, pour l'ouvrir dans l'explorateur.
+    pub fn media_dir(&self) -> &std::path::Path {
+        &self.media_dir
+    }
+
+    /// Demande une purge du cache disque des médias — **jamais automatique** :
+    /// seul un clic de l'utilisateur mène ici.
     ///
     /// Le tri des fichiers encore référencés se fait côté stockage : la liste
     /// est une requête SQL, l'historique en mémoire n'étant qu'une fenêtre.
-    ///
-    /// `dry_run` simule la passe pour l'aperçu de Paramètres ; `report` décide
-    /// si le compte rendu remonte à l'UI — inutile pour la passe périodique.
-    pub fn request_media_gc(&self, dry_run: bool, report: bool) {
+    /// `dry_run` simule la passe pour l'aperçu de Paramètres.
+    pub fn request_media_gc(&self, dry_run: bool) {
         self.persist(StorageCmd::GcMedia {
             dir: self.media_dir.clone(),
-            me: self.my_username.clone(),
             policy: self.retention_policy(),
             dry_run,
-            report,
         });
     }
 
-    /// Règle de conservation courante, relue depuis les préférences.
+    /// Règle de purge courante, relue depuis les préférences.
     pub fn retention_policy(&self) -> media::RetentionPolicy {
         media::RetentionPolicy {
             max_age: match self.retention_days() {
                 0 => None,
                 days => Some(std::time::Duration::from_secs(u64::from(days) * 86_400)),
             },
-            max_bytes: match self.cache_max_mib() {
-                0 => None,
-                mib => Some(u64::from(mib) * 1024 * 1024),
-            },
         }
     }
 
-    /// Durée de conservation des pièces jointes, en jours. `0` = illimitée,
-    /// qui reste le réglage par défaut : personne ne doit perdre un fichier
-    /// pour avoir mis à jour l'application.
+    /// Durée demandée pour la prochaine purge, en jours. `0` = ne purger que
+    /// les déchets. Mémorisée d'une fois sur l'autre par confort, elle ne
+    /// déclenche rien d'elle-même.
     pub fn retention_days(&self) -> u32 {
         self.pref_number("media_retention_days").unwrap_or(0)
-    }
-
-    /// Plafond du cache média, en Mio. `0` = illimité, et c'est le défaut :
-    /// l'ancien plafond de 2 Gio en dur suffisait à faire disparaître tout le
-    /// cache à la réception d'un seul gros fichier.
-    pub fn cache_max_mib(&self) -> u32 {
-        self.pref_number("media_cache_max_mib").unwrap_or(0)
     }
 
     /// Demande la ventilation de l'occupation disque. Le résultat arrive par

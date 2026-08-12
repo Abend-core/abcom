@@ -59,7 +59,6 @@ fn gc_spares_a_transfer_in_progress() {
     let report = gc_media_dir(
         dir.path().to_path_buf(),
         HashSet::new(),
-        HashSet::new(),
         RetentionPolicy::default(),
         false,
     );
@@ -81,7 +80,6 @@ fn gc_removes_an_abandoned_part_file() {
     let report = gc_media_dir(
         dir.path().to_path_buf(),
         HashSet::new(),
-        HashSet::new(),
         RetentionPolicy::default(),
         false,
     );
@@ -100,10 +98,8 @@ fn retention_purges_by_age() {
     let report = gc_media_dir(
         dir.path().to_path_buf(),
         ids(&["vieux.png", "recent.png"]),
-        HashSet::new(),
         RetentionPolicy {
             max_age: Some(30 * DAY),
-            ..RetentionPolicy::default()
         },
         false,
     );
@@ -123,7 +119,6 @@ fn default_policy_deletes_nothing() {
     let report = gc_media_dir(
         dir.path().to_path_buf(),
         ids(&["tres-vieux.png"]),
-        HashSet::new(),
         RetentionPolicy::default(),
         false,
     );
@@ -132,84 +127,42 @@ fn default_policy_deletes_nothing() {
     assert_eq!(report.freed_files, 0);
 }
 
-/// Sous le plafond, une copie d'un fichier que nous avons envoyé part avant
-/// une réception : nous en gardons l'original ailleurs sur la machine, alors
-/// que la réception est notre seul exemplaire.
+/// Le scénario qui rendait l'application inutilisable : un gros fichier
+/// saturait le cache et le plafond emportait tout le reste, y compris des
+/// réceptions de la veille dont l'utilisateur n'a aucune autre copie. Il n'y a
+/// plus ni plafond ni purge de fond : la taille n'est plus un motif de
+/// suppression, seul l'âge demandé par l'utilisateur en est un.
 #[test]
-fn ceiling_evicts_sent_copies_before_received() {
-    let dir = MediaDir::new("ceiling");
-    // L'envoi est le plus récent des deux : sans la priorité aux envois,
-    // l'ancien tri par mtime aurait sacrifié la réception.
-    dir.write_aged("recu.png", 600, 30 * DAY);
-    dir.write_aged("envoye.png", 600, 10 * DAY);
-
-    let report = gc_media_dir(
-        dir.path().to_path_buf(),
-        ids(&["recu.png", "envoye.png"]),
-        ids(&["envoye.png"]),
-        RetentionPolicy {
-            max_age: None,
-            max_bytes: Some(700),
-        },
-        false,
-    );
-
-    assert!(!dir.exists("envoye.png"), "l'envoi doit partir en premier");
-    assert!(dir.exists("recu.png"), "la réception doit être préservée");
-    assert_eq!(report.freed_bytes, 600);
-    assert!(!report.over_ceiling);
-}
-
-/// Le scénario qui rendait l'application inutilisable : un seul gros fichier
-/// dépasse à lui seul le plafond. L'ancien GC vidait alors tout le cache, y
-/// compris des réceptions de la veille dont l'utilisateur n'a aucune autre
-/// copie. Le plafond doit céder, pas les données.
-#[test]
-fn a_recent_oversized_file_never_wipes_the_cache() {
+fn size_alone_never_deletes_anything() {
     let dir = MediaDir::new("oversized");
-    dir.write_aged("enorme.zip", 5000, Duration::from_secs(60));
-    dir.write_aged("hier.png", 400, 1 * DAY);
+    dir.write_aged("enorme.zip", 5_000_000, Duration::from_secs(60));
+    dir.write_aged("hier.png", 400, DAY);
     dir.write_aged("avant-hier.png", 400, 2 * DAY);
 
     let report = gc_media_dir(
         dir.path().to_path_buf(),
         ids(&["enorme.zip", "hier.png", "avant-hier.png"]),
-        HashSet::new(),
-        RetentionPolicy {
-            max_age: None,
-            max_bytes: Some(1000),
-        },
+        RetentionPolicy::default(),
         false,
     );
 
     assert!(dir.exists("enorme.zip"));
     assert!(dir.exists("hier.png"));
     assert!(dir.exists("avant-hier.png"));
-    assert_eq!(
-        report.freed_files, 0,
-        "aucune donnée récente ne doit partir"
-    );
-    assert!(
-        report.over_ceiling,
-        "le dépassement doit être signalé à l'utilisateur"
-    );
+    assert_eq!(report.freed_files, 0);
 }
 
-/// Le plancher de protection ne vaut que pour le plafond : une durée de
-/// conservation est un choix explicite, elle s'applique même en deçà.
+/// Une durée demandée s'applique telle quelle, sans plancher de protection :
+/// c'est un choix explicite de l'utilisateur, pas une réaction automatique.
 #[test]
-fn the_age_rule_overrides_the_ceiling_protection_floor() {
+fn the_requested_age_applies_verbatim() {
     let dir = MediaDir::new("floor");
     dir.write_aged("recent.png", 100, 2 * DAY);
 
     let report = gc_media_dir(
         dir.path().to_path_buf(),
         ids(&["recent.png"]),
-        HashSet::new(),
-        RetentionPolicy {
-            max_age: Some(1 * DAY),
-            max_bytes: None,
-        },
+        RetentionPolicy { max_age: Some(DAY) },
         false,
     );
 
@@ -228,13 +181,57 @@ fn a_just_written_media_is_not_mistaken_for_an_orphan() {
     let report = gc_media_dir(
         dir.path().to_path_buf(),
         HashSet::new(),
-        HashSet::new(),
         RetentionPolicy::default(),
         false,
     );
 
     assert!(dir.exists("qui-vient-d-arriver.png"));
     assert_eq!(report.freed_files, 0);
+}
+
+/// Rien ne doit partir sans clic : c'est toute la promesse de la purge
+/// manuelle. Une pièce jointe référencée, quel que soit son âge, survit tant
+/// qu'aucune durée n'est demandée.
+#[test]
+fn nothing_is_purged_without_a_requested_age() {
+    let dir = MediaDir::new("manual");
+    dir.write_aged("vieille.png", 100, 500 * DAY);
+
+    let report = gc_media_dir(
+        dir.path().to_path_buf(),
+        ids(&["vieille.png"]),
+        RetentionPolicy { max_age: None },
+        false,
+    );
+
+    assert!(dir.exists("vieille.png"));
+    assert_eq!(report.freed_files, 0);
+}
+
+/// Le 12 août 2026, un GC a reçu un ensemble de références vide devant un
+/// dossier plein, a conclu que tout était orphelin, et a supprimé 142 Mo de
+/// pièces jointes pourtant référencées en base. Zéro référence n'est pas une
+/// autorisation de tout effacer.
+#[test]
+fn an_empty_reference_set_deletes_no_attachment() {
+    let dir = MediaDir::new("noref");
+    dir.write_aged("precieux.png", 100, 10 * DAY);
+    dir.write_aged("aussi-precieux.zip", 200, 10 * DAY);
+    // Le déchet reconnaissable à son nom part quand même : il ne dépend
+    // d'aucune requête.
+    dir.write_aged(".abcom-9-1.part", 50, 10 * DAY);
+
+    let report = gc_media_dir(
+        dir.path().to_path_buf(),
+        HashSet::new(),
+        RetentionPolicy::default(),
+        false,
+    );
+
+    assert!(dir.exists("precieux.png"));
+    assert!(dir.exists("aussi-precieux.zip"));
+    assert!(!dir.exists(".abcom-9-1.part"));
+    assert_eq!(report.freed_bytes, 50);
 }
 
 /// L'aperçu de Paramètres annonce ce qu'une purge libérerait : il doit
@@ -248,7 +245,6 @@ fn dry_run_reports_without_deleting() {
     let report = gc_media_dir(
         dir.path().to_path_buf(),
         ids(&["garde.png"]),
-        HashSet::new(),
         RetentionPolicy::default(),
         true,
     );

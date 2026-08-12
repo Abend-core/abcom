@@ -264,10 +264,7 @@ impl AbcomApp {
                             ui,
                             self.storage_usage.as_ref(),
                             self.purge_preview.as_ref(),
-                            StorageSettings {
-                                retention_days: &mut self.retention_days,
-                                cache_max_mib: &mut self.cache_max_mib,
-                            },
+                            &mut self.retention_days,
                             self.ui_language,
                             &mut storage_actions,
                         );
@@ -539,14 +536,20 @@ impl AbcomApp {
     /// Applique les demandes de l'onglet Stockage. Hors de la closure de la
     /// fenêtre : chacune reprend le verrou de l'état partagé.
     fn apply_storage_actions(&mut self, actions: StorageActions) {
-        // Réglages d'abord : la simulation qui suit doit porter sur eux.
+        // Durée d'abord : la simulation qui suit doit porter sur elle.
         if actions.save {
-            let (days, mib) = (self.retention_days, self.cache_max_mib);
-            let mut state = self.state.lock_safe();
-            state.set_pref("media_retention_days", &days.to_string());
-            state.set_pref("media_cache_max_mib", &mib.to_string());
-            drop(state);
+            let days = self.retention_days.to_string();
+            self.state
+                .lock_safe()
+                .set_pref("media_retention_days", &days);
             self.purge_preview = None;
+        }
+        if actions.open_folder {
+            let dir = self.state.lock_safe().media_dir().to_path_buf();
+            if let Err(error) = open_in_file_manager(&dir) {
+                tracing::warn!("ouverture du dossier des médias : {error}");
+                self.notify(self.t(i18n::OUVERTURE_DU_DOSSIER_IMPOSSIBLE));
+            }
         }
         if actions.refresh && !self.storage_scan_pending {
             self.storage_scan_pending = true;
@@ -556,7 +559,7 @@ impl AbcomApp {
         // en plus, et la simulation d'après portera sur le dossier nettoyé.
         if actions.purge {
             self.purge_preview = None;
-            self.state.lock_safe().request_media_gc(false, true);
+            self.state.lock_safe().request_media_gc(false);
             return;
         }
         if actions.preview {
@@ -568,9 +571,32 @@ impl AbcomApp {
             self.modals.settings_open && self.modals.settings_tab == SettingsTab::Storage;
         if on_storage_tab && self.purge_preview.is_none() && !self.purge_preview_pending {
             self.purge_preview_pending = true;
-            self.state.lock_safe().request_media_gc(true, true);
+            self.state.lock_safe().request_media_gc(true);
         }
     }
+}
+
+/// Ouvre un dossier dans l'explorateur de fichiers du système.
+///
+/// C'est le filet de sécurité de la gestion du stockage : plus rien n'est
+/// supprimé automatiquement, alors l'utilisateur doit pouvoir aller faire le
+/// ménage lui-même. Les pièces jointes sont nommées `<horodatage>-<nom>`, donc
+/// un tri par nom dans l'explorateur les range par date.
+fn open_in_file_manager(dir: &std::path::Path) -> std::io::Result<()> {
+    // Le dossier n'existe pas tant qu'aucun média n'est passé : le créer évite
+    // un échec incompréhensible sur une installation neuve.
+    std::fs::create_dir_all(dir)?;
+    let command = if cfg!(target_os = "macos") {
+        "open"
+    } else if cfg!(target_os = "windows") {
+        "explorer"
+    } else {
+        "xdg-open"
+    };
+    // `explorer` rend un code non nul même quand il a ouvert la fenêtre : on
+    // se contente de savoir que le processus a démarré.
+    std::process::Command::new(command).arg(dir).spawn()?;
+    Ok(())
 }
 
 /// Formate une taille en unité lisible. Les octets bruts d'un cache de
@@ -595,20 +621,13 @@ struct StorageActions {
     preview: bool,
     /// Purger réellement.
     purge: bool,
-    /// Enregistrer les réglages de conservation.
+    /// Enregistrer la durée demandée.
     save: bool,
+    /// Ouvrir le dossier des pièces jointes dans l'explorateur du système.
+    open_folder: bool,
 }
 
-/// Réglages de conservation en cours d'édition dans l'onglet.
-struct StorageSettings<'a> {
-    retention_days: &'a mut u32,
-    cache_max_mib: &'a mut u32,
-}
-
-/// Plafond éditable de 0,1 à 1000 Gio : en deçà le cache ne tient plus une
-/// seule pièce jointe (2 Gio max), au-delà le réglage ne veut plus rien dire.
-const CACHE_GIB_RANGE: std::ops::RangeInclusive<f32> = 0.1..=1000.0;
-/// Dix ans : au-delà, « conserver » et « illimité » se confondent.
+/// Dix ans : au-delà, « conserver » et « tout garder » se confondent.
 const RETENTION_DAYS_MAX: u32 = 3650;
 
 /// Onglet Stockage : ventilation de l'occupation disque et règles de
@@ -617,7 +636,7 @@ fn storage_tab(
     ui: &mut egui::Ui,
     usage: Option<&crate::app::usage::Usage>,
     preview: Option<&crate::app::media::GcReport>,
-    settings: StorageSettings<'_>,
+    retention_days: &mut u32,
     language: UiLanguage,
     actions: &mut StorageActions,
 ) {
@@ -696,69 +715,34 @@ fn storage_tab(
     ui.add_space(12.0);
     ui.separator();
     ui.add_space(8.0);
-    ui.label(egui::RichText::new(i18n::CONSERVATION.get(language)).strong());
-    ui.add_space(6.0);
+    ui.label(egui::RichText::new(i18n::PURGE_MANUELLE.get(language)).strong());
+    ui.add_space(2.0);
+    ui.label(
+        egui::RichText::new(i18n::AUCUNE_PURGE_AUTOMATIQUE.get(language))
+            .small()
+            .weak(),
+    );
+    ui.add_space(8.0);
 
-    egui::Grid::new("storage_retention")
-        .num_columns(2)
-        .spacing([16.0, 10.0])
-        .show(ui, |ui| {
-            ui.label(i18n::SUPPRIMER_LES_PIECES_JOINTES_AU_DELA.get(language));
-            ui.horizontal(|ui| {
-                let changed = ui
-                    .add(
-                        egui::DragValue::new(settings.retention_days)
-                            .speed(1.0)
-                            .range(0..=RETENTION_DAYS_MAX),
-                    )
-                    .changed();
-                ui.label(i18n::UNITE_JOURS.get(language));
-                ui.label(
-                    egui::RichText::new(i18n::ZERO_ILLIMITE.get(language))
-                        .small()
-                        .weak(),
-                );
-                if changed {
-                    actions.save = true;
-                }
-            });
-            ui.end_row();
-
-            ui.label(i18n::PLAFOND_DU_CACHE.get(language));
-            ui.horizontal(|ui| {
-                // Réglé en Gio : c'est l'unité dans laquelle on pense un cache
-                // de pièces jointes, le stockage reste en Mio entiers.
-                let mut gib = *settings.cache_max_mib as f32 / 1024.0;
-                if ui
-                    .add(
-                        egui::DragValue::new(&mut gib)
-                            .speed(0.05)
-                            .range(CACHE_GIB_RANGE)
-                            .max_decimals(2)
-                            .suffix(" Gio"),
-                    )
-                    .changed()
-                {
-                    *settings.cache_max_mib = (gib * 1024.0).round() as u32;
-                    actions.save = true;
-                }
-                ui.label(
-                    egui::RichText::new(i18n::ZERO_ILLIMITE.get(language))
-                        .small()
-                        .weak(),
-                );
-            });
-            ui.end_row();
-        });
-
-    if preview.is_some_and(|report| report.over_ceiling) {
-        ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.label(i18n::SUPPRIMER_LES_PIECES_JOINTES_AU_DELA.get(language));
+        if ui
+            .add(
+                egui::DragValue::new(retention_days)
+                    .speed(1.0)
+                    .range(0..=RETENTION_DAYS_MAX),
+            )
+            .changed()
+        {
+            actions.save = true;
+        }
+        ui.label(i18n::UNITE_JOURS.get(language));
         ui.label(
-            egui::RichText::new(i18n::PLAFOND_DEPASSE.get(language))
+            egui::RichText::new(i18n::ZERO_DECHETS_SEULEMENT.get(language))
                 .small()
-                .color(crate::ui::theme::palette(ui).danger),
+                .weak(),
         );
-    }
+    });
 
     ui.add_space(10.0);
     ui.horizontal(|ui| {
@@ -771,6 +755,13 @@ fn storage_tab(
             .clicked()
         {
             actions.purge = true;
+        }
+        if ui
+            .button(i18n::OUVRIR_LE_DOSSIER.get(language))
+            .on_hover_text(i18n::POUR_SUPPRIMER_A_LA_MAIN.get(language))
+            .clicked()
+        {
+            actions.open_folder = true;
         }
         let hint = match preview {
             None => i18n::CALCUL_EN_COURS.get(language).to_string(),
