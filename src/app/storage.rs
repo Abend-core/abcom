@@ -747,17 +747,6 @@ impl Storage {
             .execute_batch("PRAGMA wal_checkpoint(TRUNCATE); VACUUM; ANALYZE;")
     }
 
-    /// Taille du fichier de base et nombre de messages, pour l'affichage Paramètres.
-    pub fn footprint(&self, base: &Path) -> rusqlite::Result<(u64, u64)> {
-        let messages: i64 = self
-            .conn
-            .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get(0))?;
-        let bytes = std::fs::metadata(base.join("abcom.db"))
-            .map(|m| m.len())
-            .unwrap_or(0);
-        Ok((bytes, messages as u64))
-    }
-
     /// Exporte une conversation en texte lisible (portabilité local-first).
     ///
     /// `conv` suit la convention du reste du stockage : `None` = « Tous »,
