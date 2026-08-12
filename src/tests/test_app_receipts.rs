@@ -199,6 +199,9 @@ fn test_mark_delivered_by_feeds_detail() {
     assert!(detail.read_by.is_empty());
 }
 
+/// Lire suppose avoir reçu : carol n'a envoyé qu'un accusé de lecture, elle
+/// doit malgré tout figurer parmi ceux qui ont reçu. Le fil affichait
+/// « lu par carol » et « reçu par bob, zara », ce qui n'a pas de sens.
 #[test]
 fn test_receipt_detail_sorted() {
     let mut s = state();
@@ -208,8 +211,22 @@ fn test_receipt_detail_sorted() {
     s.mark_message_delivered_by(hash, "bob".to_string());
     s.mark_message_read(hash, "carol".to_string());
     let detail = s.receipt_detail(hash, &msg);
-    assert_eq!(detail.delivered_by, vec!["bob", "zara"]);
+    assert_eq!(detail.delivered_by, vec!["bob", "carol", "zara"]);
     assert_eq!(detail.read_by, vec!["carol"]);
+}
+
+/// Le cas exact du média : aucun accusé de livraison n'était émis à la
+/// réception, si bien qu'un fichier pouvait être « lu » sans jamais avoir été
+/// « reçu ».
+#[test]
+fn a_read_only_receipt_still_counts_as_delivered() {
+    let mut s = state();
+    let msg = make_msg("alice", "fichier");
+    let hash = AppState::message_hash(&msg);
+    s.mark_message_read(hash, "bob".to_string());
+    let detail = s.receipt_detail(hash, &msg);
+    assert_eq!(detail.delivered_by, vec!["bob"]);
+    assert_eq!(detail.read_by, vec!["bob"]);
 }
 
 #[test]

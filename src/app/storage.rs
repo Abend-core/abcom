@@ -143,6 +143,11 @@ pub enum StorageCmd {
         k: String,
         v: String,
     },
+    /// Chemin d'origine d'une pièce jointe que nous venons d'envoyer.
+    SetLocalMediaPath {
+        id: String,
+        path: String,
+    },
     /// Purge du cache disque des médias, demandée par l'utilisateur.
     ///
     /// Traité ici parce que la liste des médias encore référencés est une
@@ -194,6 +199,8 @@ pub struct LoadedState {
     pub read_receipts: HashMap<u64, HashSet<String>>,
     /// Préférences persistées (clé → valeur).
     pub kv: HashMap<String, String>,
+    /// Chemin d'origine de nos propres pièces jointes, par identifiant.
+    pub local_media: HashMap<String, String>,
 }
 
 pub struct Storage {
@@ -284,6 +291,14 @@ impl Storage {
                 username     TEXT    NOT NULL,
                 kind         TEXT    NOT NULL,
                 PRIMARY KEY (message_hash, username, kind)
+            );
+            -- Pièces jointes que **nous** avons envoyées : on ne les recopie
+            -- plus dans `media/`, l'original vit là où l'utilisateur l'a rangé.
+            -- Cette table dit où, pour que notre propre fil puisse encore
+            -- afficher la vignette et proposer l'ouverture.
+            CREATE TABLE IF NOT EXISTS local_media (
+                id   TEXT PRIMARY KEY,
+                path TEXT NOT NULL
             );",
         )?;
         let version: i64 = tx.query_row("PRAGMA user_version", [], |row| row.get(0))?;
@@ -636,6 +651,22 @@ impl Storage {
             params![username, avatar],
         )?;
         Ok(())
+    }
+
+    /// Mémorise où vit l'original d'une pièce jointe que nous avons envoyée.
+    pub fn set_local_media(&self, id: &str, path: &str) -> rusqlite::Result<()> {
+        self.conn.execute(
+            "INSERT INTO local_media (id, path) VALUES (?1, ?2)
+             ON CONFLICT(id) DO UPDATE SET path = excluded.path",
+            params![id, path],
+        )?;
+        Ok(())
+    }
+
+    fn load_local_media(&self) -> rusqlite::Result<HashMap<String, String>> {
+        let mut stmt = self.conn.prepare("SELECT id, path FROM local_media")?;
+        let rows = stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?;
+        rows.collect()
     }
 
     pub fn set_kv(&self, k: &str, v: &str) -> rusqlite::Result<()> {
@@ -1127,6 +1158,7 @@ impl Storage {
             delivered_receipts,
             read_receipts,
             kv,
+            local_media: self.load_local_media()?,
         })
     }
 
@@ -1445,6 +1477,7 @@ fn run(
                 kind,
             } => storage.add_receipt(hash, &username, kind),
             StorageCmd::SetKv { k, v } => storage.set_kv(&k, &v),
+            StorageCmd::SetLocalMediaPath { id, path } => storage.set_local_media(&id, &path),
             StorageCmd::LoadOlder { cursor } => match storage.resolve_cursor(cursor) {
                 Ok(None) => {
                     // Curseur irrécupérable : on le signale comme fin

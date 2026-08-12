@@ -324,6 +324,50 @@ fn dry_run_reports_without_deleting() {
     );
 }
 
+/// Nos envois ne sont plus recopiés : `media_path` doit rendre l'original, là
+/// où l'utilisateur range ses fichiers, et non un doublon dans `media/`.
+#[test]
+fn a_sent_attachment_resolves_to_its_original_path() {
+    let dir = std::env::temp_dir().join(format!("abcom_local_{}", std::process::id()));
+    let mut s = AppState::new_with_base("alice", &dir);
+    let original = dir.join("Documents").join("rapport.pdf");
+
+    s.register_local_media(
+        "2026-08-12_120000-000001-rapport.pdf".to_string(),
+        original.clone(),
+    );
+
+    assert_eq!(
+        s.media_path("2026-08-12_120000-000001-rapport.pdf"),
+        original
+    );
+    assert!(s.is_local_original("2026-08-12_120000-000001-rapport.pdf"));
+    // Une réception garde le chemin du cache.
+    assert_eq!(s.media_path("recu.png"), dir.join("media").join("recu.png"));
+    assert!(!s.is_local_original("recu.png"));
+    std::fs::remove_dir_all(&dir).ok();
+}
+
+/// Le document de l'utilisateur ne doit jamais être supprimé par
+/// l'application : un transfert raté ne peut effacer qu'une copie à nous.
+#[test]
+fn removing_a_media_message_never_deletes_the_users_own_file() {
+    let dir = std::env::temp_dir().join(format!("abcom_keep_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut s = AppState::new_with_base("alice", &dir);
+    let original = dir.join("mon-rapport.pdf");
+    std::fs::write(&original, b"important").unwrap();
+    s.register_local_media("envoi.pdf".to_string(), original.clone());
+
+    s.remove_media_message("envoi.pdf");
+
+    assert!(
+        original.exists(),
+        "l'original de l'utilisateur doit survivre"
+    );
+    std::fs::remove_dir_all(&dir).ok();
+}
+
 #[test]
 fn media_path_under_data_dir() {
     let dir = std::env::temp_dir().join(format!("abcom_media_{}", std::process::id()));

@@ -53,6 +53,27 @@ fn media_id_sanitizes_and_keeps_extension() {
     assert!(!id.contains('/') && !id.contains(' ') && !id.contains('@'));
 }
 
+/// Le nom de fichier porte la date en clair : c'est ainsi qu'on retrouve et
+/// qu'on trie les pièces jointes dans l'explorateur, la purge étant manuelle.
+/// Un horodatage µs brut ne disait rien à personne.
+#[test]
+fn media_id_starts_with_a_readable_date() {
+    let id = media_id("rapport.pdf");
+    let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+    assert!(
+        id.starts_with(&today),
+        "l'identifiant doit commencer par la date du jour : {id}"
+    );
+    assert!(
+        id.ends_with("-rapport.pdf"),
+        "nom d'origine conservé : {id}"
+    );
+
+    // Deux envois dans la même seconde restent distincts : l'identifiant sert
+    // de clé au message et de nom de fichier.
+    assert_ne!(media_id("rapport.pdf"), media_id("rapport.pdf"));
+}
+
 #[test]
 fn refused_message_is_attributed_to_sender() {
     let msg = refused_media_message("bob", "photo.zip", Some("ellis".to_string()));

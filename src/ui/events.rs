@@ -398,6 +398,12 @@ impl AbcomApp {
                         // vignette, et reconnaître qu'il est désormais là.
                         self.media.textures.remove(&id);
                         self.media.presence.remove(&id);
+                        // Une réception achevée vaut livraison. Sans cet accusé,
+                        // un média restait éternellement « non reçu » chez
+                        // l'émetteur, tout en pouvant être marqué « lu ».
+                        if !progress.outgoing {
+                            outbound.extend(delivery_acks(&s, &id));
+                        }
                     } else {
                         self.media.progress.insert(id, progress);
                     }
@@ -500,6 +506,45 @@ impl AbcomApp {
             }
         }
     }
+}
+
+/// Accusés de livraison à émettre pour le média `media_id` qu'on vient de
+/// recevoir entièrement.
+///
+/// Le chemin des messages texte acquitte à la réception ; celui des médias ne
+/// le faisait pas du tout, l'en-tête ne passant pas par `MessageReceived`. Le
+/// bon moment est la fin du transfert : « reçu » doit vouloir dire que les
+/// octets sont là, pas qu'une carte est apparue.
+fn delivery_acks(state: &AppState, media_id: &str) -> Vec<NetworkSendRequest> {
+    let Some(msg) = state
+        .messages
+        .iter()
+        .find(|m| m.media.as_ref().is_some_and(|media| media.id == media_id))
+    else {
+        return Vec::new();
+    };
+    if msg.from == state.my_username {
+        return Vec::new();
+    }
+    let hash = AppState::message_hash(msg);
+    let now = chrono::Local::now().format("%H:%M").to_string();
+    state
+        .receipt_recipients(msg)
+        .into_iter()
+        .map(|(recipient, addr)| {
+            MessageAckRequest {
+                to_peer: recipient.clone(),
+                to_addr: addr,
+                ack: MessageAck {
+                    from: state.my_username.clone(),
+                    to: recipient,
+                    message_hash: hash,
+                    timestamp: now.clone(),
+                },
+            }
+            .into()
+        })
+        .collect()
 }
 
 fn group_media_authorized(state: &AppState, group_name: &str, sender: &str) -> bool {

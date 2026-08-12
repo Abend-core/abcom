@@ -137,9 +137,24 @@ impl AppState {
             names.sort();
             names
         };
+        // Lire suppose avoir reçu. Un pair peut n'apparaître que dans les
+        // accusés de lecture — c'était le cas des médias, dont la réception
+        // n'émettait aucun ACK — et le fil affichait alors « lu par Bob, reçu
+        // par personne », ce qui n'a aucun sens. On rétablit l'implication ici
+        // pour que l'affichage reste cohérent quoi qu'il arrive en amont.
+        let read = self.read_receipts.get(&message_hash);
+        let mut delivered: std::collections::HashSet<String> = self
+            .delivered_receipts
+            .get(&message_hash)
+            .cloned()
+            .unwrap_or_default();
+        if let Some(read) = read {
+            delivered.extend(read.iter().cloned());
+        }
+
         ReceiptDetail {
-            delivered_by: resolve(self.delivered_receipts.get(&message_hash)),
-            read_by: resolve(self.read_receipts.get(&message_hash)),
+            delivered_by: resolve(Some(&delivered)),
+            read_by: resolve(read),
             audience: self.receipt_audience(msg),
         }
     }

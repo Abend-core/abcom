@@ -93,19 +93,27 @@ pub(super) fn prepare_and_stream(
     let filename = crate::ui::media::media_display_name(path);
     let id = crate::ui::media::media_id(&filename);
 
-    let dest = state.lock_safe().media_path(&id);
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    if is_dir {
-        crate::archive::zip_dir_to_path(path, &dest)?;
+    // Un fichier n'est plus recopié dans `media/` : l'original est déjà sur la
+    // machine, le dupliquer coûtait autant d'octets pour rien. Un dossier, lui,
+    // n'a pas d'original — son archive doit bien être écrite quelque part.
+    let dest = if is_dir {
+        let archive = state.lock_safe().media_path(&id);
+        if let Some(parent) = archive.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        crate::archive::zip_dir_to_path(path, &archive)?;
+        archive
     } else {
-        std::fs::copy(path, &dest)?;
-    }
+        path.to_path_buf()
+    };
 
     let size_bytes = std::fs::metadata(&dest)?.len();
     if size_bytes > MAX_MEDIA_TRANSFER_BYTES {
-        let _ = std::fs::remove_file(&dest);
+        // Ne jamais supprimer le fichier de l'utilisateur : seule une archive
+        // que nous venons de fabriquer nous appartient.
+        if is_dir {
+            let _ = std::fs::remove_file(&dest);
+        }
         return Err(std::io::Error::new(
             std::io::ErrorKind::InvalidData,
             "média trop volumineux (maximum 2 Gio)",
@@ -151,7 +159,9 @@ pub(super) fn prepare_and_stream(
         match send_media_tx.try_reserve() {
             Ok(permit) => permits.push(permit),
             Err(error) => {
-                let _ = std::fs::remove_file(&dest);
+                if is_dir {
+                    let _ = std::fs::remove_file(&dest);
+                }
                 return Err(std::io::Error::new(
                     std::io::ErrorKind::WouldBlock,
                     format!("mise en file du média impossible : {error}"),
@@ -160,19 +170,27 @@ pub(super) fn prepare_and_stream(
         }
     }
 
-    // Notre propre copie du message (la carte apparaît, avec progression).
-    state.lock_safe().add_message(ChatMessage {
-        from: my_name.to_string(),
-        content: String::new(),
-        timestamp: header.timestamp.clone(),
-        timestamp_epoch: header.timestamp_epoch,
-        to_user: to_user.clone(),
-        media: Some(media),
-        reply_to: None,
-        // Pas de nonce : le destinataire reconstruit ce message depuis
-        // MediaStreamHeader et doit retomber sur le même hash.
-        nonce: None,
-    });
+    // Où trouver ce fichier chez nous : sans cette note, notre propre fil
+    // n'aurait plus ni vignette ni ouverture, faute de copie dans `media/`.
+    {
+        let mut state = state.lock_safe();
+        if !is_dir {
+            state.register_local_media(media.id.clone(), dest.clone());
+        }
+        // Notre propre copie du message (la carte apparaît, avec progression).
+        state.add_message(ChatMessage {
+            from: my_name.to_string(),
+            content: String::new(),
+            timestamp: header.timestamp.clone(),
+            timestamp_epoch: header.timestamp_epoch,
+            to_user: to_user.clone(),
+            media: Some(media),
+            reply_to: None,
+            // Pas de nonce : le destinataire reconstruit ce message depuis
+            // MediaStreamHeader et doit retomber sur le même hash.
+            nonce: None,
+        });
+    }
 
     for (permit, job) in permits.into_iter().zip(jobs) {
         permit.send(job);

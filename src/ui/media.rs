@@ -81,9 +81,17 @@ pub(crate) fn refused_media_message(
 }
 
 /// Identifiant unique de média (sert de nom de fichier en cache, extension
-/// conservée). Préfixé par un horodatage µs pour garantir l'unicité.
+/// conservée).
+///
+/// Préfixé par la date locale de l'envoi, au format `AAAA-MM-JJ_HHMMSS`, pour
+/// qu'un tri par nom dans l'explorateur range les pièces jointes par date —
+/// c'est ainsi qu'on fait le ménage à la main. Les microsecondes closent le
+/// préfixe : deux fichiers envoyés dans la même seconde doivent rester
+/// distincts, et l'identifiant sert de clé au message.
 pub(crate) fn media_id(filename: &str) -> String {
-    let micros = chrono::Utc::now().timestamp_micros();
+    let now = chrono::Local::now();
+    let stamp = now.format("%Y-%m-%d_%H%M%S");
+    let micros = now.timestamp_subsec_micros();
     let safe: String = filename
         .chars()
         .map(|c| {
@@ -94,7 +102,7 @@ pub(crate) fn media_id(filename: &str) -> String {
             }
         })
         .collect();
-    format!("{micros}-{safe}")
+    format!("{stamp}-{micros:06}-{safe}")
 }
 
 /// Action déclenchée par l'utilisateur sur un média du fil.
