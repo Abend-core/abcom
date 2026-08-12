@@ -344,6 +344,8 @@ pub(crate) struct AbcomApp {
     /// préférences à l'ouverture : un `DragValue` a besoin d'une cible
     /// mutable, et écrire en base à chaque pixel de glissement est exclu.
     pub(crate) retention_days: u32,
+    /// La purge doit-elle emporter aussi les images du fil ? Faux par défaut.
+    pub(crate) purge_includes_images: bool,
     /// Début de la session, pour juger le backend graphique sur sa tenue.
     /// Windows seulement, comme le repli D3D12/Vulkan qu'il sert à valider.
     #[cfg(windows)]
@@ -427,12 +429,13 @@ impl AbcomApp {
         let (alias_to_char, aliases) = emoji_picker::build_emoji_shortcode_index(&characters);
         let (picker_tx, picker_rx) = std::sync::mpsc::channel();
         // Préférences persistées (table kv).
-        let (notif_preview, autostart_enabled, retention_days) = {
+        let (notif_preview, autostart_enabled, retention_days, purge_includes_images) = {
             let s = state.lock_safe();
             (
                 s.pref_bool("notif_preview", true),
                 s.pref_bool("autostart", false),
                 s.retention_days(),
+                s.purge_includes_images(),
             )
         };
 
@@ -523,6 +526,7 @@ impl AbcomApp {
             storage_scan_pending: false,
             purge_preview_pending: false,
             retention_days,
+            purge_includes_images,
             #[cfg(windows)]
             started_at: std::time::Instant::now(),
             #[cfg(windows)]

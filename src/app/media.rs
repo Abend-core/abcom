@@ -30,6 +30,10 @@ pub struct RetentionPolicy {
     /// Âge au-delà duquel une pièce jointe est purgée. `None` = on ne garde
     /// que le ménage des déchets (inachevés et orphelins).
     pub max_age: Option<Duration>,
+    /// Purger aussi les images affichées en vignette dans le fil. Faux par
+    /// défaut : les supprimer laisse des trous dans les conversations, alors
+    /// qu'un fichier ne perd qu'un bouton de téléchargement.
+    pub include_images: bool,
 }
 
 /// Ce qu'une purge a libéré (ou libérerait, en simulation).
@@ -53,13 +57,15 @@ impl GcReport {
 /// 1. les déchets — transferts inachevés (`.part`) et orphelins dont plus aucun
 ///    message ne parle — passé [`ORPHAN_GRACE`] ;
 /// 2. les pièces jointes plus vieilles que `policy.max_age`, si une durée est
-///    demandée.
+///    demandée — les images affichées dans le fil étant épargnées tant que
+///    `policy.include_images` est faux.
 ///
 /// Le message reste dans le fil dans tous les cas : seule la copie locale
 /// disparaît, et la carte média l'annonce comme indisponible.
 pub fn gc_media_dir(
     dir: PathBuf,
     referenced: HashSet<String>,
+    displayed_images: HashSet<String>,
     policy: RetentionPolicy,
     dry_run: bool,
 ) -> GcReport {
@@ -111,6 +117,13 @@ pub fn gc_media_dir(
             if age >= ORPHAN_GRACE {
                 remove(&path, meta.len(), dry_run, &mut report);
             }
+            continue;
+        }
+
+        // Une image du fil ne part que si l'utilisateur a coché la case : la
+        // supprimer laisse un trou dans la conversation, là où un fichier ne
+        // perd que son bouton de téléchargement.
+        if !policy.include_images && displayed_images.contains(name) {
             continue;
         }
 

@@ -59,6 +59,7 @@ fn gc_spares_a_transfer_in_progress() {
     let report = gc_media_dir(
         dir.path().to_path_buf(),
         HashSet::new(),
+        HashSet::new(),
         RetentionPolicy::default(),
         false,
     );
@@ -80,6 +81,7 @@ fn gc_removes_an_abandoned_part_file() {
     let report = gc_media_dir(
         dir.path().to_path_buf(),
         HashSet::new(),
+        HashSet::new(),
         RetentionPolicy::default(),
         false,
     );
@@ -98,8 +100,10 @@ fn retention_purges_by_age() {
     let report = gc_media_dir(
         dir.path().to_path_buf(),
         ids(&["vieux.png", "recent.png"]),
+        HashSet::new(),
         RetentionPolicy {
             max_age: Some(30 * DAY),
+            ..RetentionPolicy::default()
         },
         false,
     );
@@ -119,6 +123,7 @@ fn default_policy_deletes_nothing() {
     let report = gc_media_dir(
         dir.path().to_path_buf(),
         ids(&["tres-vieux.png"]),
+        HashSet::new(),
         RetentionPolicy::default(),
         false,
     );
@@ -142,6 +147,7 @@ fn size_alone_never_deletes_anything() {
     let report = gc_media_dir(
         dir.path().to_path_buf(),
         ids(&["enorme.zip", "hier.png", "avant-hier.png"]),
+        HashSet::new(),
         RetentionPolicy::default(),
         false,
     );
@@ -162,7 +168,11 @@ fn the_requested_age_applies_verbatim() {
     let report = gc_media_dir(
         dir.path().to_path_buf(),
         ids(&["recent.png"]),
-        RetentionPolicy { max_age: Some(DAY) },
+        HashSet::new(),
+        RetentionPolicy {
+            max_age: Some(DAY),
+            ..RetentionPolicy::default()
+        },
         false,
     );
 
@@ -180,6 +190,7 @@ fn a_just_written_media_is_not_mistaken_for_an_orphan() {
 
     let report = gc_media_dir(
         dir.path().to_path_buf(),
+        HashSet::new(),
         HashSet::new(),
         RetentionPolicy::default(),
         false,
@@ -200,12 +211,65 @@ fn nothing_is_purged_without_a_requested_age() {
     let report = gc_media_dir(
         dir.path().to_path_buf(),
         ids(&["vieille.png"]),
-        RetentionPolicy { max_age: None },
+        HashSet::new(),
+        RetentionPolicy::default(),
         false,
     );
 
     assert!(dir.exists("vieille.png"));
     assert_eq!(report.freed_files, 0);
+}
+
+/// Par défaut, la purge épargne les images du fil : les effacer laisse des
+/// trous dans les conversations. Les fichiers non affichés du même âge — un
+/// HEIC, une vidéo — partent bien, eux.
+#[test]
+fn displayed_images_survive_the_age_rule_by_default() {
+    let dir = MediaDir::new("images");
+    dir.write_aged("photo.jpeg", 100, 40 * DAY);
+    dir.write_aged("photo.heic", 200, 40 * DAY);
+    dir.write_aged("clip.mov", 400, 40 * DAY);
+
+    let report = gc_media_dir(
+        dir.path().to_path_buf(),
+        ids(&["photo.jpeg", "photo.heic", "clip.mov"]),
+        // Seul le JPEG est peint dans le fil ; le HEIC est une carte fichier.
+        ids(&["photo.jpeg"]),
+        RetentionPolicy {
+            max_age: Some(30 * DAY),
+            include_images: false,
+        },
+        false,
+    );
+
+    assert!(dir.exists("photo.jpeg"), "une image du fil est épargnée");
+    assert!(!dir.exists("photo.heic"), "un HEIC n'est jamais affiché");
+    assert!(!dir.exists("clip.mov"));
+    assert_eq!(report.freed_bytes, 600);
+}
+
+/// Case cochée, plus rien n'est épargné : l'utilisateur a demandé le grand
+/// ménage en connaissance de cause.
+#[test]
+fn checking_the_box_purges_displayed_images_too() {
+    let dir = MediaDir::new("images-on");
+    dir.write_aged("photo.jpeg", 100, 40 * DAY);
+    dir.write_aged("clip.mov", 400, 40 * DAY);
+
+    let report = gc_media_dir(
+        dir.path().to_path_buf(),
+        ids(&["photo.jpeg", "clip.mov"]),
+        ids(&["photo.jpeg"]),
+        RetentionPolicy {
+            max_age: Some(30 * DAY),
+            include_images: true,
+        },
+        false,
+    );
+
+    assert!(!dir.exists("photo.jpeg"));
+    assert!(!dir.exists("clip.mov"));
+    assert_eq!(report.freed_bytes, 500);
 }
 
 /// Le 12 août 2026, un GC a reçu un ensemble de références vide devant un
@@ -223,6 +287,7 @@ fn an_empty_reference_set_deletes_no_attachment() {
 
     let report = gc_media_dir(
         dir.path().to_path_buf(),
+        HashSet::new(),
         HashSet::new(),
         RetentionPolicy::default(),
         false,
@@ -245,6 +310,7 @@ fn dry_run_reports_without_deleting() {
     let report = gc_media_dir(
         dir.path().to_path_buf(),
         ids(&["garde.png"]),
+        HashSet::new(),
         RetentionPolicy::default(),
         true,
     );
