@@ -345,6 +345,8 @@ pub(crate) struct AbcomApp {
     /// mutable, et écrire en base à chaque pixel de glissement est exclu.
     pub(crate) retention_days: u32,
     /// Début de la session, pour juger le backend graphique sur sa tenue.
+    /// Windows seulement, comme le repli D3D12/Vulkan qu'il sert à valider.
+    #[cfg(windows)]
     pub(crate) started_at: std::time::Instant,
     /// Le backend a déjà été validé : on n'y revient plus de la session.
     #[cfg(windows)]
@@ -521,6 +523,7 @@ impl AbcomApp {
             storage_scan_pending: false,
             purge_preview_pending: false,
             retention_days,
+            #[cfg(windows)]
             started_at: std::time::Instant::now(),
             #[cfg(windows)]
             gpu_backend_confirmed: false,
