@@ -113,9 +113,11 @@ fn install_panic_hook() {
 ///
 /// Lancée depuis le terminal intégré de VS Code (distribué en snap), l'appli
 /// hérite de `GTK_PATH`, `GDK_PIXBUF_MODULE_FILE`… pointant dans `/snap/…`.
-/// À l'initialisation de GTK (thread du tray), ces modules tirent la glibc du
-/// snap et le processus meurt sur `undefined symbol: __libc_pthread_init`.
-/// On ne touche à rien si c'est bien nous qui tournons en snap.
+/// Ces modules tirent la glibc du snap et tuent le processus qui les charge sur
+/// `undefined symbol: __libc_pthread_init`. Abcom n'initialise plus GTK depuis
+/// le passage du tray à ksni, mais `xdg-open` (cf. `ui::settings`) et ce qu'il
+/// lance en héritent encore. On ne touche à rien si c'est bien nous qui
+/// tournons en snap.
 #[cfg(target_os = "linux")]
 fn drop_foreign_snap_gtk_env() {
     const LEAKED: [&str; 6] = [

@@ -69,7 +69,6 @@ blake2 = "0.10.6"
 # Sons de notification : seule la lecture est utilisée (tonalités
 # synthétisées), aucun décodeur de format n'est nécessaire.
 rodio = { version = "0.22", default-features = false, features = ["playback"], optional = true }
-tray-icon = { version = "0.24.1", optional = true }
 notify-rust = "4.18.0"
 auto-launch = "0.6.0"
 tracing = "0.1"
@@ -95,10 +94,10 @@ egui = "0.36"
 
 [features]
 default = ["tray", "sound"]
-# Icône résidente. Tire GTK3 + libappindicator sur Linux : la désactiver permet
-# de compiler sur un système qui n'a pas ces en-têtes (conteneur, Alpine/musl,
-# poste sans bureau). Sans elle, fermer la fenêtre quitte l'application.
-tray = ["dep:tray-icon", "dep:gtk"]
+# Icône résidente. Aucune dépendance C sur Linux depuis le passage à ksni : la
+# désactiver n'y sert plus qu'à retirer la fonction. Sans elle, fermer la
+# fenêtre quitte l'application.
+tray = ["dep:tray-icon", "dep:ksni"]
 # Son de notification. Tire ALSA (`libasound2-dev`) sur Linux, pour deux
 # tonalités synthétisées : la désactiver retire le bip, rien d'autre.
 sound = ["dep:rodio"]
@@ -106,11 +105,16 @@ sound = ["dep:rodio"]
 # désactivée par défaut : binaire et compilation nettement plus légers).
 avatar-svg = ["dep:resvg"]
 
+[target.'cfg(not(target_os = "linux"))'.dependencies]
+# Tray macOS/Windows. Sur Linux il tirait GTK3 + libappindicator + libxdo pour
+# ne parler qu'un protocole D-Bus : ksni le remplace en Rust pur.
+tray-icon = { version = "0.24.1", optional = true }
+
 [target.'cfg(target_os = "linux")'.dependencies]
-# `tray-icon` exige une boucle GTK sur le thread qui crée l'icône (cf. son
-# README) : winit n'en fournit aucune, on la monte donc nous-mêmes sur un
-# thread dédié. Version alignée sur celle que tray-icon tire déjà.
-gtk = { version = "0.18", optional = true }
+# StatusNotifierItem en Rust pur, sur le zbus déjà tiré par notify-rust.
+# `default-features = false` écarte le runtime async-io au profit de tokio,
+# que l'application fait déjà tourner.
+ksni = { version = "0.3.6", default-features = false, features = ["tokio"], optional = true }
 
 [target.'cfg(windows)'.dependencies]
 # Replier la fenêtre dans le tray sans la détruire : on la sort de l'écran et

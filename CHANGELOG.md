@@ -7,6 +7,9 @@ Format basé sur [Keep a Changelog](https://keepachangelog.com/fr/1.0.0/), versi
 
 ## [Non publié]
 
+### Modifié
+- **Le tray Linux ne dépend plus de GTK** : `libappindicator` n'était qu'une enveloppe GTK autour du protocole D-Bus StatusNotifierItem — l'application le parle désormais directement (`ksni`, Rust pur, sur le `zbus` déjà tiré par les notifications). `libgtk-3`, `libayatana-appindicator3` et `libxdo` disparaissent de l'arbre de dépendances Linux, à la compilation comme à l'exécution : plus aucune bibliothèque à installer pour compiler, et un binaire distribué qui ne peut plus refuser de démarrer sur une machine où elles manquent. La boucle GTK dédiée et le drapeau de badge qu'elle imposait disparaissent avec elle ; macOS et Windows gardent `tray-icon`, inchangés
+
 ### Ajouté
 - **Identifiant immuable pour les salons** : le nom d'un groupe devient un simple libellé, renommable sans rien casser. Auparavant le nom entrait dans le hash des messages, si bien qu'un renommage orphelinait d'un coup réactions, accusés et repère de lecture. Migration de base automatique ; **le protocole passe en version 3**, les pairs restés en version 2 ne se connectent plus
 - **Cahier de tests manuels** ([docs/10](docs/10-cahier-de-tests.md)) : fonctionnalités, régressions et spécificités par OS

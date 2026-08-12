@@ -132,7 +132,8 @@ Les dépendances directes sont déclarées dans [Cargo.toml](../Cargo.toml) et v
 | `snow` + `blake2` | Handshake Noise, empreintes et dérivation de PSK |
 | `socket2` | Options bas niveau des sockets (broadcast, réuse de port) |
 | `image`, `resvg` (optionnel), `rfd`, `walkdir`, `zip` | Décodage d'images, import SVG (feature `avatar-svg`), sélecteurs de fichiers natifs, parcours et archivage de dossiers |
-| `tray-icon`, `notify-rust`, `auto-launch` | Icône résidente, notifications système, autostart |
+| `tray-icon` (macOS/Windows), `ksni` (Linux) | Icône résidente ; `ksni` parle StatusNotifierItem en Rust pur, sans GTK |
+| `notify-rust`, `auto-launch` | Notifications système, autostart |
 | `rodio` | Sons de notification |
 | `ehttp`, `chrono`, `anyhow`, `dirs` | Requêtes Klipy, horodatage, erreurs, chemins par plateforme |
 
