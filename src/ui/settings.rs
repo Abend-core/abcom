@@ -176,6 +176,54 @@ impl AbcomApp {
                                 });
                                 ui.end_row();
 
+                                // Windows uniquement : le choix n'a de sens
+                                // qu'entre D3D12 et Vulkan (cf. `low_power_wgpu`).
+                                #[cfg(windows)]
+                                {
+                                    ui.label(
+                                        egui::RichText::new(self.t(i18n::RENDU_GRAPHIQUE))
+                                            .strong(),
+                                    );
+                                    ui.vertical(|ui| {
+                                        ui.horizontal(|ui| {
+                                            let mut choice = self.gpu_backend_choice;
+                                            let changed = ui
+                                                .radio_value(
+                                                    &mut choice,
+                                                    None,
+                                                    self.t(i18n::AUTOMATIQUE),
+                                                )
+                                                .changed()
+                                                || ui
+                                                    .radio_value(
+                                                        &mut choice,
+                                                        Some(crate::config::GpuBackend::Dx12),
+                                                        "Direct3D 12",
+                                                    )
+                                                    .changed()
+                                                || ui
+                                                    .radio_value(
+                                                        &mut choice,
+                                                        Some(crate::config::GpuBackend::Vulkan),
+                                                        "Vulkan",
+                                                    )
+                                                    .changed();
+                                            if changed {
+                                                self.gpu_backend_choice = choice;
+                                                crate::config::set_gpu_backend_choice(choice);
+                                            }
+                                        });
+                                        ui.label(
+                                            egui::RichText::new(
+                                                self.t(i18n::PREND_EFFET_AU_PROCHAIN_LANCEMENT),
+                                            )
+                                            .small()
+                                            .weak(),
+                                        );
+                                    });
+                                    ui.end_row();
+                                }
+
                                 ui.label(egui::RichText::new(self.t(i18n::NOTIFICATIONS)).strong());
                                 {
                                     let label = self.t(i18n::AFFICHER_UN_APERCU_DU_MESSAGE);
