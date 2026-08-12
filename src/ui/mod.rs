@@ -320,11 +320,6 @@ pub(crate) struct AbcomApp {
     /// Préférence de thème : egui suit le système et détecte ses changements
     /// en cours d'exécution, ce que notre détection au démarrage ne faisait pas.
     pub(crate) theme_preference: egui::ThemePreference,
-    /// Backend graphique choisi dans Paramètres → Général (Windows). `None` =
-    /// automatique. Ne prend effet qu'au prochain lancement : le backend de
-    /// la session en cours est déjà figé (cf. `low_power_wgpu`).
-    #[cfg(windows)]
-    pub(crate) gpu_backend_choice: Option<crate::config::GpuBackend>,
     /// Textures d'avatars, indexées par nom d'utilisateur (cache de rendu).
     pub(crate) avatar_textures: std::collections::HashMap<String, egui::TextureHandle>,
     /// Pairs auxquels notre avatar a déjà été envoyé (évite les répétitions).
@@ -491,8 +486,6 @@ impl AbcomApp {
             pending_picker: 0,
             ui_language: UiLanguage::French,
             theme_preference: egui::ThemePreference::System,
-            #[cfg(windows)]
-            gpu_backend_choice: crate::config::gpu_backend_choice(),
             avatar_textures: std::collections::HashMap::new(),
             avatar_sent_to: std::collections::HashSet::new(),
             pending_avatar_pick: false,
@@ -1364,11 +1357,12 @@ fn low_power_wgpu() -> eframe::egui_wgpu::WgpuConfiguration {
         // côté : c'est le pilote qui plante, pas notre appel.
         //
         // `WGPU_BACKEND` garde la priorité absolue (débogage). À défaut,
-        // `resolve_gpu_backend` retient soit le choix explicite de
-        // Paramètres → Général, soit — s'il détecte que le lancement
-        // précédent ne s'est pas terminé proprement — l'autre backend que
-        // celui tenté alors, soit D3D12 par défaut (le plus éprouvé en
-        // pratique sous Windows). Voir `config::resolve_gpu_backend`.
+        // `resolve_gpu_backend` retient le contenu du fichier `gpu_backend`
+        // du répertoire de données s'il existe (édité à la main, aucun
+        // réglage dans l'interface), sinon D3D12 — sauf si ce choix est
+        // justement celui que le lancement précédent a laissé en plan, auquel
+        // cas l'autre backend est pris à sa place. Voir
+        // `config::resolve_gpu_backend`.
         #[cfg(windows)]
         {
             setup.instance_descriptor.backends = match eframe::wgpu::Backends::from_env() {
