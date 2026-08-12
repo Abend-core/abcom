@@ -151,6 +151,17 @@ pub enum StorageCmd {
     GcMedia {
         dir: PathBuf,
     },
+    /// Ventilation de l'occupation disque, pour l'onglet Stockage.
+    ///
+    /// Traité ici pour la même raison que `GcMedia` : distinguer un envoi
+    /// d'une réception demande une requête SQL, l'historique en mémoire étant
+    /// fenêtré. Le parcours de dossiers qui suit reste hors du thread de
+    /// rendu, et le résultat remonte par `AppEvent::StorageUsage`.
+    ScanUsage {
+        data_dir: PathBuf,
+        media_dir: PathBuf,
+        me: String,
+    },
     /// Accusé de traitement : toutes les commandes précédentes ont été
     /// appliquées. La réponse porte la **dernière erreur d'écriture** survenue
     /// depuis le flush précédent, ou `None` si tout est bien passé — sans quoi
@@ -917,6 +928,25 @@ impl Storage {
         Ok(ids)
     }
 
+    /// Identifiants des médias que **nous** avons envoyés.
+    ///
+    /// Le dossier `media/` mélange envois et réceptions sous des noms opaques :
+    /// seul l'historique sait de quel côté vient chaque fichier. Les envois
+    /// sont des copies de fichiers dont l'utilisateur possède déjà l'original,
+    /// d'où leur comptage à part dans l'onglet Stockage.
+    pub fn sent_media_ids(&self, me: &str) -> rusqlite::Result<HashSet<String>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT media ->> 'id' FROM messages WHERE media IS NOT NULL AND from_user = ?1",
+        )?;
+        let ids = stmt
+            .query_map([me], |r| r.get::<_, Option<String>>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect();
+        Ok(ids)
+    }
+
     /// Charge l'état initial complet (fenêtre récente + tables annexes).
     pub fn load_all(&self, window: u32) -> rusqlite::Result<LoadedState> {
         let (messages, oldest_rowid) = self.load_recent(window)?;
@@ -1411,6 +1441,23 @@ fn run(
                     // Le parcours du dossier part sur un thread : il ne doit
                     // bloquer ni les écritures suivantes, ni l'UI.
                     std::thread::spawn(move || crate::app::media::gc_media_dir(dir, referenced));
+                    Ok(())
+                }
+                Err(error) => Err(error),
+            },
+            StorageCmd::ScanUsage {
+                data_dir,
+                media_dir,
+                me,
+            } => match storage.sent_media_ids(&me) {
+                Ok(sent) => {
+                    // Comme le GC : le parcours des dossiers part sur un
+                    // thread pour ne retarder aucune écriture.
+                    let event_tx = event_tx.clone();
+                    std::thread::spawn(move || {
+                        let usage = crate::app::usage::scan(&data_dir, &media_dir, &sent);
+                        let _ = event_tx.blocking_send(AppEvent::StorageUsage(usage));
+                    });
                     Ok(())
                 }
                 Err(error) => Err(error),

@@ -276,6 +276,9 @@ impl AbcomApp {
                         self.search.results = messages;
                     }
                 }
+                AppEvent::StorageUsage(usage) => {
+                    self.storage_usage = Some(usage);
+                }
                 AppEvent::SendFailed { username } => {
                     // Sans ceci, l'échec disparaît dans les logs d'un binaire sans console.
                     let label = self.t(i18n::INJOIGNABLE_MESSAGE_NON_ENVOYE);

@@ -58,6 +58,9 @@ pub enum AppEvent {
         query: String,
         messages: Vec<ChatMessage>,
     },
+    /// Ventilation de l'occupation disque, calculée hors du thread de rendu
+    /// (parcours de dossiers) à la demande de l'onglet Stockage.
+    StorageUsage(crate::app::usage::Usage),
     /// Aucune connexion sécurisée n'a pu être établie vers ce pair : le
     /// paquet est perdu. Remonté à l'UI (bannière) car sur un binaire release
     /// sans console, l'utilisateur n'a aucun autre signal.
