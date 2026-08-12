@@ -113,9 +113,10 @@ fn retention_purges_by_age() {
     assert_eq!(report.freed_bytes, 100);
 }
 
-/// Sans règle d'âge, rien ne bouge tant que le plafond n'est pas dépassé.
+/// Réglages par défaut : rien ne disparaît, quel que soit l'âge. Une mise à
+/// jour de l'application ne doit coûter aucune pièce jointe.
 #[test]
-fn unlimited_retention_keeps_everything_under_the_ceiling() {
+fn default_policy_deletes_nothing() {
     let dir = MediaDir::new("unlimited");
     dir.write_aged("tres-vieux.png", 100, 3000 * DAY);
 
@@ -137,10 +138,10 @@ fn unlimited_retention_keeps_everything_under_the_ceiling() {
 #[test]
 fn ceiling_evicts_sent_copies_before_received() {
     let dir = MediaDir::new("ceiling");
-    // L'envoi est le plus récent : sans la priorité aux envois, l'ancien tri
-    // par mtime aurait sacrifié la réception.
-    dir.write_aged("recu.png", 600, 10 * DAY);
-    dir.write_aged("envoye.png", 600, 1 * DAY);
+    // L'envoi est le plus récent des deux : sans la priorité aux envois,
+    // l'ancien tri par mtime aurait sacrifié la réception.
+    dir.write_aged("recu.png", 600, 30 * DAY);
+    dir.write_aged("envoye.png", 600, 10 * DAY);
 
     let report = gc_media_dir(
         dir.path().to_path_buf(),
@@ -148,7 +149,7 @@ fn ceiling_evicts_sent_copies_before_received() {
         ids(&["envoye.png"]),
         RetentionPolicy {
             max_age: None,
-            max_bytes: 700,
+            max_bytes: Some(700),
         },
         false,
     );
@@ -156,6 +157,84 @@ fn ceiling_evicts_sent_copies_before_received() {
     assert!(!dir.exists("envoye.png"), "l'envoi doit partir en premier");
     assert!(dir.exists("recu.png"), "la réception doit être préservée");
     assert_eq!(report.freed_bytes, 600);
+    assert!(!report.over_ceiling);
+}
+
+/// Le scénario qui rendait l'application inutilisable : un seul gros fichier
+/// dépasse à lui seul le plafond. L'ancien GC vidait alors tout le cache, y
+/// compris des réceptions de la veille dont l'utilisateur n'a aucune autre
+/// copie. Le plafond doit céder, pas les données.
+#[test]
+fn a_recent_oversized_file_never_wipes_the_cache() {
+    let dir = MediaDir::new("oversized");
+    dir.write_aged("enorme.zip", 5000, Duration::from_secs(60));
+    dir.write_aged("hier.png", 400, 1 * DAY);
+    dir.write_aged("avant-hier.png", 400, 2 * DAY);
+
+    let report = gc_media_dir(
+        dir.path().to_path_buf(),
+        ids(&["enorme.zip", "hier.png", "avant-hier.png"]),
+        HashSet::new(),
+        RetentionPolicy {
+            max_age: None,
+            max_bytes: Some(1000),
+        },
+        false,
+    );
+
+    assert!(dir.exists("enorme.zip"));
+    assert!(dir.exists("hier.png"));
+    assert!(dir.exists("avant-hier.png"));
+    assert_eq!(
+        report.freed_files, 0,
+        "aucune donnée récente ne doit partir"
+    );
+    assert!(
+        report.over_ceiling,
+        "le dépassement doit être signalé à l'utilisateur"
+    );
+}
+
+/// Le plancher de protection ne vaut que pour le plafond : une durée de
+/// conservation est un choix explicite, elle s'applique même en deçà.
+#[test]
+fn the_age_rule_overrides_the_ceiling_protection_floor() {
+    let dir = MediaDir::new("floor");
+    dir.write_aged("recent.png", 100, 2 * DAY);
+
+    let report = gc_media_dir(
+        dir.path().to_path_buf(),
+        ids(&["recent.png"]),
+        HashSet::new(),
+        RetentionPolicy {
+            max_age: Some(1 * DAY),
+            max_bytes: None,
+        },
+        false,
+    );
+
+    assert!(!dir.exists("recent.png"));
+    assert_eq!(report.freed_bytes, 100);
+}
+
+/// Un média fraîchement reçu existe sur le disque un court instant avant que
+/// son message n'atteigne la base : le prendre pour un orphelin et l'effacer
+/// perdait le fichier à l'arrivée.
+#[test]
+fn a_just_written_media_is_not_mistaken_for_an_orphan() {
+    let dir = MediaDir::new("fresh");
+    dir.write_aged("qui-vient-d-arriver.png", 100, Duration::from_secs(5));
+
+    let report = gc_media_dir(
+        dir.path().to_path_buf(),
+        HashSet::new(),
+        HashSet::new(),
+        RetentionPolicy::default(),
+        false,
+    );
+
+    assert!(dir.exists("qui-vient-d-arriver.png"));
+    assert_eq!(report.freed_files, 0);
 }
 
 /// L'aperçu de Paramètres annonce ce qu'une purge libérerait : il doit
