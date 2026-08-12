@@ -937,6 +937,28 @@ impl Storage {
         Ok(ids)
     }
 
+    /// Identifiants des médias affichés en vignette dans le fil.
+    ///
+    /// Ce sont les seuls dont la purge casse quelque chose de visible : un
+    /// fichier redevient une carte « indisponible », une image laisse un trou
+    /// dans la conversation. `kind` vaut `image` uniquement pour les formats
+    /// que l'application sait vraiment peindre (cf.
+    /// `MediaAttachment::is_image_filename`) : un HEIC est un `file`, il n'a
+    /// jamais été affiché et n'est donc pas protégé.
+    pub fn image_media_ids(&self) -> rusqlite::Result<HashSet<String>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT media ->> 'id' FROM messages
+             WHERE media IS NOT NULL AND media ->> 'kind' = 'image'",
+        )?;
+        let ids = stmt
+            .query_map([], |r| r.get::<_, Option<String>>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .flatten()
+            .collect();
+        Ok(ids)
+    }
+
     /// Identifiants des médias que **nous** avons envoyés.
     ///
     /// Le dossier `media/` mélange envois et réceptions sous des noms opaques :
@@ -1449,19 +1471,20 @@ fn run(
                 dir,
                 policy,
                 dry_run,
-            } => match storage.all_media_ids() {
-                Ok(referenced) => {
+            } => match (storage.all_media_ids(), storage.image_media_ids()) {
+                (Ok(referenced), Ok(images)) => {
                     // Le parcours du dossier part sur un thread : il ne doit
                     // bloquer ni les écritures suivantes, ni l'UI.
                     let event_tx = event_tx.clone();
                     std::thread::spawn(move || {
-                        let outcome =
-                            crate::app::media::gc_media_dir(dir, referenced, policy, dry_run);
+                        let outcome = crate::app::media::gc_media_dir(
+                            dir, referenced, images, policy, dry_run,
+                        );
                         let _ = event_tx.blocking_send(AppEvent::MediaPurged(outcome));
                     });
                     Ok(())
                 }
-                Err(error) => Err(error),
+                (Err(error), _) | (_, Err(error)) => Err(error),
             },
             StorageCmd::ScanUsage {
                 data_dir,

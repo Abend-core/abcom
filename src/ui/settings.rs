@@ -265,6 +265,7 @@ impl AbcomApp {
                             self.storage_usage.as_ref(),
                             self.purge_preview.as_ref(),
                             &mut self.retention_days,
+                            &mut self.purge_includes_images,
                             self.ui_language,
                             &mut storage_actions,
                         );
@@ -539,9 +540,11 @@ impl AbcomApp {
         // Durée d'abord : la simulation qui suit doit porter sur elle.
         if actions.save {
             let days = self.retention_days.to_string();
-            self.state
-                .lock_safe()
-                .set_pref("media_retention_days", &days);
+            let images = if self.purge_includes_images { "1" } else { "0" };
+            let mut state = self.state.lock_safe();
+            state.set_pref("media_retention_days", &days);
+            state.set_pref("media_purge_images", images);
+            drop(state);
             self.purge_preview = None;
         }
         if actions.open_folder {
@@ -637,6 +640,7 @@ fn storage_tab(
     usage: Option<&crate::app::usage::Usage>,
     preview: Option<&crate::app::media::GcReport>,
     retention_days: &mut u32,
+    include_images: &mut bool,
     language: UiLanguage,
     actions: &mut StorageActions,
 ) {
@@ -743,6 +747,15 @@ fn storage_tab(
                 .weak(),
         );
     });
+
+    ui.add_space(6.0);
+    if ui
+        .checkbox(include_images, i18n::INCLURE_LES_IMAGES.get(language))
+        .on_hover_text(i18n::INCLURE_LES_IMAGES_AIDE.get(language))
+        .changed()
+    {
+        actions.save = true;
+    }
 
     ui.add_space(10.0);
     ui.horizontal(|ui| {

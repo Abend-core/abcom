@@ -144,6 +144,8 @@ catalog! {
     SUPPRIMER_LES_PIECES_JOINTES_AU_DELA => ("Supprimer les pièces jointes au-delà de", "Delete attachments older than"),
     UNITE_JOURS => ("jours", "days"),
     ZERO_DECHETS_SEULEMENT => ("0 = ne purger que les transferts inachevés et les fichiers orphelins", "0 = purge only unfinished transfers and orphaned files"),
+    INCLURE_LES_IMAGES => ("Inclure les images affichées dans le fil", "Include images shown in the thread"),
+    INCLURE_LES_IMAGES_AIDE => ("Décoché, la purge épargne les images des conversations pour ne pas y laisser de trous. Les fichiers non affichés (HEIC, vidéos, archives…) partent dans tous les cas.", "Unchecked, the purge spares conversation images so it leaves no gaps. Files that are not displayed (HEIC, videos, archives…) are removed either way."),
     OUVRIR_LE_DOSSIER => ("Ouvrir le dossier", "Open folder"),
     POUR_SUPPRIMER_A_LA_MAIN => ("Les pièces jointes sont nommées « horodatage-nom » : triez par nom pour les avoir par date.", "Attachments are named \"timestamp-name\": sort by name to get them in date order."),
     OUVERTURE_DU_DOSSIER_IMPOSSIBLE => ("Impossible d'ouvrir le dossier", "Could not open the folder"),

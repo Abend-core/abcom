@@ -249,7 +249,13 @@ impl AppState {
                 0 => None,
                 days => Some(std::time::Duration::from_secs(u64::from(days) * 86_400)),
             },
+            include_images: self.purge_includes_images(),
         }
+    }
+
+    /// La purge doit-elle emporter aussi les images du fil ? Faux par défaut.
+    pub fn purge_includes_images(&self) -> bool {
+        self.pref_bool("media_purge_images", false)
     }
 
     /// Durée demandée pour la prochaine purge, en jours. `0` = ne purger que
