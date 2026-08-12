@@ -73,6 +73,10 @@ pub struct AppState {
     history_cap: usize,
     avatar_path: PathBuf,
     media_dir: PathBuf,
+    /// Chemin d'origine de nos propres pièces jointes, par identifiant. On ne
+    /// les recopie plus dans `media/` : l'original reste là où l'utilisateur
+    /// l'a rangé, et c'est de là qu'on l'affiche et qu'on le streame.
+    local_media: HashMap<String, PathBuf>,
 }
 
 impl AppState {
@@ -119,6 +123,11 @@ impl AppState {
             history_cap,
             avatar_path: base.join("avatar.png"),
             media_dir: base.join("media"),
+            local_media: loaded
+                .local_media
+                .into_iter()
+                .map(|(id, path)| (id, PathBuf::from(path)))
+                .collect(),
         };
 
         state.load_avatar();
@@ -155,6 +164,7 @@ impl AppState {
             history_cap: storage::INITIAL_WINDOW as usize,
             avatar_path: base.join("avatar.png"),
             media_dir: base.join("media"),
+            local_media: HashMap::new(),
         }
     }
 

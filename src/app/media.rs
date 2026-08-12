@@ -155,9 +155,30 @@ fn remove(path: &std::path::Path, bytes: u64, dry_run: bool, report: &mut GcRepo
 }
 
 impl AppState {
-    /// Chemin du fichier en cache pour un média donné.
+    /// Chemin du fichier pour un média donné.
+    ///
+    /// Nos propres envois ne sont plus recopiés dans `media/` : on rend le
+    /// chemin d'origine, celui où l'utilisateur range ses fichiers. S'il l'a
+    /// déplacé ou supprimé depuis, la pièce jointe s'affichera comme
+    /// indisponible — c'est le prix de ne pas dupliquer des gigaoctets.
     pub fn media_path(&self, id: &str) -> PathBuf {
-        self.media_dir.join(id)
+        match self.local_media.get(id) {
+            Some(original) => original.clone(),
+            None => self.media_dir.join(id),
+        }
+    }
+
+    /// Ce média est-il l'original de l'utilisateur, hors de notre cache ?
+    /// Rien de ce qui appartient à l'utilisateur ne doit jamais être supprimé.
+    pub fn is_local_original(&self, id: &str) -> bool {
+        self.local_media.contains_key(id)
+    }
+
+    /// Mémorise où vit l'original d'une pièce jointe que nous envoyons.
+    pub fn register_local_media(&mut self, id: String, path: PathBuf) {
+        let stored = path.to_string_lossy().to_string();
+        self.local_media.insert(id.clone(), path);
+        self.persist(super::StorageCmd::SetLocalMediaPath { id, path: stored });
     }
 
     /// Lit les octets d'un média depuis le cache disque.
@@ -168,7 +189,11 @@ impl AppState {
     /// Retire de l'historique le message portant ce média et supprime son
     /// fichier en cache (réception interrompue).
     pub fn remove_media_message(&mut self, media_id: &str) {
-        let _ = std::fs::remove_file(self.media_path(media_id));
+        // Jamais sur un de nos envois : `media_path` rendrait le fichier
+        // d'origine de l'utilisateur, et on effacerait son document.
+        if !self.is_local_original(media_id) {
+            let _ = std::fs::remove_file(self.media_path(media_id));
+        }
         self.messages
             .retain(|m| m.media.as_ref().is_none_or(|x| x.id != media_id));
         self.persist(super::StorageCmd::DeleteMessageByMediaId(
