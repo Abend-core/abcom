@@ -96,4 +96,4 @@ Valeurs mesurées en build release sur macOS après la passe d'optimisation de j
 | Threads | 15 | 8 |
 | Binaire release | — | ~11 Mo (LTO thin, strip, `panic=abort`) |
 | Écriture disque par message | réécriture JSON complète dans le thread UI | un INSERT SQLite hors thread UI |
-| Disque `media/` | croissance illimitée | orphelins purgés, plafond 2 Go réappliqué toutes les 15 min |
+| Disque `media/` | croissance illimitée, envois dupliqués | envois non recopiés, purge manuelle avec aperçu (aucune suppression automatique) |

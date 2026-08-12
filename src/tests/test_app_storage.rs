@@ -623,6 +623,101 @@ fn compaction_keeps_the_data_intact() {
     assert_eq!(storage.load_all(INITIAL_WINDOW).unwrap().messages.len(), 1);
 }
 
+/// `VACUUM` seul laissait le journal WAL intact : 4 Mo de journal pour 470 ko
+/// de base, constaté en usage réel, et l'utilisateur compactait sans voir le
+/// poste « Historique » bouger. Le point de contrôle doit passer d'abord.
+#[test]
+fn compaction_truncates_the_write_ahead_log() {
+    let dir = tmp_dir("wal");
+    let storage = Storage::open(&dir).unwrap();
+    for i in 0..500 {
+        storage
+            .insert_message(&msg("alice", None, &format!("message {i}"), i))
+            .unwrap();
+    }
+    let wal = dir.join("abcom.db-wal");
+    let before = std::fs::metadata(&wal).map(|m| m.len()).unwrap_or(0);
+    assert!(before > 0, "le WAL doit avoir grossi avant compaction");
+
+    storage.compact().unwrap();
+
+    let after = std::fs::metadata(&wal).map(|m| m.len()).unwrap_or(0);
+    assert!(
+        after < before,
+        "le WAL doit être tronqué : {before} → {after}"
+    );
+    assert_eq!(
+        storage.load_all(INITIAL_WINDOW).unwrap().messages.len(),
+        500,
+        "aucun message ne doit se perdre au passage"
+    );
+}
+
+/// Ce que la purge épargne par défaut. `kind` ne vaut `image` que pour les
+/// formats réellement peints dans le fil : un HEIC est un `file`, il n'a jamais
+/// été affiché en vignette et ne doit pas être protégé.
+#[test]
+fn image_media_ids_only_lists_what_the_thread_paints() {
+    use crate::message::{MediaAttachment, MediaKind};
+
+    let dir = tmp_dir("images");
+    let storage = Storage::open(&dir).unwrap();
+    let with_media = |id: &str, kind: MediaKind, epoch: u64| {
+        let mut message = msg("alice", None, "", epoch);
+        message.media = Some(MediaAttachment {
+            id: id.to_string(),
+            filename: id.to_string(),
+            kind,
+            size_bytes: 10,
+            url: None,
+            width: None,
+            height: None,
+        });
+        message
+    };
+    storage
+        .insert_message(&with_media("photo.jpeg", MediaKind::Image, 1))
+        .unwrap();
+    storage
+        .insert_message(&with_media("photo.heic", MediaKind::File, 2))
+        .unwrap();
+    storage
+        .insert_message(&with_media("anime.gif", MediaKind::Gif, 3))
+        .unwrap();
+
+    let images = storage.image_media_ids().unwrap();
+
+    assert_eq!(images.len(), 1, "une seule vignette : {images:?}");
+    assert!(images.contains("photo.jpeg"));
+    assert_eq!(storage.all_media_ids().unwrap().len(), 3);
+}
+
+/// La table qui remplace la copie des envois : sans elle, notre propre fil
+/// perdrait vignette et ouverture après redémarrage.
+#[test]
+fn local_media_paths_survive_a_reopen() {
+    let dir = tmp_dir("localmedia");
+    {
+        let storage = Storage::open(&dir).unwrap();
+        storage
+            .set_local_media(
+                "2026-08-12_120000-000001-rapport.pdf",
+                "/Users/moi/rapport.pdf",
+            )
+            .unwrap();
+    }
+    let storage = Storage::open(&dir).unwrap();
+    let loaded = storage.load_all(INITIAL_WINDOW).unwrap();
+
+    assert_eq!(
+        loaded
+            .local_media
+            .get("2026-08-12_120000-000001-rapport.pdf")
+            .map(String::as_str),
+        Some("/Users/moi/rapport.pdf")
+    );
+}
+
 #[test]
 fn schema_indexes_cover_conversation_queries() {
     let dir = tmp_dir("indexes");

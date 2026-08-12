@@ -203,7 +203,9 @@ instances. Tout doit être identique. Vérifie que la migration en base a suivi.
 | 11.3 | File hors ligne | Bob éteint, alice envoie, bob revient | Le message est livré | P0 |
 | 11.4 | **File durable** | Bob éteint, alice envoie, **tuer alice brutalement** (`kill -9`), relancer alice, rallumer bob | Le message part quand même. Régression : il était perdu | P0 |
 | 11.5 | Compaction | Paramètres → compacter | Base réduite, aucune perte | P2 |
-| 11.6 | Cache média | Laisser tourner > 15 min avec beaucoup de médias | Le dossier `media/` reste sous 2 Gio | P2 |
+| 11.6 | Cache média | Laisser tourner > 15 min avec beaucoup de médias | Aucun fichier ne disparaît : plus aucune purge automatique | P1 |
+| 11.7 | Purge manuelle | Paramètres → Stockage, saisir une durée, purger | L'aperçu annonce le volume, seuls les fichiers plus vieux partent, les images du fil sont épargnées si la case est décochée | P1 |
+| 11.8 | Envoi sans doublon | Envoyer un fichier, regarder `media/` chez l'émetteur | Aucune copie créée ; l'original reste seul sur le disque | P2 |
 | 11.7 | Instance hors plage | `ABCOM_INSTANCE=999999` | Démarre sur un port valide, **sans panique** | P2 |
 
 ## 11.8 — Migration depuis une version antérieure (P0)

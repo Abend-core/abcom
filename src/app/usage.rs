@@ -35,8 +35,9 @@ pub struct Usage {
     pub database: Entry,
     /// Médias reçus des pairs — les supprimer perd les fichiers.
     pub media_received: Entry,
-    /// Médias envoyés : copies de fichiers dont l'utilisateur garde
-    /// l'original ailleurs, donc les plus sûrs à purger.
+    /// Médias envoyés encore présents ici : les archives ZIP des dossiers,
+    /// qui n'ont pas d'original, et les copies faites avant qu'on cesse de
+    /// dupliquer les envois. Un fichier envoyé n'est plus recopié.
     pub media_sent: Entry,
     /// Transferts inachevés (`.part`) : reprises impossibles, purgés dès
     /// qu'ils dépassent le délai de grâce du GC.

@@ -992,10 +992,10 @@ impl Storage {
 
     /// Identifiants des médias que **nous** avons envoyés.
     ///
-    /// Le dossier `media/` mélange envois et réceptions sous des noms opaques :
-    /// seul l'historique sait de quel côté vient chaque fichier. Les envois
-    /// sont des copies de fichiers dont l'utilisateur possède déjà l'original,
-    /// d'où leur comptage à part dans l'onglet Stockage.
+    /// Le dossier `media/` mélange les deux sens sous des noms opaques : seul
+    /// l'historique sait de quel côté vient chaque fichier. Ce qui reste de nos
+    /// envois — archives de dossiers, copies antérieures au changement — est
+    /// compté à part dans l'onglet Stockage.
     pub fn sent_media_ids(&self, me: &str) -> rusqlite::Result<HashSet<String>> {
         let mut stmt = self.conn.prepare_cached(
             "SELECT media ->> 'id' FROM messages WHERE media IS NOT NULL AND from_user = ?1",
