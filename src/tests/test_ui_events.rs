@@ -163,6 +163,85 @@ fn remove_requires_owner_or_voluntary_departure() {
     assert!(!state.groups[0].members.contains(&"charlie".to_string()));
 }
 
+/// Une réception de média n'émettait aucun accusé de livraison : l'en-tête ne
+/// passe pas par `MessageReceived`, qui acquitte les messages texte. Un fichier
+/// restait donc éternellement « non reçu » chez l'émetteur, tout en pouvant
+/// être marqué « lu » — l'incohérence constatée dans le fil « Tous ».
+#[test]
+fn a_finished_media_reception_acknowledges_delivery() {
+    use crate::message::{MediaAttachment, MediaKind, NetworkPacket};
+
+    let mut state = state();
+    state.add_peer("alice".to_string(), "127.0.0.1:9000".parse().unwrap());
+    let mut message = crate::message::ChatMessage {
+        from: "alice".to_string(),
+        content: String::new(),
+        timestamp: "12:00".to_string(),
+        timestamp_epoch: Some(1),
+        to_user: None,
+        media: None,
+        reply_to: None,
+        nonce: None,
+    };
+    message.media = Some(MediaAttachment {
+        id: "2026-08-12_120000-000001-rapport.pdf".to_string(),
+        filename: "rapport.pdf".to_string(),
+        kind: MediaKind::File,
+        size_bytes: 10,
+        url: None,
+        width: None,
+        height: None,
+    });
+    let hash = AppState::message_hash(&message);
+    state.add_message(message);
+
+    let acks = super::delivery_acks(&state, "2026-08-12_120000-000001-rapport.pdf");
+
+    assert_eq!(acks.len(), 1, "un accusé pour l'émetteur : {acks:?}");
+    assert_eq!(acks[0].to_peer, "alice");
+    match &acks[0].packet {
+        NetworkPacket::Ack(ack) => {
+            assert_eq!(ack.message_hash, hash);
+            assert_eq!(ack.from, "local");
+        }
+        other => panic!("un accusé de livraison était attendu : {other:?}"),
+    }
+}
+
+/// On n'acquitte jamais son propre envoi : la progression « terminé » se
+/// déclenche aussi côté émetteur.
+#[test]
+fn our_own_media_is_never_self_acknowledged() {
+    use crate::message::{MediaAttachment, MediaKind};
+
+    let mut state = state();
+    state.add_peer("alice".to_string(), "127.0.0.1:9000".parse().unwrap());
+    let mut message = crate::message::ChatMessage {
+        from: "local".to_string(),
+        content: String::new(),
+        timestamp: "12:00".to_string(),
+        timestamp_epoch: Some(1),
+        to_user: None,
+        media: None,
+        reply_to: None,
+        nonce: None,
+    };
+    message.media = Some(MediaAttachment {
+        id: "envoi.pdf".to_string(),
+        filename: "envoi.pdf".to_string(),
+        kind: MediaKind::File,
+        size_bytes: 10,
+        url: None,
+        width: None,
+        height: None,
+    });
+    state.add_message(message);
+
+    assert!(super::delivery_acks(&state, "envoi.pdf").is_empty());
+    // Média inconnu : aucun accusé, aucune panique.
+    assert!(super::delivery_acks(&state, "jamais-vu.pdf").is_empty());
+}
+
 #[test]
 fn group_media_requires_both_local_user_and_sender_membership() {
     let mut state = state();

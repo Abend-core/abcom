@@ -138,7 +138,7 @@ catalog! {
     FICHIERS_DE_TRAVAIL => ("Fichiers de travail", "Working files"),
     TRANSFERTS_INACHEVES => ("Transferts inachevés", "Unfinished transfers"),
     AUTRES => ("Autres", "Other"),
-    LES_ENVOIS_SONT_DES_COPIES => ("Les médias envoyés sont des copies de vos fichiers : vous en gardez l'original ailleurs.", "Sent media are copies of your files: you keep the originals elsewhere."),
+    LES_ENVOIS_SONT_DES_COPIES => ("Vos envois ne sont pas recopiés ici : seuls comptent les archives de dossiers et les copies faites avant la mise à jour.", "Your sent files are not copied here: only folder archives and copies made before the update count."),
     PURGE_MANUELLE => ("Purge manuelle", "Manual purge"),
     AUCUNE_PURGE_AUTOMATIQUE => ("Rien n'est jamais supprimé sans votre clic : aucune purge ne tourne en arrière-plan.", "Nothing is ever deleted without your click: no purge runs in the background."),
     SUPPRIMER_LES_PIECES_JOINTES_AU_DELA => ("Supprimer les pièces jointes au-delà de", "Delete attachments older than"),

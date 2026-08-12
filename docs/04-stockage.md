@@ -78,12 +78,19 @@ Si `abcom.db` n'existe pas au démarrage et que d'anciens fichiers JSON sont pr�
 
 ## Le dossier `media/`
 
-Chaque fichier ou image transféré est stocké sous un identifiant unique dans `media/`. Pour que l'empreinte disque reste bornée :
+`media/` ne contient que ce que nous **recevons**, plus les archives ZIP des dossiers que nous envoyons — celles-ci n'ayant pas d'original ailleurs. Un fichier que nous envoyons n'y est pas recopié : l'original reste là où l'utilisateur l'a rangé, et la table `local_media` note son chemin pour que notre propre fil garde vignette et ouverture. Dupliquer des gigaoctets d'un document déjà présent sur la machine ne servait à rien.
 
-- un thread détaché supprime les **orphelins** (fichiers que plus aucun message ne référence) ;
-- puis applique un **plafond de 2 Go** en supprimant les fichiers les plus anciens (mtime) au-delà.
+Chaque fichier porte un identifiant unique préfixé par la date locale de l'envoi (`2026-08-12_143005-000123-rapport.pdf`) : un tri par nom dans l'explorateur les range donc par date, ce qui compte puisque le ménage est manuel.
 
-Ce nettoyage tourne au démarrage **et toutes les 15 minutes**. Le limiter au démarrage laissait une longue session dépasser durablement le plafond. Il passe par le thread de stockage : la liste des médias encore référencés est une requête SQL, et l'historique en mémoire n'en est qu'une fenêtre — s'en servir supprimerait les fichiers des messages plus anciens.
+**Aucune purge automatique.** Rien n'est jamais supprimé sans un clic sur « Purger maintenant » dans Paramètres → Stockage. Un plafond de 2 Go tournait auparavant au démarrage et toutes les 15 minutes ; il a détruit 285 Mo de pièces jointes référencées le 12 août 2026 et a été retiré, avec son déclencheur périodique. La purge manuelle enlève :
+
+- les **transferts inachevés** (`.part`) et les **orphelins** (plus aucun message ne les référence), passé une heure de grâce — ce délai protège une réception en cours et le bref instant où un média est écrit avant que son message n'atteigne la base ;
+- les pièces jointes plus vieilles que la durée demandée, en jours, `0` ne purgeant que les déchets ci-dessus ;
+- les **images affichées dans le fil** seulement si la case est cochée : les effacer laisse des trous dans les conversations, là où un fichier ne perd qu'un bouton de téléchargement. Seuls les formats réellement peints comptent comme images (`kind = image`) — un HEIC est un `file`.
+
+Un aperçu chiffre ce qui partirait avant tout clic. Deux garde-fous ferment le reste : un ensemble de références vide devant un dossier plein n'autorise aucune suppression d'orphelin, et rien de ce qui appartient à l'utilisateur (nos envois, dont `media_path` rend le chemin d'origine) ne peut être effacé par l'application.
+
+La purge passe par le thread de stockage : la liste des médias encore référencés est une requête SQL, et l'historique en mémoire n'en est qu'une fenêtre — s'en servir supprimerait les fichiers des messages plus anciens.
 
 Un pair ne peut écrire sans confirmation que jusqu'au seuil d'acceptation (50 Mo, cf. [05](05-fonctionnalites.md)), ce qui borne aussi ce que le cache peut absorber entre deux passages.
 
