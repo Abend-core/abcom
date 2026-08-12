@@ -167,7 +167,6 @@ fn a_purge_report_is_handled_without_retaking_the_state_lock() {
             freed_bytes: 1024,
             freed_files: 2,
             dry_run,
-            over_ceiling: false,
         })
     };
 

@@ -319,6 +319,11 @@ impl AbcomApp {
                 let texture = self.media_texture(ctx, id);
                 media_textures.insert(id.clone(), texture);
             }
+            // Présence sur disque des pièces jointes du fil : un seul `stat`
+            // par média et par session (le résultat est mémorisé), jamais un
+            // accès disque par frame.
+            let local_ids = self.chat_cache.local_media_ids.clone();
+            let media_present = self.media_presence(&local_ids);
 
             // Actions médias collectées pendant le rendu, appliquées ensuite.
             let mut media_view_open: Option<String> = None;
@@ -476,6 +481,7 @@ impl AbcomApp {
                                             &self.emoji.textures,
                                             &media_textures,
                                             &self.media.progress,
+                                            &media_present,
                                         );
                                         collapse_toggled |= toggled;
                                         if let Some(action) = media_action {
@@ -520,6 +526,7 @@ impl AbcomApp {
                                         &self.emoji.textures,
                                         &media_textures,
                                         &self.media.progress,
+                                        &media_present,
                                     );
                                     collapse_toggled |= toggled;
                                     if let Some(action) = media_action {

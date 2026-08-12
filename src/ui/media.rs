@@ -180,6 +180,8 @@ pub(crate) fn render_media_block(
     ui: &mut egui::Ui,
     media: &MediaAttachment,
     texture: Option<&egui::TextureHandle>,
+    available: bool,
+    language: crate::ui::UiLanguage,
 ) -> Option<MediaAction> {
     // GIF : animé via les loaders egui_extras, chargé depuis l'URL Klipy.
     // Taille forcée d'après le ratio HD pour un affichage net et non riquiqui.
@@ -208,7 +210,8 @@ pub(crate) fn render_media_block(
             }
             return None;
         }
-        return file_card(ui, media);
+        // Un GIF vit sur une URL distante : le cache disque ne le concerne pas.
+        return file_card(ui, media, true, language);
     }
     match (&media.kind, texture) {
         (MediaKind::Image, Some(texture)) => {
@@ -227,7 +230,7 @@ pub(crate) fn render_media_block(
             response.clicked().then_some(MediaAction::View)
         }
         // Image dont le cache est manquant → repli en carte fichier.
-        _ => file_card(ui, media),
+        _ => file_card(ui, media, available, language),
     }
 }
 
@@ -236,7 +239,17 @@ const FILE_CARD_WIDTH: f32 = 380.0;
 
 /// Carte d'un fichier non-image (ou image indisponible), façon Discord : badge
 /// d'extension coloré, nom mis en valeur, taille, et bouton de téléchargement.
-fn file_card(ui: &mut egui::Ui, media: &MediaAttachment) -> Option<MediaAction> {
+///
+/// `available` dit si la copie locale existe encore : une pièce jointe purgée
+/// à la main garde son message dans le fil, mais on ne peut plus rien en
+/// faire. La carte l'annonce en rouge et ne propose plus de téléchargement —
+/// le bouton n'aurait produit qu'une erreur.
+fn file_card(
+    ui: &mut egui::Ui,
+    media: &MediaAttachment,
+    available: bool,
+    language: crate::ui::UiLanguage,
+) -> Option<MediaAction> {
     let mut action = None;
     let width = FILE_CARD_WIDTH.min(ui.available_width());
     egui::Frame::default()
@@ -255,19 +268,34 @@ fn file_card(ui: &mut egui::Ui, media: &MediaAttachment) -> Option<MediaAction> 
                 file_badge(ui, &extension);
                 ui.vertical(|ui| {
                     ui.add_space(2.0);
-                    ui.label(
-                        egui::RichText::new(elide(&media.filename, 38))
-                            .color(crate::ui::theme::palette(ui).link)
-                            .strong(),
-                    );
+                    let palette = crate::ui::theme::palette(ui);
+                    ui.horizontal(|ui| {
+                        ui.spacing_mut().item_spacing.x = 6.0;
+                        let name = egui::RichText::new(elide(&media.filename, 32)).strong();
+                        ui.label(if available {
+                            name.color(palette.link)
+                        } else {
+                            name.color(palette.text_muted)
+                        });
+                        if !available {
+                            ui.label(
+                                egui::RichText::new(
+                                    crate::ui::i18n::FICHIER_INDISPONIBLE.get(language),
+                                )
+                                .small()
+                                .strong()
+                                .color(palette.danger),
+                            );
+                        }
+                    });
                     ui.label(
                         egui::RichText::new(format_bytes(media.size_bytes))
                             .small()
-                            .color(crate::ui::theme::palette(ui).text_muted),
+                            .color(palette.text_muted),
                     );
                 });
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if download_button(ui) {
+                    if available && download_button(ui) {
                         action = Some(MediaAction::Download);
                     }
                 });
@@ -429,6 +457,26 @@ impl AbcomApp {
         texture
     }
 
+    /// Quels médias ont encore leur copie dans `media/` ?
+    ///
+    /// Le résultat est mémorisé : sans cela, afficher le fil relirait le
+    /// disque à chaque frame. Les entrées sont invalidées après une purge et à
+    /// la fin d'un transfert (cf. `AppEvent::MediaPurged` et
+    /// `AppEvent::MediaProgressed`), les seuls moments où la réponse change.
+    pub(crate) fn media_presence(&mut self, ids: &[String]) -> std::collections::HashSet<String> {
+        for id in ids {
+            if self.media.presence.contains_key(id) {
+                continue;
+            }
+            let path = self.state.lock_safe().media_path(id);
+            self.media.presence.insert(id.clone(), path.is_file());
+        }
+        ids.iter()
+            .filter(|id| self.media.presence.get(*id).copied().unwrap_or(false))
+            .cloned()
+            .collect()
+    }
+
     /// Place `id` en tête de l'ordre d'accès LRU.
     fn touch_media_texture(&mut self, id: &str) {
         if let Some(pos) = self.media.texture_lru.iter().position(|x| x == id) {
@@ -583,7 +631,7 @@ impl AbcomApp {
         }
     }
 
-    fn notify(&mut self, text: &str) {
+    pub(crate) fn notify(&mut self, text: &str) {
         self.notify_owned(text.to_string());
     }
 

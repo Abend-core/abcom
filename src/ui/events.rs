@@ -12,9 +12,6 @@ use crate::util::MutexExt;
 /// persistance tombe durablement, on cesse d'accumuler.
 const MAX_PENDING_ACKS: usize = 10_000;
 
-/// Période du nettoyage du cache disque des médias.
-const MEDIA_GC_INTERVAL: std::time::Duration = std::time::Duration::from_secs(15 * 60);
-
 impl AbcomApp {
     /// Dépile les événements réseau reçus depuis les tâches tokio.
     ///
@@ -285,6 +282,10 @@ impl AbcomApp {
                     if report.dry_run {
                         self.purge_preview = Some(report);
                     } else {
+                        // Des fichiers ont disparu : le fil doit le montrer.
+                        self.media.presence.clear();
+                        self.media.textures.clear();
+                        self.media.texture_lru.clear();
                         // La ventilation affichée date d'avant la purge : on la
                         // redemande, sinon l'utilisateur voit le total inchangé.
                         // Via le verrou déjà tenu : le reprendre ici gelait
@@ -382,6 +383,7 @@ impl AbcomApp {
                     let id = progress.id.clone();
                     if progress.failed {
                         self.media.progress.remove(&id);
+                        self.media.presence.remove(&id);
                         if !progress.outgoing {
                             // Une réception interrompue n'a aucun fichier utile.
                             self.media.textures.remove(&id);
@@ -392,8 +394,10 @@ impl AbcomApp {
                         self.notification_time = std::time::Instant::now();
                     } else if progress.finished {
                         self.media.progress.remove(&id);
-                        // Le fichier est complet : recharger une éventuelle vignette.
+                        // Le fichier est complet : recharger une éventuelle
+                        // vignette, et reconnaître qu'il est désormais là.
                         self.media.textures.remove(&id);
+                        self.media.presence.remove(&id);
                     } else {
                         self.media.progress.insert(id, progress);
                     }
@@ -494,13 +498,6 @@ impl AbcomApp {
                     Some(self.t(i18n::ECHEC_DE_LIVRAISON_D_UN_MESSAGE).to_string());
                 self.notification_time = std::time::Instant::now();
             }
-        }
-
-        // Plafond du cache média : le GC ne tournait qu'au démarrage, si bien
-        // qu'une longue session pouvait dépasser durablement la limite.
-        if self.last_media_gc.elapsed() >= MEDIA_GC_INTERVAL {
-            self.last_media_gc = std::time::Instant::now();
-            self.state.lock_safe().request_media_gc(false, false);
         }
     }
 }

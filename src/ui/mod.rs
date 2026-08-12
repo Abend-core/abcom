@@ -274,6 +274,9 @@ pub(crate) struct MediaState {
     /// Texture pleine résolution de la visionneuse, libérée à sa fermeture
     /// (le fil n'affiche que des textures réduites).
     pub(crate) viewer_texture: Option<(String, egui::TextureHandle)>,
+    /// La copie locale de ce média existe-t-elle ? Mémorisé pour ne pas
+    /// interroger le disque à chaque frame (cf. `media_presence`).
+    pub(crate) presence: std::collections::HashMap<String, bool>,
 }
 
 /// État de l'application UI
@@ -319,8 +322,6 @@ pub(crate) struct AbcomApp {
     /// (cf. `AppEvent::MessagesPersisted`), par hash.
     pub(crate) pending_acks: std::collections::HashMap<u64, Vec<NetworkSendRequest>>,
     pub(crate) last_retry_time: std::time::Instant,
-    /// Dernier passage du GC du cache média (cf. `MEDIA_GC_INTERVAL`).
-    pub(crate) last_media_gc: std::time::Instant,
     pub(crate) muted_conversations: std::collections::HashSet<Option<String>>,
     /// 0 = none, 1 = pick files, 2 = pick folder (deferred to next frame to avoid AppKit conflict)
     pub(crate) pending_picker: u8,
@@ -343,7 +344,6 @@ pub(crate) struct AbcomApp {
     /// préférences à l'ouverture : un `DragValue` a besoin d'une cible
     /// mutable, et écrire en base à chaque pixel de glissement est exclu.
     pub(crate) retention_days: u32,
-    pub(crate) cache_max_mib: u32,
     /// Début de la session, pour juger le backend graphique sur sa tenue.
     pub(crate) started_at: std::time::Instant,
     /// Le backend a déjà été validé : on n'y revient plus de la session.
@@ -425,13 +425,12 @@ impl AbcomApp {
         let (alias_to_char, aliases) = emoji_picker::build_emoji_shortcode_index(&characters);
         let (picker_tx, picker_rx) = std::sync::mpsc::channel();
         // Préférences persistées (table kv).
-        let (notif_preview, autostart_enabled, retention_days, cache_max_mib) = {
+        let (notif_preview, autostart_enabled, retention_days) = {
             let s = state.lock_safe();
             (
                 s.pref_bool("notif_preview", true),
                 s.pref_bool("autostart", false),
                 s.retention_days(),
-                s.cache_max_mib(),
             )
         };
 
@@ -454,6 +453,7 @@ impl AbcomApp {
                 known_gif_urls: std::collections::HashSet::new(),
                 texture_lru: Vec::new(),
                 viewer_texture: None,
+                presence: std::collections::HashMap::new(),
             },
             composer: ComposerState {
                 text: String::new(),
@@ -512,7 +512,6 @@ impl AbcomApp {
             last_typing_broadcast: std::time::Instant::now(),
             pending_acks: std::collections::HashMap::new(),
             last_retry_time: std::time::Instant::now(),
-            last_media_gc: std::time::Instant::now(),
             muted_conversations: std::collections::HashSet::new(),
             pending_picker: 0,
             ui_language: UiLanguage::French,
@@ -522,7 +521,6 @@ impl AbcomApp {
             storage_scan_pending: false,
             purge_preview_pending: false,
             retention_days,
-            cache_max_mib,
             started_at: std::time::Instant::now(),
             #[cfg(windows)]
             gpu_backend_confirmed: false,

@@ -273,11 +273,6 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    // GC du cache disque des médias (inachevés, orphelins, âge, plafond), hors
-    // chemin de démarrage : la commande passe par le thread de stockage, qui
-    // parcourt le dossier sur un thread à lui. L'UI s'ouvre sans attendre.
-    state.lock_safe().request_media_gc(false, false);
-
     // Pair expiré → sa connexion est libérée : son adresse ne sera plus valide.
     let (peer_gone_tx, mut peer_gone_rx) = mpsc::channel::<String>(64);
     {
