@@ -13,29 +13,33 @@ elles, `cargo build` échoue avant même d'atteindre notre code.
 | Besoin | Debian / Ubuntu | Fedora | Arch | Alpine |
 |---|---|---|---|---|
 | Clavier, fenêtrage | `libxkbcommon-dev` | `libxkbcommon-devel` | `libxkbcommon` | `libxkbcommon-dev` |
-| Automatisation X11 (tray) | `libxdo-dev` | `libxdo-devel` | `xdotool` | `libxdo-dev` |
 | Son des notifications | `libasound2-dev` | `alsa-lib-devel` | `alsa-lib` | `alsa-lib-dev` |
-| Icône résidente (tray) | `libgtk-3-dev libayatana-appindicator3-dev` | `gtk3-devel libayatana-appindicator-gtk3-devel` | `gtk3 libayatana-appindicator` | `gtk+3.0-dev libayatana-appindicator-dev` |
 
-**Les deux dernières lignes sont optionnelles** : voir les features ci-dessous.
+**La dernière ligne est optionnelle** : voir les features ci-dessous.
 
-### Compiler léger : `tray` et `sound`
+L'icône résidente ne figure plus dans ce tableau : elle parle directement le
+protocole D-Bus StatusNotifierItem (crate `ksni`, Rust pur), là où
+`libappindicator` imposait GTK3 et libxdo. Rien à installer, ni pour compiler
+ni pour exécuter.
 
-Les deux dépendances C les plus lourdes sont derrière des features actives par
-défaut. Les désactiver permet de compiler sur un système minimal — conteneur,
-image Alpine, poste sans environnement de bureau — sans installer GTK ni ALSA.
+### Compiler léger : `sound`
+
+La seule dépendance C restante derrière une feature est ALSA. La désactiver
+permet de compiler sur un système minimal — conteneur, image Alpine, poste sans
+environnement de bureau.
 
 ```bash
-# Sans icône résidente ni son : ni GTK, ni libappindicator, ni ALSA requis
+# Sans son ni icône résidente
 cargo build --release --no-default-features
 
-# Sans le tray uniquement
-cargo build --release --no-default-features --features sound
+# Sans le son uniquement : ALSA n'est plus requis
+cargo build --release --no-default-features --features tray
 ```
 
 Sans `tray`, fermer la fenêtre quitte réellement l'application au lieu de la
 replier. Sans `sound`, le bip de notification disparaît ; les notifications
-système, elles, restent (elles passent par D-Bus en Rust pur, sans dépendance C).
+système, elles, restent (elles passent par D-Bus en Rust pur, sans dépendance C)
+— tout comme le tray désormais.
 
 ### musl et Alpine
 
@@ -46,12 +50,12 @@ d'abcom ne dépend de la glibc.
 **Binaire entièrement statique** : ce n'est **pas** possible, et ce n'est pas une
 limite qu'on peut lever par configuration. Le rendu passe par `wgpu`, qui charge
 le pilote Vulkan à l'exécution via `dlopen` — or `dlopen` ne fonctionne pas dans
-un binaire musl statique. Le tray (GTK) et le son (ALSA) ajoutent la même
-contrainte. Un binaire statique supposerait d'abandonner l'interface graphique.
+un binaire musl statique. Le son (ALSA) ajoute la même contrainte. Un binaire
+statique supposerait d'abandonner l'interface graphique.
 
 En résumé, sur Alpine : installer les paquets, compiler normalement, obtenir un
 binaire lié dynamiquement à musl. Réduire la surface avec
-`--no-default-features` si GTK et ALSA ne sont pas souhaités.
+`--no-default-features` si ALSA n'est pas souhaité.
 
 ## Lancer depuis les sources (toutes plateformes)
 

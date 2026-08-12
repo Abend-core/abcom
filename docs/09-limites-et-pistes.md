@@ -32,10 +32,11 @@ Inventaire honnête de ce que l'application ne fait pas (ou fait imparfaitement)
 
 | Limite | Détail | Piste |
 |---|---|---|
-| Pas de binaire musl statique | `wgpu` charge le pilote Vulkan par `dlopen`, impossible dans un binaire musl statique ; GTK et ALSA ajoutent la même contrainte. La compilation **dynamique** contre musl (Alpine) fonctionne | Aucune : lever la limite supposerait d'abandonner l'interface graphique |
+| Pas de binaire musl statique | `wgpu` charge le pilote Vulkan par `dlopen`, impossible dans un binaire musl statique ; ALSA ajoute la même contrainte. La compilation **dynamique** contre musl (Alpine) fonctionne | Aucune : lever la limite supposerait d'abandonner l'interface graphique |
 | Pas de bundle macOS | Binaire nu : les notifications sont attribuées au terminal | Bundle `.app` (`com.abend.abcom`) via cargo-bundle/cargo-packager, à la première release |
 | Pas d'installateur Windows complet | Le script PowerShell installe et crée les raccourcis, sans MSI | Package MSI ou ZIP signé |
-| Tray Linux dépendant du shell | Nécessite StatusNotifier/AppIndicator (KDE, XFCE ok ; GNOME avec extension) ; sans tray, la croix quitte normalement (repli sûr) | — |
+| Tray Linux dépendant du shell | Nécessite StatusNotifier/AppIndicator (KDE, XFCE ok ; GNOME avec extension) ; sans tray, la croix quitte normalement (repli sûr). C'est le shell qui décide d'afficher le protocole : aucune implémentation côté application ne lève cette limite | — |
+| Restauration depuis le tray en Wayland natif | Wayland interdit à un client de se mettre au premier plan seul (pas de jeton `xdg-activation` sur un clic D-Bus) : la fenêtre peut revenir sans passer devant. Non observé aujourd'hui, le backend X11 étant forcé (cf. `prefer_x11_backend`) | Aucune côté application — à mesurer le jour où le contournement winit sera retiré |
 | Tray Windows/Linux non testés en réel | Implémentés mais l'environnement de dev est macOS | Passe manuelle §13 du [cahier de tests](10-cahier-de-tests.md) sur machines cibles |
 
 ## Dette identifiée, non résorbée

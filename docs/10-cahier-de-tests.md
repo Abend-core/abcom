@@ -253,7 +253,8 @@ Le cœur est identique partout ; ces points diffèrent réellement.
 | L1 | `scripts/abcom-install.sh` | Binaire, service systemd et **raccourci menu fonctionnel** |
 | L2 | **Lancer depuis le menu** | L'app démarre. Régression : `%h` n'était pas développé, le raccourci ne lançait rien |
 | L3 | Démarrage unique | Après installation puis reconnexion de session : **une seule** instance tourne. `systemctl --user status abcom` doit répondre que l'unité n'existe pas — le démarrage passe uniquement par `~/.config/autostart/` |
-| L6 | Build minimal | `cargo build --release --no-default-features` sur une machine **sans GTK ni ALSA** : doit compiler. L'app démarre sans tray (fermer la fenêtre quitte) et sans bip |
+| L6 | Build minimal | `cargo build --release --no-default-features` sur une machine **sans ALSA** : doit compiler. L'app démarre sans tray (fermer la fenêtre quitte) et sans bip |
+| L8 | Tray sans GTK | Sur une machine **sans `libgtk-3`, `libayatana-appindicator3` ni `libxdo`** : `ldd target/release/abcom` ne doit citer aucun des trois, et le tray doit fonctionner malgré tout (KDE/XFCE, ou GNOME + extension) |
 | L7 | Alpine / musl | Installer les paquets de [docs/06](06-installation.md), compiler, lancer. Binaire lié dynamiquement à musl |
 | L4 | Wayland et X11 | Tester les deux : tray, notifications, focus (test 3.3) |
 | L5 | Tray selon l'environnement | GNOME demande une extension AppIndicator ; KDE/XFCE fonctionnent nativement |

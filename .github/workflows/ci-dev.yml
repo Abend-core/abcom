@@ -20,7 +20,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Dépendances système
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxkbcommon-dev libgtk-3-dev libayatana-appindicator3-dev libxdo-dev
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxkbcommon-dev
 
       - name: Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -77,7 +77,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Dépendances système
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxkbcommon-dev libgtk-3-dev libayatana-appindicator3-dev libxdo-dev
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxkbcommon-dev
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -97,7 +97,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Dépendances système
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxkbcommon-dev libgtk-3-dev libayatana-appindicator3-dev libxdo-dev
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libxkbcommon-dev
 
       - name: Lire la MSRV déclarée
         id: msrv
@@ -111,15 +111,16 @@ jobs:
         run: cargo check --all-targets --all-features --locked
 
   minimal-build:
-    name: Build minimal (sans GTK ni ALSA)
+    name: Build minimal (sans ALSA)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
 
       # Volontairement aucune dépendance système : c'est tout l'intérêt du
-      # test. Si `--no-default-features` réclamait encore GTK, libappindicator
-      # ou ALSA, ce job échouerait — et la compatibilité annoncée pour les
-      # systèmes minimaux (conteneur, Alpine/musl) serait fausse.
+      # test. Si `--no-default-features` réclamait encore ALSA, ce job
+      # échouerait — et la compatibilité annoncée pour les systèmes minimaux
+      # (conteneur, Alpine/musl) serait fausse. Le tray, lui, ne réclame plus
+      # rien depuis le passage à ksni : il tient dans le build par défaut.
       - name: Dépendances système (clavier/fenêtrage uniquement)
         run: sudo apt-get update && sudo apt-get install -y libxkbcommon-dev
 
