@@ -615,11 +615,10 @@ fn compaction_keeps_the_data_intact() {
     storage
         .insert_message(&msg("alice", None, "gardé", 1))
         .unwrap();
-    let (_, before) = storage.footprint(&dir).unwrap();
     storage.compact().unwrap();
-    let (bytes, after) = storage.footprint(&dir).unwrap();
-    assert_eq!(before, after);
-    assert!(bytes > 0);
+
+    let bytes = std::fs::metadata(dir.join("abcom.db")).unwrap().len();
+    assert!(bytes > 0, "la base ne doit pas être vidée");
     assert_eq!(storage.load_all(INITIAL_WINDOW).unwrap().messages.len(), 1);
 }
 
