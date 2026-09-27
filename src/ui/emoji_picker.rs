@@ -3,6 +3,160 @@ use eframe::egui;
 use super::composer;
 use super::AbcomApp;
 
+/// Encombrement de la grille d'emojis, hors cadre de la popup.
+pub(crate) const PICKER_SIZE: egui::Vec2 = egui::vec2(310.0, 340.0);
+
+/// Marge conservée entre la popup et le bord de la fenêtre.
+const SCREEN_MARGIN: f32 = 8.0;
+/// Écart entre la popup et le bouton qui l'ouvre.
+const ANCHOR_GAP: f32 = 6.0;
+
+/// Coin haut-gauche d'une popup de taille `size` ouverte depuis `anchor`.
+///
+/// Sous le bouton par défaut, au-dessus s'il n'y a pas la place — un picker de
+/// 340 px ouvert depuis un message du bas de la conversation sortait de la
+/// fenêtre et se retrouvait tronqué. Le résultat est toujours ramené dans
+/// l'écran, y compris quand la fenêtre est plus petite que la popup.
+pub(crate) fn popup_pos(screen: egui::Rect, anchor: egui::Rect, size: egui::Vec2) -> egui::Pos2 {
+    let below = anchor.bottom() + ANCHOR_GAP;
+    let above = anchor.top() - ANCHOR_GAP - size.y;
+    let fits_below = below + size.y <= screen.bottom() - SCREEN_MARGIN;
+    let fits_above = above >= screen.top() + SCREEN_MARGIN;
+    let y = if fits_below || !fits_above {
+        below
+    } else {
+        above
+    };
+
+    // `min` avant `max` : sur une fenêtre plus petite que la popup, c'est le
+    // bord haut-gauche qui gagne, plutôt qu'un coin hors écran.
+    let clamp = |v: f32, low: f32, high: f32| v.min(high).max(low);
+    egui::pos2(
+        clamp(
+            anchor.left(),
+            screen.left() + SCREEN_MARGIN,
+            screen.right() - SCREEN_MARGIN - size.x,
+        ),
+        clamp(
+            y,
+            screen.top() + SCREEN_MARGIN,
+            screen.bottom() - SCREEN_MARGIN - size.y,
+        ),
+    )
+}
+
+/// Popup d'emojis ancrée sur le bouton qui l'ouvre. Renvoie le rectangle
+/// réellement occupé, pour distinguer un clic dedans d'un clic dehors.
+///
+/// Partagée par le bouton de la barre de saisie et celui de chaque message :
+/// même cadre, même taille, même placement.
+pub(crate) fn show_emoji_popup(
+    ctx: &egui::Context,
+    id: egui::Id,
+    anchor: egui::Rect,
+    category: &mut usize,
+    textures: &super::EmojiTextures,
+    on_pick: impl FnMut(&str),
+) -> egui::Rect {
+    // Taille mesurée à la frame précédente ; au premier affichage, la grille
+    // plus la marge du cadre.
+    let size = ctx
+        .memory(|m| m.area_rect(id))
+        .map(|r| r.size())
+        .unwrap_or(PICKER_SIZE + egui::vec2(16.0, 16.0));
+
+    let response = egui::Area::new(id)
+        .order(egui::Order::Foreground)
+        .fixed_pos(popup_pos(ctx.viewport_rect(), anchor, size))
+        .show(ctx, |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.set_min_size(PICKER_SIZE);
+                show_emoji_grid(ui, category, textures, on_pick);
+            });
+        })
+        .response;
+
+    // La taille supposée n'était pas la bonne : la popup est placée de travers
+    // pour cette frame, et egui ne repeindrait pas de lui-même.
+    if (response.rect.size() - size).length() > 0.5 {
+        ctx.request_repaint();
+    }
+    response.rect
+}
+
+/// Dessine la grille de catégories + emojis, appelle `on_pick` au clic sur un
+/// emoji. Partagé entre le picker du composeur et celui des réactions.
+pub(crate) fn show_emoji_grid(
+    ui: &mut egui::Ui,
+    category: &mut usize,
+    textures: &super::EmojiTextures,
+    mut on_pick: impl FnMut(&str),
+) {
+    // Catégories
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        for (cat_idx, (cat_icon, _start, _end)) in
+            crate::emoji_registry::EMOJI_CATEGORIES.iter().enumerate()
+        {
+            let selected = *category == cat_idx;
+            let btn = egui::Button::new(egui::RichText::new(*cat_icon).size(18.0))
+                .min_size(egui::vec2(24.0, 24.0))
+                .selected(selected)
+                .frame(selected);
+            if ui.add(btn).clicked() {
+                *category = cat_idx;
+            }
+        }
+    });
+    ui.separator();
+
+    let (_, start, end) = crate::emoji_registry::EMOJI_CATEGORIES[*category];
+    let total = crate::emoji_registry::EMOJI_DATA.len();
+    let slice = &crate::emoji_registry::EMOJI_DATA[start..end.min(total)];
+
+    egui::ScrollArea::vertical()
+        .max_height(270.0)
+        .min_scrolled_height(270.0)
+        .auto_shrink([false, false])
+        .show(ui, |ui| {
+            egui::Grid::new("emoji_grid")
+                .spacing([3.0, 3.0])
+                .show(ui, |ui| {
+                    for (offset, (ch, _)) in slice.iter().enumerate() {
+                        let (cell_rect, cell_resp) =
+                            ui.allocate_exact_size(egui::vec2(36.0, 36.0), egui::Sense::click());
+                        if cell_resp.hovered() {
+                            ui.painter().rect_filled(
+                                cell_rect,
+                                6.0,
+                                ui.visuals().widgets.hovered.bg_fill,
+                            );
+                        }
+                        // Décodage à la demande : seule la catégorie ouverte coûte quelque chose.
+                        if ui.is_rect_visible(cell_rect) {
+                            if let Some(texture) = textures.get(ui.ctx(), start + offset) {
+                                ui.painter().image(
+                                    texture.id(),
+                                    cell_rect.shrink(1.0),
+                                    egui::Rect::from_min_max(
+                                        egui::pos2(0.0, 0.0),
+                                        egui::pos2(1.0, 1.0),
+                                    ),
+                                    egui::Color32::WHITE,
+                                );
+                            }
+                        }
+                        if cell_resp.on_hover_text(*ch).clicked() {
+                            on_pick(ch);
+                        }
+                        if (offset + 1) % 8 == 0 {
+                            ui.end_row();
+                        }
+                    }
+                });
+        });
+}
+
 /// Affiche le picker d'emojis et sa fenêtre popup
 impl AbcomApp {
     pub(crate) fn show_emoji_picker_window(
@@ -14,90 +168,31 @@ impl AbcomApp {
             return;
         }
 
-        let mut picker_rect: Option<egui::Rect> = None;
-        let picker_window = egui::Window::new(self.tr("Emojis", "Emojis"))
-            .anchor(egui::Align2::LEFT_BOTTOM, egui::vec2(0.0, -60.0))
-            .resizable(false)
-            .collapsible(false)
-            .fixed_size([310.0, 340.0]);
+        let mut picked: Option<String> = None;
+        let picker_rect = show_emoji_popup(
+            ctx,
+            egui::Id::new("composer_emoji_picker"),
+            self.emoji_btn_rect,
+            &mut self.emoji.category,
+            &self.emoji.textures,
+            |ch| picked = Some(ch.to_string()),
+        );
 
-        if let Some(resp) = picker_window.show(ctx, |ui| {
-            // Catégories
-            ui.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = 2.0;
-                for (cat_idx, (cat_icon, _start, _end)) in
-                    crate::emoji_registry::EMOJI_CATEGORIES.iter().enumerate()
-                {
-                    let selected = self.emoji_category == cat_idx;
-                    let btn = egui::Button::new(egui::RichText::new(*cat_icon).size(18.0))
-                        .min_size(egui::vec2(24.0, 24.0))
-                        .selected(selected)
-                        .frame(selected);
-                    if ui.add(btn).clicked() {
-                        self.emoji_category = cat_idx;
-                    }
-                }
-            });
-            ui.separator();
-
-            let (_, start, end) = crate::emoji_registry::EMOJI_CATEGORIES[self.emoji_category];
-            let slice = &self.emoji_textures[start..end.min(self.emoji_textures.len())];
-
-            egui::ScrollArea::vertical()
-                .max_height(270.0)
-                .min_scrolled_height(270.0)
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    egui::Grid::new("emoji_grid")
-                        .spacing([3.0, 3.0])
-                        .show(ui, |ui| {
-                            for (idx, (ch, texture)) in slice.iter().enumerate() {
-                                let (cell_rect, cell_resp) = ui.allocate_exact_size(
-                                    egui::vec2(36.0, 36.0),
-                                    egui::Sense::click(),
-                                );
-                                if cell_resp.hovered() {
-                                    ui.painter().rect_filled(
-                                        cell_rect,
-                                        6.0,
-                                        ui.visuals().widgets.hovered.bg_fill,
-                                    );
-                                }
-                                ui.painter().image(
-                                    texture.id(),
-                                    cell_rect.shrink(1.0),
-                                    egui::Rect::from_min_max(
-                                        egui::pos2(0.0, 0.0),
-                                        egui::pos2(1.0, 1.0),
-                                    ),
-                                    egui::Color32::WHITE,
-                                );
-                                if cell_resp.on_hover_text(ch.as_str()).clicked() {
-                                    composer::insert_emoji_at_cursor(
-                                        &mut self.input,
-                                        &mut self.input_cursor_char,
-                                        ch,
-                                    );
-                                    composer::sync_cursor(ctx, self.input_cursor_char);
-                                    self.input_has_focus = true;
-                                    self.show_emoji_picker = false;
-                                }
-                                if (idx + 1) % 8 == 0 {
-                                    ui.end_row();
-                                }
-                            }
-                        });
-                });
-        }) {
-            picker_rect = Some(resp.response.rect);
+        if let Some(ch) = picked {
+            composer::insert_emoji_at_cursor(
+                &mut self.composer.text,
+                &mut self.composer.cursor_char,
+                &ch,
+            );
+            composer::sync_cursor(ctx, self.composer.cursor_char);
+            self.composer.has_focus = true;
+            self.show_emoji_picker = false;
         }
 
         if !emoji_button_clicked && ctx.input(|i| i.pointer.any_pressed()) {
             if let Some(pos) = ctx.input(|i| i.pointer.interact_pos()) {
-                if let Some(rect) = picker_rect {
-                    if !rect.contains(pos) {
-                        self.show_emoji_picker = false;
-                    }
+                if !picker_rect.contains(pos) && !self.emoji_btn_rect.contains(pos) {
+                    self.show_emoji_picker = false;
                 }
             }
         }
@@ -122,7 +217,9 @@ pub(crate) fn emoji_shortcode_trigger(input: &str, cursor_char: usize) -> Option
         start -= 1;
     }
 
-    if start >= chars.len() || chars[start] != ':' {
+    // `start == cursor_char` : le curseur est placé AVANT le `:` (pas dedans),
+    // et la slice `start + 1..cursor_char` serait inversée → panique.
+    if start >= cursor_char || chars[start] != ':' {
         return None;
     }
 
@@ -165,13 +262,13 @@ pub(crate) fn show_shortcode_popup(
     resp: &egui::Response,
     shortcode_list: &[(String, String)],
     emoji_map: &std::collections::HashMap<String, usize>,
-    emoji_textures: &[(String, egui::TextureHandle)],
+    emoji_textures: &super::EmojiTextures,
     shortcode_selected: usize,
     clicked_shortcode: &mut Option<String>,
 ) {
     let row_h = 28.0;
     let desired_h = (shortcode_list.len() as f32 * row_h + 8.0).min(220.0);
-    let screen = ctx.screen_rect();
+    let screen = ctx.viewport_rect();
     let gap = 14.0;
     let popup_bottom = resp.rect.top() - gap;
     let available_above = (popup_bottom - (screen.top() + 4.0)).max(0.0);
@@ -212,7 +309,7 @@ pub(crate) fn show_shortcode_popup(
                             let mut x = row_rect.left() + 8.0;
                             let y = row_rect.center().y;
                             if let Some(&tex_idx) = emoji_map.get(ch) {
-                                if let Some((_, tex)) = emoji_textures.get(tex_idx) {
+                                if let Some(tex) = emoji_textures.get(ui.ctx(), tex_idx) {
                                     let img_rect = egui::Rect::from_center_size(
                                         egui::pos2(x + 9.0, y),
                                         egui::vec2(18.0, 18.0),
@@ -250,12 +347,33 @@ pub(crate) fn show_shortcode_popup(
         });
 }
 
+/// Fait correspondre un emoji connu à la position `i` dans `chars` : essaie
+/// d'abord 2 caractères (paires avec variation/genre), puis 1. Retourne la
+/// longueur consommée et l'index dans `emoji_map`/`textures` si trouvé.
+/// Point d'entrée unique du scan « séquence de 2 puis 1 caractères » partagé
+/// par le rendu du fil, le composeur et le picker.
+pub(crate) fn match_emoji_at(
+    chars: &[char],
+    i: usize,
+    emoji_map: &std::collections::HashMap<String, usize>,
+) -> Option<(usize, usize)> {
+    for len in [2usize, 1] {
+        if i + len <= chars.len() {
+            let s: String = chars[i..i + len].iter().collect();
+            if let Some(&idx) = emoji_map.get(&s) {
+                return Some((len, idx));
+            }
+        }
+    }
+    None
+}
+
 /// Rendu inline d'un texte avec emojis PNG
 pub(crate) fn render_inline(
     ui: &mut egui::Ui,
     text: &str,
     emoji_map: &std::collections::HashMap<String, usize>,
-    textures: &[(String, egui::TextureHandle)],
+    textures: &super::EmojiTextures,
     emoji_size: f32,
 ) {
     let chars: Vec<char> = text.chars().collect();
@@ -264,22 +382,16 @@ pub(crate) fn render_inline(
     let size = egui::vec2(emoji_size, emoji_size);
     while i < chars.len() {
         let mut matched = false;
-        for len in [2usize, 1] {
-            if i + len <= chars.len() {
-                let s: String = chars[i..i + len].iter().collect();
-                if let Some(&idx) = emoji_map.get(&s) {
-                    if !acc.is_empty() {
-                        ui.label(&acc);
-                        acc.clear();
-                    }
-                    if let Some((_, tex)) = textures.get(idx) {
-                        ui.add(egui::Image::new(tex).fit_to_exact_size(size));
-                    }
-                    i += len;
-                    matched = true;
-                    break;
-                }
+        if let Some((len, idx)) = match_emoji_at(&chars, i, emoji_map) {
+            if !acc.is_empty() {
+                ui.label(&acc);
+                acc.clear();
             }
+            if let Some(tex) = textures.get(ui.ctx(), idx) {
+                ui.add(egui::Image::new(&tex).fit_to_exact_size(size));
+            }
+            i += len;
+            matched = true;
         }
         if !matched {
             let ch = chars[i];
@@ -337,3 +449,7 @@ fn github_key_to_emoji(key: &str) -> Option<String> {
     }
     Some(out)
 }
+
+#[cfg(test)]
+#[path = "../tests/test_ui_emoji_picker.rs"]
+mod tests;

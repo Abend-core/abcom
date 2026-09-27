@@ -23,16 +23,32 @@ impl AppState {
 
         for peer in &mut self.peers {
             if peer.username == username {
+                // `last_seen` sert au timeout interne : sa mise à jour seule
+                // ne change rien à l'affichage, pas d'invalidation de cache.
+                let changed = peer.addr != addr || !peer.online;
                 peer.addr = addr;
                 peer.last_seen = now;
                 peer.online = true;
+                if changed {
+                    self.bump_presence();
+                }
                 return;
             }
         }
-        self.peers.push(Peer { username, addr, last_seen: now, online: true });
+        self.peers.push(Peer {
+            username,
+            addr,
+            last_seen: now,
+            online: true,
+        });
+        self.bump_presence();
     }
 
-    /// Nettoie les pairs inactifs et retourne les usernames déconnectés
+    /// Nettoie les pairs inactifs et retourne les usernames déconnectés.
+    /// N'est plus appelé en production : la tâche discovery est autoritaire
+    /// sur la présence (elle émet `PeerDisconnected`). Conservé comme filet
+    /// de sécurité testé, réutilisable si la politique change.
+    #[allow(dead_code)]
     pub fn cleanup_inactive_peers(&mut self, timeout_secs: u64) -> Vec<String> {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -46,6 +62,9 @@ impl AppState {
                 disconnected.push(peer.username.clone());
             }
         }
+        if !disconnected.is_empty() {
+            self.bump_presence();
+        }
         disconnected
     }
 
@@ -58,12 +77,23 @@ impl AppState {
     }
 
     pub fn is_peer_online(&self, username: &str) -> bool {
-        self.peers.iter().any(|p| p.username == username && p.online)
+        self.peers
+            .iter()
+            .any(|p| p.username == username && p.online)
     }
 
-    /// Adresses de tous les pairs en ligne
-    pub fn get_online_peers(&self) -> Vec<SocketAddr> {
-        self.peers.iter().filter(|p| p.online).map(|p| p.addr).collect()
+    /// Marque un pair hors ligne en maintenant l'invariant d'invalidation du
+    /// cache de présence.
+    pub fn mark_peer_offline(&mut self, username: &str) -> bool {
+        let Some(peer) = self.peers.iter_mut().find(|peer| peer.username == username) else {
+            return false;
+        };
+        if !peer.online {
+            return false;
+        }
+        peer.online = false;
+        self.bump_presence();
+        true
     }
 
     /// Alias d'un pair s'il en a un, sinon son username
@@ -77,28 +107,41 @@ impl AppState {
 
     /// Définit (ou retire, si `None`) l'alias d'un pair, puis persiste.
     pub fn set_peer_alias(&mut self, username: &str, alias: Option<String>) {
-        if let Some(rec) = self.peer_records.iter_mut().find(|r| r.username == username) {
-            rec.alias = alias;
+        if let Some(rec) = self
+            .peer_records
+            .iter_mut()
+            .find(|r| r.username == username)
+        {
+            rec.alias = alias.clone();
         } else {
             use crate::message::PeerRecord;
             self.peer_records.push(PeerRecord {
                 username: username.to_string(),
-                alias,
+                alias: alias.clone(),
             });
         }
-        self.save_peer_records();
+        self.persist(super::StorageCmd::UpsertPeerAlias {
+            username: username.to_string(),
+            alias,
+        });
+        self.bump_content();
     }
 
     /// Reconstruit les pairs connus depuis l'historique (hors ligne par défaut)
     pub(super) fn restore_peers_from_history(&mut self) {
         let mut known: Vec<String> = Vec::new();
         for msg in &self.messages {
-            if msg.to_user == Some(self.my_username.clone()) && !known.contains(&msg.from) {
+            if msg.to_user.as_deref() == Some(self.my_username.as_str())
+                && !known.contains(&msg.from)
+            {
                 known.push(msg.from.clone());
             }
             if msg.from == self.my_username {
+                // Les messages de groupe portent la clé `#<nom>` dans
+                // `to_user` : ce n'est pas un pair, ne pas le restaurer comme
+                // tel (sinon le groupe apparaît dans la liste des pairs).
                 if let Some(to) = &msg.to_user {
-                    if !known.contains(to) {
+                    if !to.starts_with('#') && !known.contains(to) {
                         known.push(to.clone());
                     }
                 }
@@ -107,151 +150,17 @@ impl AppState {
         for username in known {
             if !self.peers.iter().any(|p| p.username == username) {
                 let dummy: SocketAddr = "0.0.0.0:0".parse().unwrap();
-                self.peers.push(Peer { username, addr: dummy, last_seen: 0, online: false });
+                self.peers.push(Peer {
+                    username,
+                    addr: dummy,
+                    last_seen: 0,
+                    online: false,
+                });
             }
         }
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use std::net::SocketAddr;
-    use crate::app::{AppState, Peer};
-
-    fn state(username: &str) -> AppState {
-        let mut s = AppState::new(username.to_string());
-        s.peers.clear();
-        s.messages.clear();
-        s.groups.clear();
-        s.read_counts.clear();
-        s.peer_records.clear();
-        s
-    }
-
-    fn peer(name: &str, ip: &str, online: bool) -> Peer {
-        let addr: SocketAddr = format!("{}:9000", ip).parse().unwrap();
-        Peer { username: name.to_string(), addr, last_seen: 0, online }
-    }
-
-    #[test]
-    fn test_add_peer_new() {
-        let mut s = state("alice");
-        // L'adresse fournie (IP + port de chat annoncé) est stockée telle quelle
-        let addr: SocketAddr = "192.168.1.5:9010".parse().unwrap();
-        s.add_peer("bob".to_string(), addr);
-        assert_eq!(s.peers.len(), 1);
-        assert_eq!(s.peers[0].username, "bob");
-        assert_eq!(s.peers[0].addr, addr);
-        assert!(s.peers[0].online);
-    }
-
-    #[test]
-    fn test_add_peer_updates_existing() {
-        let mut s = state("alice");
-        let a1: SocketAddr = "192.168.1.5:1234".parse().unwrap();
-        let a2: SocketAddr = "192.168.1.6:1234".parse().unwrap();
-        s.add_peer("bob".to_string(), a1);
-        s.add_peer("bob".to_string(), a2);
-        assert_eq!(s.peers.len(), 1, "no duplicate");
-        assert_eq!(s.peers[0].addr.ip().to_string(), "192.168.1.6");
-    }
-
-    #[test]
-    fn test_cleanup_inactive_peers() {
-        let mut s = state("alice");
-        // last_seen = 0 → very old, online = true
-        s.peers.push(peer("bob", "192.168.1.5", true));
-        let disc = s.cleanup_inactive_peers(1);
-        assert_eq!(disc, vec!["bob".to_string()]);
-        assert!(!s.peers[0].online);
-    }
-
-    #[test]
-    fn test_cleanup_inactive_peers_recent_stays_online() {
-        let mut s = state("alice");
-        // last_seen very recent: use std epoch + current time
-        use std::time::{SystemTime, UNIX_EPOCH};
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-        s.peers.push(Peer {
-            username: "bob".to_string(),
-            addr: "192.168.1.5:9000".parse().unwrap(),
-            last_seen: now,
-            online: true,
-        });
-        let disc = s.cleanup_inactive_peers(30);
-        assert!(disc.is_empty());
-        assert!(s.peers[0].online);
-    }
-
-    #[test]
-    fn test_is_peer_online() {
-        let mut s = state("alice");
-        s.peers.push(peer("bob", "192.168.1.5", true));
-        s.peers.push(peer("charlie", "192.168.1.6", false));
-        assert!(s.is_peer_online("bob"));
-        assert!(!s.is_peer_online("charlie"));
-        assert!(!s.is_peer_online("nobody"));
-    }
-
-    #[test]
-    fn test_get_online_peers() {
-        let mut s = state("alice");
-        s.peers.push(peer("bob", "192.168.1.5", true));
-        s.peers.push(peer("charlie", "192.168.1.6", false));
-        let online = s.get_online_peers();
-        assert_eq!(online.len(), 1);
-        assert_eq!(online[0].ip().to_string(), "192.168.1.5");
-    }
-
-    #[test]
-    fn test_selected_peer_addr_none_when_no_selection() {
-        let s = state("alice");
-        assert!(s.selected_peer_addr().is_none());
-    }
-
-    #[test]
-    fn test_selected_peer_addr_returns_addr() {
-        let mut s = state("alice");
-        s.peers.push(peer("bob", "192.168.1.5", true));
-        s.selected_conversation = Some("bob".to_string());
-        assert!(s.selected_peer_addr().is_some());
-        assert_eq!(s.selected_peer_addr().unwrap().ip().to_string(), "192.168.1.5");
-    }
-
-    #[test]
-    fn test_selected_peer_addr_none_when_offline() {
-        let mut s = state("alice");
-        s.peers.push(peer("bob", "192.168.1.5", false));
-        s.selected_conversation = Some("bob".to_string());
-        assert!(s.selected_peer_addr().is_none());
-    }
-
-    #[test]
-    fn test_peer_display_name_no_alias() {
-        let s = state("alice");
-        assert_eq!(s.peer_display_name("bob"), "bob");
-    }
-
-    #[test]
-    fn test_peer_display_name_with_alias() {
-        use crate::message::PeerRecord;
-        let mut s = state("alice");
-        s.peer_records.push(PeerRecord {
-            username: "bob".to_string(),
-            alias: Some("Robert".to_string()),
-        });
-        assert_eq!(s.peer_display_name("bob"), "Robert");
-    }
-
-    #[test]
-    fn test_set_peer_alias_then_clear() {
-        // new_with_base isole les écritures disque dans un répertoire temporaire
-        let dir = std::env::temp_dir().join(format!("abcom_alias_{}", std::process::id()));
-        let mut s = AppState::new_with_base("alice", &dir);
-        s.set_peer_alias("bob", Some("Robert".to_string()));
-        assert_eq!(s.peer_display_name("bob"), "Robert");
-        s.set_peer_alias("bob", None);
-        assert_eq!(s.peer_display_name("bob"), "bob");
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-}
+#[path = "../tests/test_app_peers.rs"]
+mod tests;

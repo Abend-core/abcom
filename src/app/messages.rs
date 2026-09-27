@@ -1,194 +1,182 @@
-use crate::message::ChatMessage;
 use super::AppState;
+use crate::message::ChatMessage;
 
 impl AppState {
     pub fn add_message(&mut self, msg: ChatMessage) {
-        let incoming_from_selected = self.selected_conversation.as_ref().map(|u| {
-            msg.from == *u && msg.to_user == Some(self.my_username.clone())
-        }).unwrap_or(false);
+        // Message entrant dans la conversation ouverte : marqué lu d'emblée.
+        // La clé de lecture est le pair émetteur (privé) ou le salon (`#nom`).
+        let read_key: Option<String> = match &self.selected_conversation {
+            Some(conv) if conv.starts_with('#') => (msg.to_user.as_deref() == Some(conv.as_str())
+                && msg.from != self.my_username)
+                .then(|| conv.clone()),
+            Some(user) => (msg.from == *user
+                && msg.to_user.as_deref() == Some(self.my_username.as_str()))
+            .then(|| user.clone()),
+            None => None,
+        };
 
-        self.messages.push(msg.clone());
-        if incoming_from_selected {
-            self.mark_conversation_read(&msg.from);
+        self.persist(super::StorageCmd::InsertMessage(msg.clone()));
+        self.messages.push(msg);
+        if let Some(key) = read_key {
+            self.mark_conversation_read(&key);
         }
-        if self.messages.len() > 500 {
-            self.messages.drain(0..100);
+        // La fenêtre mémoire reste bornée ; l'historique complet vit en base
+        // (les messages drainés restent chargeables par pagination).
+        if self.messages.len() > self.history_cap() {
+            let overflow = self.messages.len() - self.history_cap() + 99;
+            let n = overflow.min(self.messages.len());
+            self.messages.drain(0..n);
+            // Les rowids des messages restants sont inconnus après le drain.
+            // Marquer « plus rien à paginer » (`None`) arrêtait définitivement
+            // le chargement vers le haut, au moment précis où il reste le plus
+            // d'historique en base : on garde donc un curseur redérivable.
+            self.oldest_loaded_rowid = None;
+            self.window_overflowed = true;
+            self.purge_stale_message_state();
         }
-        self.save_messages();
+        self.bump_content();
     }
 
-    pub fn mark_conversation_read(&mut self, peer_username: &str) {
-        let count = self.messages.iter().filter(|m| {
-            m.from == peer_username && m.to_user == Some(self.my_username.clone())
-        }).count();
-        self.read_counts.insert(peer_username.to_string(), count);
-        self.save_read_counts();
+    /// Retire des maps annexes (réactions, accusés, en-attente) les entrées
+    /// dont le message est sorti du ring-buffer — sans quoi elles croissent
+    /// indéfiniment au fil de la session.
+    fn purge_stale_message_state(&mut self) {
+        let live: std::collections::HashSet<u64> =
+            self.messages.iter().map(Self::message_hash).collect();
+        self.reactions.retain(|hash, _| live.contains(hash));
+        self.read_receipts.retain(|hash, _| live.contains(hash));
+        self.delivered_receipts
+            .retain(|hash, _| live.contains(hash));
+        self.pending_messages.retain(|hash, _| live.contains(hash));
+        self.failed_messages.retain(|hash, _| live.contains(hash));
+    }
+
+    /// Marque une conversation comme lue. `conv` est un nom de pair
+    /// (conversation privée) ou une clé de salon `#nom` (groupe).
+    pub fn mark_conversation_read(&mut self, conv: &str) {
+        let Some(last) = self.last_incoming_hash(conv) else {
+            return;
+        };
+        self.read_marks.insert(conv.to_string(), last);
+        self.persist(super::StorageCmd::SetReadMark {
+            username: conv.to_string(),
+            message_hash: last,
+        });
+        self.bump_content();
+    }
+
+    /// Hash du dernier message entrant d'une conversation.
+    fn last_incoming_hash(&self, conv: &str) -> Option<u64> {
+        self.messages
+            .iter()
+            .rev()
+            .find(|m| self.incoming_key(m).as_deref() == Some(conv))
+            .map(Self::message_hash)
     }
 
     /// Messages de la conversation sélectionnée
     pub fn get_conversation_messages(&self) -> Vec<&ChatMessage> {
         match &self.selected_conversation {
-            None => self.messages.iter().filter(|m| m.to_user.is_none()).collect(),
-            Some(username) => self.messages.iter().filter(|m| {
-                (m.from == *username && m.to_user == Some(self.my_username.clone()))
-                    || (m.from == self.my_username && m.to_user == Some(username.clone()))
-            }).collect(),
+            None => self
+                .messages
+                .iter()
+                .filter(|m| m.to_user.is_none())
+                .collect(),
+            // Salon de groupe : tous les messages adressés à la clé `#nom`,
+            // quel qu'en soit l'auteur (y compris moi).
+            Some(conv) if conv.starts_with('#') => self
+                .messages
+                .iter()
+                .filter(|m| m.to_user.as_deref() == Some(conv.as_str()))
+                .collect(),
+            Some(username) => self
+                .messages
+                .iter()
+                .filter(|m| {
+                    (m.from == *username && m.to_user == Some(self.my_username.clone()))
+                        || (m.from == self.my_username && m.to_user == Some(username.clone()))
+                })
+                .collect(),
         }
     }
 
-    #[allow(dead_code)]
-    pub fn get_conversations(&self) -> Vec<String> {
-        let mut convos = vec!["📢 Global".to_string()];
-        for peer in &self.peers {
-            convos.push(format!("🙋 {}", peer.username));
-        }
-        convos
-    }
-
-    pub fn unread_count(&self, peer_username: &str) -> usize {
-        if self.selected_conversation.as_ref() == Some(&peer_username.to_string()) {
+    /// Nombre de messages non-lus d'une conversation : nom de pair (privé)
+    /// ou clé de salon `#nom` (groupe).
+    /// Non-lus d'une conversation : messages entrants postérieurs au dernier
+    /// marqué lu.
+    ///
+    /// Repère par **hash de message** et non par compteur : après une purge du
+    /// ring-buffer ou un effacement d'historique, un compteur pouvait désigner
+    /// un tout autre ensemble de messages.
+    pub fn unread_count(&self, conv: &str) -> usize {
+        if self.selected_conversation.as_deref() == Some(conv) {
             return 0;
         }
-        let total = self.messages.iter().filter(|m| {
-            m.from == peer_username && m.to_user == Some(self.my_username.clone())
-        }).count();
-        let read = *self.read_counts.get(peer_username).unwrap_or(&0);
-        total.saturating_sub(read)
+        let mark = self.read_marks.get(conv).copied();
+        let mut unread = 0;
+        // On remonte le fil : tout ce qui suit le repère est non lu.
+        for msg in self.messages.iter().rev() {
+            if self.incoming_key(msg).as_deref() != Some(conv) {
+                continue;
+            }
+            if Some(Self::message_hash(msg)) == mark {
+                return unread;
+            }
+            unread += 1;
+        }
+        unread
+    }
+
+    /// Ce message est-il déjà dans la fenêtre mémoire ?
+    ///
+    /// Un ACK perdu fait réémettre l'expéditeur jusqu'à cinq fois : sans ce
+    /// contrôle, chaque réémission créait une copie de plus.
+    pub fn has_message(&self, message_hash: u64) -> bool {
+        self.messages
+            .iter()
+            .any(|m| Self::message_hash(m) == message_hash)
+    }
+
+    /// Clé d'un message entrant : le salon, ou l'expéditeur ; `None` pour les nôtres et « Tous ».
+    fn incoming_key(&self, msg: &ChatMessage) -> Option<String> {
+        let to = msg.to_user.as_deref()?;
+        if msg.from == self.my_username {
+            return None;
+        }
+        if to.starts_with('#') {
+            Some(to.to_string())
+        } else if to == self.my_username {
+            Some(msg.from.clone())
+        } else {
+            None
+        }
     }
 
     pub fn clear_conversation_history(&mut self) {
         match &self.selected_conversation {
             None => self.messages.retain(|m| m.to_user.is_some()),
+            Some(conv) if conv.starts_with('#') => {
+                let key = conv.clone();
+                self.messages
+                    .retain(|m| m.to_user.as_deref() != Some(key.as_str()));
+            }
             Some(username) => {
                 let me = self.my_username.clone();
                 let u = username.clone();
                 self.messages.retain(|m| {
-                    !((m.from == u && m.to_user == Some(me.clone()))
-                        || (m.from == me && m.to_user == Some(u.clone())))
+                    !((m.from == u && m.to_user.as_deref() == Some(me.as_str()))
+                        || (m.from == me && m.to_user.as_deref() == Some(u.as_str())))
                 });
             }
         }
-        self.save_messages();
+        self.persist(super::StorageCmd::DeleteConversation {
+            me: self.my_username.clone(),
+            conv: self.selected_conversation.clone(),
+        });
+        self.bump_content();
     }
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::app::AppState;
-    use crate::message::ChatMessage;
-
-    fn state(username: &str) -> AppState {
-        let mut s = AppState::new(username.to_string());
-        s.messages.clear();
-        s.peers.clear();
-        s.read_counts.clear();
-        s
-    }
-
-    fn msg(from: &str, to: Option<&str>, content: &str) -> ChatMessage {
-        ChatMessage {
-            from: from.to_string(),
-            content: content.to_string(),
-            timestamp: "12:00".to_string(),
-            timestamp_epoch: None,
-            to_user: to.map(|s| s.to_string()),
-        }
-    }
-
-    #[test]
-    fn test_add_message_increases_count() {
-        let mut s = state("alice");
-        s.add_message(msg("bob", None, "hello"));
-        assert_eq!(s.messages.len(), 1);
-    }
-
-    #[test]
-    fn test_unread_count_zero_no_messages() {
-        let s = state("alice");
-        assert_eq!(s.unread_count("bob"), 0);
-    }
-
-    #[test]
-    fn test_unread_count_increments() {
-        let mut s = state("alice");
-        s.messages.push(msg("bob", Some("alice"), "hi"));
-        s.messages.push(msg("bob", Some("alice"), "hey"));
-        assert_eq!(s.unread_count("bob"), 2);
-    }
-
-    #[test]
-    fn test_unread_count_zero_when_conversation_selected() {
-        let mut s = state("alice");
-        s.messages.push(msg("bob", Some("alice"), "hi"));
-        s.selected_conversation = Some("bob".to_string());
-        assert_eq!(s.unread_count("bob"), 0);
-    }
-
-    #[test]
-    fn test_mark_conversation_read_clears_unread() {
-        let mut s = state("alice");
-        s.messages.push(msg("bob", Some("alice"), "hi"));
-        s.messages.push(msg("bob", Some("alice"), "hey"));
-        s.mark_conversation_read("bob");
-        assert_eq!(s.unread_count("bob"), 0);
-    }
-
-    #[test]
-    fn test_get_broadcast_messages() {
-        let mut s = state("alice");
-        s.messages.push(msg("bob", None, "broadcast"));
-        s.messages.push(msg("bob", Some("alice"), "private"));
-        // selected_conversation = None → broadcast only
-        let result = s.get_conversation_messages();
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].content, "broadcast");
-    }
-
-    #[test]
-    fn test_get_private_conversation_messages() {
-        let mut s = state("alice");
-        s.messages.push(msg("bob", Some("alice"), "coucou"));
-        s.messages.push(msg("alice", Some("bob"), "salut"));
-        s.messages.push(msg("charlie", Some("alice"), "hey"));
-        s.selected_conversation = Some("bob".to_string());
-        let result = s.get_conversation_messages();
-        assert_eq!(result.len(), 2);
-        assert!(result.iter().all(|m| m.from == "bob" || m.from == "alice"));
-    }
-
-    #[test]
-    fn test_clear_conversation_history_private() {
-        let mut s = state("alice");
-        s.messages.push(msg("bob", Some("alice"), "hi"));
-        s.messages.push(msg("alice", Some("bob"), "ok"));
-        s.messages.push(msg("charlie", Some("alice"), "hey"));
-        s.selected_conversation = Some("bob".to_string());
-        s.clear_conversation_history();
-        // only charlie's message survives
-        assert_eq!(s.messages.len(), 1);
-        assert_eq!(s.messages[0].from, "charlie");
-    }
-
-    #[test]
-    fn test_clear_conversation_history_broadcast() {
-        let mut s = state("alice");
-        s.messages.push(msg("bob", None, "global"));
-        s.messages.push(msg("bob", Some("alice"), "private"));
-        // No selection → clear broadcast
-        s.clear_conversation_history();
-        assert_eq!(s.messages.len(), 1);
-        assert_eq!(s.messages[0].to_user, Some("alice".to_string()));
-    }
-
-    #[test]
-    fn test_message_cap_at_500() {
-        let mut s = state("alice");
-        // Fill 500 messages then add 1 → drain 100 from front
-        for i in 0..500 {
-            s.messages.push(msg("bob", None, &i.to_string()));
-        }
-        s.add_message(msg("bob", None, "overflow"));
-        assert_eq!(s.messages.len(), 401);
-        assert_eq!(s.messages.last().unwrap().content, "overflow");
-    }
-}
+#[path = "../tests/test_app_messages.rs"]
+mod tests;
